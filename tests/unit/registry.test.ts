@@ -23,6 +23,9 @@ vi.mock("@langchain/openai", () => ({
   ChatOpenAI: class {
     constructor() {}
   },
+  // webSearchTool.ts 가 import 시점에 tools.webSearch() 를 평가한다.
+  // 실측 런타임 형태({type:"web_search"})를 모사 — probe note §6-A.
+  tools: { webSearch: () => ({ type: "web_search" }) },
 }));
 vi.mock("@langchain/anthropic", () => ({
   ChatAnthropic: class {

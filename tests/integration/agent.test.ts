@@ -38,7 +38,11 @@ vi.mock("deepagents", () => ({
 }));
 
 // 모델/checkpointer 생성자도 모킹 — 실 키/네이티브 바인딩 불필요.
-vi.mock("@langchain/openai", () => ({ ChatOpenAI: class {} }));
+vi.mock("@langchain/openai", () => ({
+  ChatOpenAI: class {},
+  // webSearchTool.ts import-시점 tools.webSearch() 평가 (probe note §6-A).
+  tools: { webSearch: () => ({ type: "web_search" }) },
+}));
 vi.mock("@langchain/anthropic", () => ({
   ChatAnthropic: class {
     getName() {

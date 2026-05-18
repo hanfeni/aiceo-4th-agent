@@ -146,8 +146,31 @@ interface HarnessProfileOptions {
 **@langchain/core 1.1.46 단일 트리**. AIMessageChunk instanceof 안전.
 `@langchain/langgraph`는 deepagents dependency 로 자동 해석 (직접 추가 안 함, R 규약 준수).
 
+## 6-A. WebSearch 도구 — ServerTool 수용 실측 (2026-05-19 추가)
+
+> 트리거: 사용자 요청 "OpenAI 웹검색 래퍼로 WebSearch 도구 추가".
+> R8 절차대로 학습지식 단정 없이 node_modules 직접 실측.
+
+| 가설 | 실측 결과 | 판정 |
+|---|---|---|
+| langchain/@langchain/core/deepagents 가 web search 빌트인 제공 | 없음. core 의 `ServerTool` 은 `Record<string, unknown>` **타입 별칭만** (tools/index.d.ts:228). deepagents 빌트인은 filesystem/async-task/`task`/`write_todos` 뿐 (index.d.ts:2774). 문서 예제 `webSearchTool` 은 `@example` 주석 안 가상 변수 | **미제공 확정** |
+| `@langchain/openai` 가 web search 래퍼 제공 | `tools.webSearch(opts?): ServerTool` 존재 (@langchain/openai **1.4.5**, dist/tools/webSearch.d.ts). 런타임: `tools.webSearch()` → `{ type: "web_search" }` (필터 미지정 시 type 만; filters/user_location/search_context_size 옵션 키 보유) | **제공 확정** |
+| createDeepAgent 가 ServerTool 을 tools 슬롯에 수용 | `createDeepAgent<... const TTools extends readonly (ClientTool \| ServerTool)[] ...>` (index.d.ts:3200). **ServerTool 1급 수용**. 별도 어댑터 불필요 | **검증됨** |
+| webSearch 는 OpenAI 서버사이드 실행 (ServerTool) | `import { ServerTool } from "@langchain/core/tools"` (webSearch.d.ts 헤더). 우리 측 실행 함수 없음 — OpenAI Responses API 가 모델 내부에서 검색·통합 | **검증됨** |
+
+**구현 결론**: 별도 의존성·API키 추가 0 (OPENAI_API_KEY 재사용). `harness/tools/`
+모듈 1파일 + `HARNESS_TOOLS` 1줄 등록만으로 FR-08 절차 완결. `HarnessConfig.tools:
+unknown[]` 느슨한 계약(R8)이 StructuredTool+ServerTool 이종 혼합을 흡수.
+
+**제약 (운영 주의)**: ServerTool 은 provider 종속. OpenAI provider + Responses
+API 에서만 실제 검색 발동. `LLM_PROVIDER=anthropic` 토글 시 이 도구는 무동작
+(에러는 아님 — OpenAI 가 아니면 모델이 web_search 마커를 인식 못 함). single-
+provider 운영 전제(현재 .env = openai/gpt-5.4-mini)에서 정상.
+
 ## 7. 출처
 
 - 1차(웹): docs.langchain.com/oss/javascript/deepagents/*, npm, deepwiki,
   forum.langchain.com (removing-some-default-middleware/3283), GH Discussion #655
+- WebSearch 실측: `node_modules/@langchain/openai@1.4.5/dist/tools/webSearch.d.ts`,
+  `node_modules/deepagents/dist/index.d.ts:3200`, `@langchain/core/dist/tools/index.d.ts:228`
 - 2차(실측, 확정): `node_modules/deepagents/dist/index.d.ts` @ 1.10.2
