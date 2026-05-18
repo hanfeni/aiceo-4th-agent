@@ -27,6 +27,11 @@ import { filterChunk } from "./utils/chunkFilter";
  * meta] 2-튜플. chunkFilter 가 본문 텍스트만 추출한다(R5/FR-09).
  */
 
+// 실측(node_modules/@langchain/langgraph pregel index.d.ts:111 + Slice 1
+// scripts/probe.mts): 컴파일 그래프의 .stream() 은 **Promise<IterableReadable
+// Stream>** 을 반환한다. await 로 풀어야 for await 가 가능하다(await 누락 시
+// "stream is not async iterable" 런타임 에러 — 단위 mock 은 async generator
+// 라 await 없이도 통과해 이 형태 차이를 못 잡았다, architect AI-5).
 type DeepAgentGraph = {
   stream: (
     input: { messages: Array<{ role: string; content: string }> },
@@ -34,7 +39,7 @@ type DeepAgentGraph = {
       configurable: { thread_id: string };
       streamMode: "messages";
     },
-  ) => AsyncIterable<unknown>;
+  ) => Promise<AsyncIterable<unknown>>;
 };
 
 type AgentGlobal = { graph?: Promise<DeepAgentGraph> };
@@ -89,7 +94,7 @@ export async function createStream({
 
   async function* gen(): AsyncGenerator<SseEvent> {
     // R3 — 현재 turn query 만. 수동 conversationHistory 누적 없음.
-    const stream = graph.stream(
+    const stream = await graph.stream(
       { messages: [{ role: "user", content: query }] },
       {
         configurable: { thread_id: conversationId },

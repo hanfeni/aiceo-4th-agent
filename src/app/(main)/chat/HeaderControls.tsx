@@ -57,10 +57,16 @@ export function HeaderControls({
   const storeProvider = useChatStore((s) => s.provider);
   const storeModel = useChatStore((s) => s.model);
 
+  // 표시는 props(서버 환경변수 유래 — 진실의 원천)를 1순위로 한다. store 는
+  // useEffect 하이드레이션 이후에야 채워져 첫 렌더(SSR)에서 "모델 미설정"
+  // 으로 굳는 버그가 있으므로 props 우선, store 2순위 폴백.
+  const effProvider = provider || storeProvider;
+  const effModel = model || storeModel;
+
   const modelLabel =
-    storeModel && storeProvider
-      ? `${storeProvider} · ${storeModel}`
-      : storeModel || storeProvider || "모델 미설정";
+    effModel && effProvider
+      ? `${effProvider} · ${effModel}`
+      : effModel || effProvider || "모델 미설정";
 
   const handleNewChat = (): void => {
     chatStore.getState().resetChat(); // FR-06: 새 thread_id + 상태 초기화
