@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState, type ReactNode } from "react";
-import { useChatStore } from "@/store";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useChatStore, chatStore } from "@/store";
 import { useChat } from "@/components/chat/useChat";
 import { MessageList } from "@/components/common/BaseChat/MessageList";
 import { ChatInput } from "@/components/common/BaseChat/ChatInput";
@@ -37,6 +37,16 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
     key: 0,
   });
   const isStreaming = useChatStore((s) => s.isStreaming);
+
+  // stale isStreaming 복구. 마운트 시점엔 진행 중인 fetch 가 없다(전송은
+  // 사용자 액션으로만 시작). dev HMR/비정상 종료로 isStreaming=true 가
+  // 모듈 싱글톤에 남으면 입력이 영구 잠기므로(R6 함정의 역방향 — HMR 이
+  // 런타임 상태를 보존) 마운트 1회 false 로 정상화한다.
+  useEffect(() => {
+    if (chatStore.getState().isStreaming) {
+      chatStore.getState().setStreaming(false);
+    }
+  }, []);
 
   const onPickPrompt = useCallback((text: string) => {
     setSeed((s) => ({ value: text, key: s.key + 1 }));
