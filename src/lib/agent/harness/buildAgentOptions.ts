@@ -48,10 +48,30 @@ function modelProviderHint(model: BaseChatModel): string | undefined {
   return name ? { ChatAnthropic: "anthropic", ChatOpenAI: "openai" }[name] : undefined;
 }
 
-/** createDeepAgent 가 model 인스턴스에서 추출하는 것과 동일한 model id hint. */
+/**
+ * createDeepAgent 가 model 인스턴스에서 추출하는 것과 동일한 model id hint.
+ *
+ * 추출 순서를 deepagents getModelIdentifier 실측과 정합시킨다
+ * (node_modules/deepagents/dist/index.js ~8009):
+ *   model._defaultConfig?.model ?? model.model_name ?? model.modelName
+ * 추가로, 실 ChatOpenAI 인스턴스는 `.model` 만 노출(model_name/modelName 없음)
+ * 하고 실 ChatAnthropic 은 `modelName` + `.model` 을 노출(model_name 없음)하므로
+ * `.model` 을 최종 fallback 으로 둬 두 provider 모두 식별되게 한다(architect AI-2).
+ */
 function modelIdentifierHint(model: BaseChatModel): string | undefined {
-  const m = model as unknown as { model_name?: string; modelName?: string };
-  return m.model_name ?? m.modelName ?? undefined;
+  const m = model as unknown as {
+    _defaultConfig?: { model?: string };
+    model_name?: string;
+    modelName?: string;
+    model?: string;
+  };
+  return (
+    m._defaultConfig?.model ??
+    m.model_name ??
+    m.modelName ??
+    m.model ??
+    undefined
+  );
 }
 
 /** HarnessProfileOptions 부분집합 — 본 프로젝트가 사용하는 키만. */
@@ -59,6 +79,51 @@ interface HarnessProfileOpts {
   excludedMiddleware?: string[];
   excludedTools?: string[];
   generalPurposeSubagent?: { enabled?: boolean };
+}
+
+/**
+ * 프로세스 전역 "이미 등록한 profile key" 집합(architect AI-1).
+ *
+ * deepagents 의 registerHarnessProfileImpl 은 동일 key 재등록 시
+ * mergeProfiles 로 **누적 merge** 한다(실측 index.js 7843~7845). 그리고
+ * mergeProfiles 는 excludedTools/excludedMiddleware 를 dedup 없이 concat
+ * 한다(7613~7614). 단일 profile 자체는 createHarnessProfile 의 `new Set`
+ * 으로 dedup 되지만, 재호출 시 토글이 바뀌면(예: planning off→on) 이전
+ * excludedMiddleware 가 stale 하게 잔존해 절대 해제되지 않는다.
+ *
+ * Slice 9 harness-toggle E2E 는 같은 프로세스에서 graph 를 rebuild 하므로
+ * buildAgentOptions 가 같은 key 로 반복 registerHarnessProfile 을 호출하면
+ * 이 누적/stale 결함이 노출된다. → key 별 first-call 가드로 멱등화한다.
+ * agent.ts 의 `globalThis.__agent` 와 같은 패턴 계열이되 별도 키를 쓴다
+ * (AD-1 유지: 토글 분기는 여전히 toProfileOptions 내부에만 격리).
+ */
+const REGISTERED_KEYS_GLOBAL = "__deepagentsProfilesRegistered" as const;
+
+function registeredKeys(): Set<string> {
+  const g = globalThis as unknown as Record<string, Set<string> | undefined>;
+  let set = g[REGISTERED_KEYS_GLOBAL];
+  if (!set) {
+    set = new Set<string>();
+    g[REGISTERED_KEYS_GLOBAL] = set;
+  }
+  return set;
+}
+
+/**
+ * profile 을 key 에 멱등 등록한다(first-call 가드, option b).
+ *
+ * 주의: deepagents 는 `anthropic:claude-opus-4-7` 등 빌트인 profile 을
+ * 사전 등록한다(실측 index.js 7654/7685/7710). 따라서 `getHarnessProfile(key)
+ * !== undefined` 로 skip 하면(option a) 실제 Claude 모델에서 우리 토글
+ * profile 이 한 번도 등록되지 않아 FR-08/AC-4 토글이 깨진다. 첫 등록은
+ * 빌트인 위에 의도적으로 merge 돼야 하므로, "이 프로세스에서 이 key 를
+ * 이미 우리가 등록했는가"만 가드한다(누적/stale 만 차단, 첫 merge 는 허용).
+ */
+function registerHarnessProfileOnce(key: string, profile: HarnessProfileOpts): void {
+  const seen = registeredKeys();
+  if (seen.has(key)) return;
+  registerHarnessProfile(key, profile);
+  seen.add(key);
 }
 
 /**
@@ -114,12 +179,12 @@ export function buildAgentOptions(
   const provider = modelProviderHint(model);
   const identifier = modelIdentifierHint(model);
   if (provider) {
-    registerHarnessProfile(provider, profile);
+    registerHarnessProfileOnce(provider, profile);
     if (identifier && !identifier.includes(":")) {
-      registerHarnessProfile(`${provider}:${identifier}`, profile);
+      registerHarnessProfileOnce(`${provider}:${identifier}`, profile);
     }
   } else if (identifier) {
-    registerHarnessProfile(identifier, profile);
+    registerHarnessProfileOnce(identifier, profile);
   }
 
   return {
