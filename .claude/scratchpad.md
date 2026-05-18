@@ -29,9 +29,13 @@
 - [x] Slice 4: model + checkpointer(AD-2 lazy) + tools/subagents — b8c59cf
   (14 TC, 누적 66/66, eslint 0, tsc 0; Done: provider throw/키국한/.data ignored)
 
-### Wave 4 (병렬 — Files 교집합 0)
-- [ ] Slice 5: registry + buildAgentOptions(AD-1/6) + agent 싱글톤(AD-3)
-- [ ] Slice 7: ChatMarkdown rehype-raw→sanitize (AD-5d)
+### Wave 4 (병렬 — Files 교집합 0) [COMPLETE]
+- [x] Slice 5: registry + buildAgentOptions(AD-1/6) + agent(AD-3) — dcb4e86
+  + 보정 b8d13aa (architect AI-1 profile 멱등화 / AI-2 model hint 정합 / AI-3 회귀)
+- [x] Slice 7: ChatMarkdown rehype-raw→sanitize(AD-5d) — 4ca20ec (14 TC)
+- 통합: 109/109, tsc 0, eslint 0, build 0. architect PASS.
+- Slice 9 watch (architect AI-4/5): E2E 에서 실 토글 런타임 효과 검증 필요,
+  streamMode 2-tuple 가정 실 그래프 재확인 필요
 
 ### Wave 5 (병렬 — Files 교집합 0)
 - [ ] Slice 6: API Route SSE + Zod(AD-4) + cancel(AD-5a)
