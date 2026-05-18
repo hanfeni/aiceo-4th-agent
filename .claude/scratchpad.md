@@ -25,8 +25,9 @@
 - [x] Slice 3: chunkFilter + sseStreamParser + systemPrompt — 602b567 (38 TC)
 - 통합 검증: 전체 vitest 52/52, tsc 0, eslint 0, build exit 0
 
-### Wave 3
-- [ ] Slice 4: 하네스 model + checkpointer(AD-2 lazy) + tools/subagents 슬롯
+### Wave 3 [COMPLETE]
+- [x] Slice 4: model + checkpointer(AD-2 lazy) + tools/subagents — b8c59cf
+  (14 TC, 누적 66/66, eslint 0, tsc 0; Done: provider throw/키국한/.data ignored)
 
 ### Wave 4 (병렬 — Files 교집합 0)
 - [ ] Slice 5: registry + buildAgentOptions(AD-1/6) + agent 싱글톤(AD-3)
