@@ -4,7 +4,7 @@
 
 ## Branch: feat/deepagents-chat-harness (base: main)
 
-## Status: implementing wave 2 (slice 2,3 병렬) — Wave 1 complete
+## Status: implementing wave 6 (slice 9) — Wave 1~5 complete (8/9 슬라이스)
 
 ## Context
 - 스펙: requirements.md / 생성규칙: CLAUDE.md(R1~R8) / 폐기: prompt-sample.md
@@ -37,9 +37,19 @@
 - Slice 9 watch (architect AI-4/5): E2E 에서 실 토글 런타임 효과 검증 필요,
   streamMode 2-tuple 가정 실 그래프 재확인 필요
 
-### Wave 5 (병렬 — Files 교집합 0)
-- [ ] Slice 6: API Route SSE + Zod(AD-4) + cancel(AD-5a)
-- [ ] Slice 8: 채팅 UI 조립 (ChatInput/MessageList/ChatPanel/useChat/레이아웃)
+### Wave 5 (병렬 — Files 교집합 0) [COMPLETE]
+- [x] Slice 6: API Route SSE + Zod(AD-4) + cancel(AD-5a) — 05c4625
+  (13 TC: SSE인젝션 차단·cancel-abort·runtime헤더 검증, 누적 122/122)
+- [x] Slice 8: 채팅 UI 조립 (09 풀시안 디자인 적용, 실 SSE 연결,
+  미구현=mock) — 2ac1344 (21 TC: useChat 10 + ChatInput 11,
+  누적 143/143, eslint 0, tsc 0, build 0). 실동작: 입력/Enter전송/
+  Shift+Enter/실 SSE 스트리밍/markdown/새대화(resetChat)/provider·model
+  표시(서버env 유래). 시각mock: 툴칩·like/regen·ModelPicker·북마크·
+  history·SourceDrawer·사이드바 nav (disabled+title="준비 중"). copy 만
+  예외 실동작. HeaderControls 는 requirements.md 디렉토리 구조 준수해
+  (main)/chat/HeaderControls.tsx 에 배치 + ChatPanel 에 조합.
+- 통합: 143/143, tsc 0, eslint 0, build 0, 1000줄초과 0. Files 교집합 0.
+- 디자인: docs/design-ref/ (handoff "09 풀시안"), globals.css 토큰 적용.
 
 ### Wave 6
 - [ ] Slice 9: 통합 검증 + 보안/품질 merge-ready 게이트 + E2E
