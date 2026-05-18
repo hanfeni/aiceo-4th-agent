@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+build/
+
+# checkpointer (LangGraph SQLite — NFR-8)
+.data/
+
+# env (서버 전용 키 — 절대 커밋 금지)
+.env
+.env.local
+.env.*.local
+
+# test / coverage
+coverage/
+test-results/
+playwright-report/
+.playwright/
+
+# misc
+.DS_Store
+*.log
+/tmp/
