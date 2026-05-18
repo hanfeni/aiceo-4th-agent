@@ -9,6 +9,7 @@ import {
   extractThinking,
   extractToolCalls,
   extractToolResult,
+  extractToolOutputs,
 } from "./utils/chunkFilter";
 
 /**
@@ -129,7 +130,7 @@ export async function createStream({
         }
       }
       // 도구 결과 OUT — tools 노드의 tool 메시지.
-      const toolResult = extractToolResult(msg, meta);
+      const toolResult = extractToolResult(msg);
       if (toolResult) {
         yield {
           type: "tool_result",
@@ -137,6 +138,25 @@ export async function createStream({
           name: toolResult.name,
           result: toolResult.result,
         };
+      }
+      // ServerTool(web_search 등) — ClientTool 과 다른 채널(additional_
+      // kwargs.tool_outputs). IN(검색어)+OUT(상태)이 한 청크라 둘 다 emit.
+      const toolOutputs = extractToolOutputs(msg, meta);
+      if (toolOutputs) {
+        for (const to of toolOutputs) {
+          yield {
+            type: "tool_call",
+            id: to.id,
+            name: to.name,
+            args: to.args,
+          };
+          yield {
+            type: "tool_result",
+            id: to.id,
+            name: to.name,
+            result: to.result,
+          };
+        }
       }
       const text = filterChunk(msg, meta);
       if (text !== null) {

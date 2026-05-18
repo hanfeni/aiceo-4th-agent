@@ -102,9 +102,17 @@ const components: Components = {
 
 export interface ChatMarkdownProps {
   content: string;
+  /**
+   * 컨테이너 추가 클래스(선택). 사고 패널 등에서 톤(italic/크기/색)을
+   * 오버라이드할 때 사용. 미지정 시 본문 기본 스타일(영향 0).
+   */
+  className?: string;
 }
 
-export function ChatMarkdown({ content }: ChatMarkdownProps): ReactNode {
+export function ChatMarkdown({
+  content,
+  className,
+}: ChatMarkdownProps): ReactNode {
   return (
     <div
       className={clsx(
@@ -117,6 +125,7 @@ export function ChatMarkdown({ content }: ChatMarkdownProps): ReactNode {
         "[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse",
         "[&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-100 [&_th]:px-2 [&_th]:py-1",
         "[&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1",
+        className,
       )}
     >
       <Markdown

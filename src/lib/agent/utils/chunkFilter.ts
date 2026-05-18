@@ -32,10 +32,27 @@ const NON_BODY_BLOCK_TYPES = new Set(["thinking", "reasoning", "redacted_thinkin
 interface ChunkShape {
   content?: unknown;
   tool_call_chunks?: unknown;
+  additional_kwargs?: { tool_outputs?: unknown };
   kwargs?: {
     content?: unknown;
     tool_call_chunks?: unknown;
+    additional_kwargs?: { tool_outputs?: unknown };
   };
+}
+
+/**
+ * OpenAI ServerTool(web_search 등) 호출의 실측 구조 (probe ws-log-probe).
+ *   kwargs.additional_kwargs.tool_outputs[] = [{ id:"ws_...",
+ *     type:"web_search_call", status:"completed",
+ *     action:{ type:"search", queries:[...], query:"..." } }]
+ * ClientTool 의 tool_call_chunks(점진 델타)와 경로·형태가 다르다.
+ * type 이 *_call 로 끝나는 완결 호출 1건이다(델타 누적 불필요).
+ */
+interface ServerToolOutput {
+  id?: unknown;
+  type?: unknown;
+  status?: unknown;
+  action?: { type?: unknown; query?: unknown; queries?: unknown };
 }
 
 /** 스트림 part[1] 메타데이터의 본 필터가 사용하는 부분. */
@@ -196,19 +213,67 @@ export function extractToolCalls(
   if (!isRecord(msg)) return null;
   const chunk = msg as ChunkShape;
   const kwargs = isRecord(chunk.kwargs) ? chunk.kwargs : undefined;
-  const tcc = chunk.tool_call_chunks ?? kwargs?.tool_call_chunks;
-  if (!Array.isArray(tcc) || tcc.length === 0) return null;
 
+  // ① ClientTool 경로 — tool_call_chunks 점진 델타(기존 동작 보존).
+  const tcc = chunk.tool_call_chunks ?? kwargs?.tool_call_chunks;
+  if (Array.isArray(tcc) && tcc.length > 0) {
+    const out: ToolCallDelta[] = [];
+    for (const c of tcc) {
+      if (!isRecord(c)) continue;
+      out.push({
+        id: typeof c.id === "string" ? c.id : undefined,
+        name: typeof c.name === "string" ? c.name : undefined,
+        args: typeof c.args === "string" ? c.args : undefined,
+      });
+    }
+    if (out.length > 0) return out;
+  }
+
+  // ② ServerTool 경로 — additional_kwargs.tool_outputs 완결 호출
+  //    (web_search 등 provider 측 실행). 기존엔 ② 부재로 못 잡았다.
+  const ao = chunk.additional_kwargs ?? kwargs?.additional_kwargs;
+  const outputs = isRecord(ao) ? ao.tool_outputs : undefined;
+  if (Array.isArray(outputs) && outputs.length > 0) {
+    const out = mapServerToolOutputs(outputs);
+    if (out.length > 0) return out;
+  }
+
+  return null;
+}
+
+/**
+ * ServerTool 출력 배열을 ToolCallDelta[] 로 정규화한다(순수 함수).
+ *
+ * type "web_search_call" → name "web_search" (ClientTool 과 동일 채널로
+ * 통일 — agent.ts/UI 무수정). 검색어를 args 에 담아 UI 가 의미있게
+ * 표시할 수 있게 한다.
+ *
+ * TODO(USER): args 매핑·status 정책 결정 (5~10줄). 트레이드오프:
+ *  - args 에 무엇을: action.query(대표 1개, 짧음) vs action.queries
+ *    (전체 배열, 풍부) vs action 전체 JSON(범용, 길다). UI 표시 품질↔간결.
+ *  - status 정책: completed 만 방출(중복 0, 단 진행 표시 늦음) vs 모든
+ *    status 방출(실시간 "검색 중" 가능, 단 같은 id 중복 → 클라이언트
+ *    dedup 책임). ClientTool 은 델타라 자연 누적되지만 ServerTool 은
+ *    완결 호출이라 정책을 명시해야 한다.
+ *  미정 시 보수적 기본(completed 만, args=query)로 두고 추후 조정.
+ */
+export function mapServerToolOutputs(outputs: unknown[]): ToolCallDelta[] {
   const out: ToolCallDelta[] = [];
-  for (const c of tcc) {
-    if (!isRecord(c)) continue;
+  for (const o of outputs) {
+    if (!isRecord(o)) continue;
+    const so = o as ServerToolOutput;
+    const type = typeof so.type === "string" ? so.type : "";
+    if (!type.endsWith("_call")) continue; // web_search_call 등만
+    const name = type.replace(/_call$/, ""); // web_search_call → web_search
+    // TODO(USER): status 게이트 + args 구성을 정책에 맞춰 구현.
+    // 현재는 최소 동작(보수적 기본 — status 무관·args 미설정)만 둔다.
     out.push({
-      id: typeof c.id === "string" ? c.id : undefined,
-      name: typeof c.name === "string" ? c.name : undefined,
-      args: typeof c.args === "string" ? c.args : undefined,
+      id: typeof so.id === "string" ? so.id : undefined,
+      name,
+      args: undefined, // TODO(USER): action.query / queries / JSON 중 결정
     });
   }
-  return out.length > 0 ? out : null;
+  return out;
 }
 
 /** 도구 실행 결과 1건(OUT). */
@@ -227,10 +292,7 @@ export interface ToolResultDelta {
  *
  * @returns { name, result } 또는 null(도구 결과 아님).
  */
-export function extractToolResult(
-  msg: unknown,
-  _meta: unknown,
-): ToolResultDelta | null {
+export function extractToolResult(msg: unknown): ToolResultDelta | null {
   if (!isRecord(msg)) return null;
   const chunk = msg as ChunkShape & {
     type?: unknown;
@@ -268,4 +330,63 @@ export function extractToolResult(
         ? extractTextFromBlocks(content)
         : "";
   return result.length > 0 ? { name, result } : null;
+}
+
+/** ServerTool(web_search 등) 호출 1건. ClientTool 과 채널이 다르다. */
+export interface ToolOutputDelta {
+  id: string;
+  name: string;
+  args: string;
+  result: string;
+}
+
+/**
+ * 스트림 청크에서 **ServerTool 호출(additional_kwargs.tool_outputs)**
+ * 을 추출한다.
+ *
+ * 실측(scripts/ws2-probe.mts): OpenAI built-in web_search 는
+ * ClientTool 의 tool_call_chunk/ToolMessage 경로가 **아니라**,
+ * model_request 노드 청크의 additional_kwargs.tool_outputs 에
+ * `{ id, type:"web_search_call", status, action:{type:"search",
+ * queries:[...] } }` 형태로 온다. 그래서 extractToolCalls/Result 가
+ * 못 잡는다(사용자 보고: "웹검색만 마크 안 됨"의 원인). 이 함수가
+ * ServerTool 채널을 별도 수집한다. FR-09 유지(본문 미혼입 — 별도 채널).
+ *
+ * @returns ServerTool 호출 배열 또는 null.
+ */
+export function extractToolOutputs(
+  msg: unknown,
+  meta: unknown,
+): ToolOutputDelta[] | null {
+  const m = meta as ChunkMeta | undefined | null;
+  if (!isRecord(m) || m.langgraph_node !== MAIN_ANSWER_NODE) return null;
+  if (!isRecord(msg)) return null;
+  const chunk = msg as ChunkShape & {
+    additional_kwargs?: { tool_outputs?: unknown };
+    kwargs?: { additional_kwargs?: { tool_outputs?: unknown } };
+  };
+  const ak = chunk.additional_kwargs ?? chunk.kwargs?.additional_kwargs;
+  if (!isRecord(ak) || !Array.isArray(ak.tool_outputs)) return null;
+
+  const out: ToolOutputDelta[] = [];
+  for (const o of ak.tool_outputs) {
+    if (!isRecord(o)) continue;
+    const type = typeof o.type === "string" ? o.type : "";
+    if (!type) continue;
+    // web_search_call → name="web_search", args=검색어, result=상태
+    const action = isRecord(o.action) ? o.action : undefined;
+    const queries =
+      action && Array.isArray(action.queries)
+        ? action.queries.filter((q): q is string => typeof q === "string")
+        : [];
+    const name = type.replace(/_call$/, ""); // web_search_call → web_search
+    const status = typeof o.status === "string" ? o.status : "completed";
+    out.push({
+      id: typeof o.id === "string" ? o.id : "",
+      name,
+      args: queries.length > 0 ? JSON.stringify({ queries }) : "",
+      result: status,
+    });
+  }
+  return out.length > 0 ? out : null;
 }
