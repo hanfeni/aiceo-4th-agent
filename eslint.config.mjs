@@ -15,7 +15,7 @@ const config = [
     "coverage/",
     "tests/e2e/",
     "docs/",
-    "scripts/probe.mts",
+    "scripts/",
   ]),
 ];
 

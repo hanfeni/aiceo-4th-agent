@@ -57,11 +57,21 @@ export function createModel(env: ModelEnv): BaseChatModel {
   if (provider === "openai") {
     // GPT-5 계열의 max_completion_tokens 차이는 @langchain/openai 가
     // 내부에서 흡수한다 (maxTokens 를 명시하지 않음 — TC-9.8).
+    //
+    // 실측(scripts/reasoning-probe.mts): GPT-5 계열은 reasoning 을
+    // 수행하나, Chat Completions API 는 reasoning 텍스트를 반환하지
+    // 않고 카운트만 한다. **Responses API + reasoning.summary:"auto"**
+    // 일 때만 reasoning summary 가 content 배열의 {type:"reasoning",
+    // reasoning:"..."} 블록으로 토큰 스트리밍된다(사고 패널 데이터원).
+    // FR-09 는 유지된다: reasoning 은 별도 블록 → extractThinking 이
+    // 분리 수집, 본문 token 엔 안 섞임.
     return new ChatOpenAI({
       model,
       apiKey: env.OPENAI_API_KEY,
       streaming: true,
-    }) as unknown as BaseChatModel;
+      useResponsesApi: true,
+      reasoning: { effort: "medium", summary: "auto" },
+    } as ConstructorParameters<typeof ChatOpenAI>[0]) as unknown as BaseChatModel;
   }
 
   return new ChatAnthropic({

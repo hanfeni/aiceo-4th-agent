@@ -39,6 +39,28 @@ function asSseEvent(raw: unknown): SseEvent | null {
       return typeof ev.text === "string"
         ? { type: "token", text: ev.text }
         : null;
+    case "thinking":
+      return typeof ev.text === "string"
+        ? { type: "thinking", text: ev.text }
+        : null;
+    case "tool_call":
+      return typeof ev.name === "string" || typeof ev.args === "string"
+        ? {
+            type: "tool_call",
+            id: typeof ev.id === "string" ? ev.id : "",
+            name: typeof ev.name === "string" ? ev.name : "",
+            args: typeof ev.args === "string" ? ev.args : "",
+          }
+        : null;
+    case "tool_result":
+      return typeof ev.result === "string"
+        ? {
+            type: "tool_result",
+            id: typeof ev.id === "string" ? ev.id : "",
+            name: typeof ev.name === "string" ? ev.name : "tool",
+            result: ev.result,
+          }
+        : null;
     case "done":
       return { type: "done" };
     case "error":
@@ -106,6 +128,16 @@ export function useChat(): UseChatApi {
           s.setConversationId(ev.conversationId);
         } else if (ev.type === "token") {
           s.appendToLastAssistant(ev.text);
+        } else if (ev.type === "thinking") {
+          s.appendThinkingToLastAssistant(ev.text);
+        } else if (ev.type === "tool_call") {
+          s.appendToolCallToLastAssistant({
+            id: ev.id,
+            name: ev.name,
+            args: ev.args,
+          });
+        } else if (ev.type === "tool_result") {
+          s.setToolResultOnLastAssistant(ev.name, ev.result);
         } else if (ev.type === "error") {
           s.setError(ev.message);
           break;

@@ -4,7 +4,12 @@ import { buildHarnessConfig, type HarnessEnv } from "./harness/registry";
 import { buildAgentOptions } from "./harness/buildAgentOptions";
 import { createModel } from "./harness/model";
 import { getSystemPrompt } from "./prompts/systemPrompt";
-import { filterChunk } from "./utils/chunkFilter";
+import {
+  filterChunk,
+  extractThinking,
+  extractToolCalls,
+  extractToolResult,
+} from "./utils/chunkFilter";
 
 /**
  * 컴파일된 LangGraph 그래프 싱글톤 + 스트리밍 진입점.
@@ -105,6 +110,34 @@ export async function createStream({
     for await (const part of stream) {
       // U2 — part = [AIMessageChunk(직렬화), meta] 2-튜플.
       const [msg, meta] = part as [unknown, unknown];
+      // 사고 채널 — 본문과 분리(FR-09/R5: 본문 token 엔 thinking 0).
+      const thinking = extractThinking(msg, meta);
+      if (thinking !== null) {
+        yield { type: "thinking", text: thinking };
+      }
+      // 도구 호출 IN — model_request 노드의 tool_call_chunk 델타.
+      // id/name 은 첫 델타에만, args 는 점진 누적(클라이언트가 머지).
+      const toolCalls = extractToolCalls(msg, meta);
+      if (toolCalls) {
+        for (const tc of toolCalls) {
+          yield {
+            type: "tool_call",
+            id: tc.id ?? "",
+            name: tc.name ?? "",
+            args: tc.args ?? "",
+          };
+        }
+      }
+      // 도구 결과 OUT — tools 노드의 tool 메시지.
+      const toolResult = extractToolResult(msg, meta);
+      if (toolResult) {
+        yield {
+          type: "tool_result",
+          id: "",
+          name: toolResult.name,
+          result: toolResult.result,
+        };
+      }
       const text = filterChunk(msg, meta);
       if (text !== null) {
         yield { type: "token", text };

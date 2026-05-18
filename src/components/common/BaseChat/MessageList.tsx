@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useChatStore } from "@/store";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
+import { ThinkingPanel } from "@/components/common/BaseChat/ThinkingPanel";
 import type { ChatMessage } from "@/types";
 
 /**
@@ -207,9 +208,13 @@ function UserBubble({ content }: { content: string }): ReactNode {
 
 function AssistantBubble({
   content,
+  thinking,
+  toolSteps,
   streaming,
 }: {
   content: string;
+  thinking?: string;
+  toolSteps?: ChatMessage["toolSteps"];
   streaming: boolean;
 }): ReactNode {
   const onCopy = (): void => {
@@ -235,24 +240,18 @@ function AssistantBubble({
         <Sparkles size={14} strokeWidth={2.1} aria-hidden />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginBottom: 6,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: "var(--text-default)",
-            }}
-          >
-            에이전트
-          </span>
-        </div>
+        {/* 에이전트 라벨 제거 → 사고 패널(ThinkingPanel_A 인라인 미니멀).
+            medigate-manager/new 참조: 라벨 대신 "답변 과정" 토글을 답변
+            상단에 둔다. thinking 비어있고 비스트리밍이면 패널 자체 미표시. */}
+        {(thinking || (toolSteps?.length ?? 0) > 0 || streaming) && (
+          <div style={{ marginBottom: 6 }}>
+            <ThinkingPanel
+              thinking={thinking ?? ""}
+              toolSteps={toolSteps}
+              streaming={streaming}
+            />
+          </div>
+        )}
         <div style={{ minHeight: 22 }}>
           <ChatMarkdown content={content} />
           {streaming && (
@@ -376,6 +375,8 @@ export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
               <AssistantBubble
                 key={i}
                 content={m.content}
+                thinking={m.thinking}
+                toolSteps={m.toolSteps}
                 streaming={isStreaming && i === messages.length - 1}
               />
             ),

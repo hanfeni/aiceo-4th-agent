@@ -4,7 +4,7 @@
 
 import { createStore, useStore } from "zustand";
 import type { StoreApi } from "zustand";
-import type { ChatMessage } from "@/types";
+import type { ChatMessage, ToolStep } from "@/types";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -18,6 +18,16 @@ export interface ChatState {
 export interface ChatActions {
   addMessage: (message: ChatMessage) => void;
   appendToLastAssistant: (text: string) => void;
+  /** 마지막 assistant 메시지의 thinking(사고 채널)에 누적. 본문과 분리. */
+  appendThinkingToLastAssistant: (text: string) => void;
+  /** 도구 호출 IN 델타 머지(id/name + args 점진 누적). 본문과 분리. */
+  appendToolCallToLastAssistant: (delta: {
+    id: string;
+    name: string;
+    args: string;
+  }) => void;
+  /** 도구 실행 결과 OUT 를 매칭되는 toolStep 에 기록(name 매칭). */
+  setToolResultOnLastAssistant: (name: string, result: string) => void;
   setConversationId: (conversationId: string) => void;
   setStreaming: (isStreaming: boolean) => void;
   finalizeLastAssistant: () => void;
@@ -59,6 +69,77 @@ export function createChatStore(): StoreApi<ChatStore> {
         };
         return {
           messages: [...state.messages.slice(0, -1), updated],
+        };
+      }),
+
+    // 본문과 분리된 사고 채널 누적(FR-09 유지). last 가 assistant 일 때만.
+    appendThinkingToLastAssistant: (text) =>
+      set((state) => {
+        const last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== "assistant") return state;
+        const updated: ChatMessage = {
+          ...last,
+          thinking: (last.thinking ?? "") + text,
+        };
+        return {
+          messages: [...state.messages.slice(0, -1), updated],
+        };
+      }),
+
+    // 도구 호출 IN 머지. id 가 있으면 그 id 의 step, 없으면(args 조각)
+    // 마지막 step 에 args 이어붙임(스트리밍: 첫 델타에 id/name, 이후 args).
+    appendToolCallToLastAssistant: (delta) =>
+      set((state) => {
+        const last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== "assistant") return state;
+        const steps: ToolStep[] = last.toolSteps ? [...last.toolSteps] : [];
+        if (delta.id) {
+          const idx = steps.findIndex((s) => s.id === delta.id);
+          if (idx >= 0) {
+            steps[idx] = {
+              ...steps[idx],
+              name: delta.name || steps[idx].name,
+              args: steps[idx].args + delta.args,
+            };
+          } else {
+            steps.push({
+              id: delta.id,
+              name: delta.name,
+              args: delta.args,
+            });
+          }
+        } else if (steps.length > 0) {
+          const li = steps.length - 1;
+          steps[li] = { ...steps[li], args: steps[li].args + delta.args };
+        } else {
+          return state; // id 없는 첫 델타 — 매칭 불가, 무시
+        }
+        return {
+          messages: [
+            ...state.messages.slice(0, -1),
+            { ...last, toolSteps: steps },
+          ],
+        };
+      }),
+
+    // 도구 결과 OUT — name 으로 result 미설정인 step 을 채운다(FIFO).
+    setToolResultOnLastAssistant: (name, result) =>
+      set((state) => {
+        const last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== "assistant" || !last.toolSteps) {
+          return state;
+        }
+        const steps = [...last.toolSteps];
+        const idx = steps.findIndex(
+          (s) => s.name === name && s.result === undefined,
+        );
+        if (idx < 0) return state;
+        steps[idx] = { ...steps[idx], result };
+        return {
+          messages: [
+            ...state.messages.slice(0, -1),
+            { ...last, toolSteps: steps },
+          ],
         };
       }),
 

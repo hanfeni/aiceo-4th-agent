@@ -29,6 +29,10 @@ vi.mock("@langchain/openai", () => ({
       chatOpenAISpy(opts);
     }
   },
+  // webSearchTool.ts 가 import 시점 tools.webSearch() 를 평가 — 전체
+  // 스위트 모듈 캐시 전파상 @langchain/openai mock 표면을 agent.test.ts
+  // 와 동일하게 맞춘다(tools export 누락 시 "No tools export" FAIL).
+  tools: { webSearch: () => ({ type: "web_search" }) },
 }));
 
 vi.mock("@langchain/anthropic", () => ({
