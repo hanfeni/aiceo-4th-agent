@@ -137,7 +137,7 @@ export function useChat(): UseChatApi {
             args: ev.args,
           });
         } else if (ev.type === "tool_result") {
-          s.setToolResultOnLastAssistant(ev.name, ev.result);
+          s.setToolResultOnLastAssistant(ev.name, ev.result, ev.id);
         } else if (ev.type === "error") {
           s.setError(ev.message);
           break;

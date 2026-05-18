@@ -4,7 +4,12 @@
 
 import { createStore, useStore } from "zustand";
 import type { StoreApi } from "zustand";
-import type { ChatMessage, ToolStep } from "@/types";
+import type { ChatMessage } from "@/types";
+import {
+  reduceReasoning,
+  reduceToolCall,
+  reduceToolResult,
+} from "@/lib/agent/utils/thinkingSteps";
 
 export interface ChatState {
   messages: ChatMessage[];
@@ -26,8 +31,12 @@ export interface ChatActions {
     name: string;
     args: string;
   }) => void;
-  /** 도구 실행 결과 OUT 를 매칭되는 toolStep 에 기록(name 매칭). */
-  setToolResultOnLastAssistant: (name: string, result: string) => void;
+  /** 도구 실행 결과 OUT 를 매칭 tool step 에 기록(id 우선, name 폴백). */
+  setToolResultOnLastAssistant: (
+    name: string,
+    result: string,
+    id?: string,
+  ) => void;
   setConversationId: (conversationId: string) => void;
   setStreaming: (isStreaming: boolean) => void;
   finalizeLastAssistant: () => void;
@@ -73,72 +82,50 @@ export function createChatStore(): StoreApi<ChatStore> {
       }),
 
     // 본문과 분리된 사고 채널 누적(FR-09 유지). last 가 assistant 일 때만.
+    // 단일 thinkingSteps[] 에 시간순 누적(교차 보존). 순수 reducer 위임.
     appendThinkingToLastAssistant: (text) =>
       set((state) => {
         const last = state.messages[state.messages.length - 1];
         if (!last || last.role !== "assistant") return state;
-        const updated: ChatMessage = {
-          ...last,
-          thinking: (last.thinking ?? "") + text,
-        };
-        return {
-          messages: [...state.messages.slice(0, -1), updated],
-        };
-      }),
-
-    // 도구 호출 IN 머지. id 가 있으면 그 id 의 step, 없으면(args 조각)
-    // 마지막 step 에 args 이어붙임(스트리밍: 첫 델타에 id/name, 이후 args).
-    appendToolCallToLastAssistant: (delta) =>
-      set((state) => {
-        const last = state.messages[state.messages.length - 1];
-        if (!last || last.role !== "assistant") return state;
-        const steps: ToolStep[] = last.toolSteps ? [...last.toolSteps] : [];
-        if (delta.id) {
-          const idx = steps.findIndex((s) => s.id === delta.id);
-          if (idx >= 0) {
-            steps[idx] = {
-              ...steps[idx],
-              name: delta.name || steps[idx].name,
-              args: steps[idx].args + delta.args,
-            };
-          } else {
-            steps.push({
-              id: delta.id,
-              name: delta.name,
-              args: delta.args,
-            });
-          }
-        } else if (steps.length > 0) {
-          const li = steps.length - 1;
-          steps[li] = { ...steps[li], args: steps[li].args + delta.args };
-        } else {
-          return state; // id 없는 첫 델타 — 매칭 불가, 무시
-        }
+        const prev = last.thinkingSteps ?? [];
+        const steps = reduceReasoning(prev, text, prev.length);
+        if (steps === prev) return state;
         return {
           messages: [
             ...state.messages.slice(0, -1),
-            { ...last, toolSteps: steps },
+            { ...last, thinkingSteps: steps },
           ],
         };
       }),
 
-    // 도구 결과 OUT — name 으로 result 미설정인 step 을 채운다(FIFO).
-    setToolResultOnLastAssistant: (name, result) =>
+    appendToolCallToLastAssistant: (delta) =>
       set((state) => {
         const last = state.messages[state.messages.length - 1];
-        if (!last || last.role !== "assistant" || !last.toolSteps) {
-          return state;
-        }
-        const steps = [...last.toolSteps];
-        const idx = steps.findIndex(
-          (s) => s.name === name && s.result === undefined,
-        );
-        if (idx < 0) return state;
-        steps[idx] = { ...steps[idx], result };
+        if (!last || last.role !== "assistant") return state;
+        const prev = last.thinkingSteps ?? [];
+        const steps = reduceToolCall(prev, delta, prev.length);
+        if (steps === prev) return state;
         return {
           messages: [
             ...state.messages.slice(0, -1),
-            { ...last, toolSteps: steps },
+            { ...last, thinkingSteps: steps },
+          ],
+        };
+      }),
+
+    setToolResultOnLastAssistant: (name, result, id) =>
+      set((state) => {
+        const last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== "assistant" || !last.thinkingSteps) {
+          return state;
+        }
+        const prev = last.thinkingSteps;
+        const steps = reduceToolResult(prev, name, result, id);
+        if (steps === prev) return state;
+        return {
+          messages: [
+            ...state.messages.slice(0, -1),
+            { ...last, thinkingSteps: steps },
           ],
         };
       }),

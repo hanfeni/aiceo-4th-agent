@@ -208,13 +208,11 @@ function UserBubble({ content }: { content: string }): ReactNode {
 
 function AssistantBubble({
   content,
-  thinking,
-  toolSteps,
+  thinkingSteps,
   streaming,
 }: {
   content: string;
-  thinking?: string;
-  toolSteps?: ChatMessage["toolSteps"];
+  thinkingSteps?: ChatMessage["thinkingSteps"];
   streaming: boolean;
 }): ReactNode {
   const onCopy = (): void => {
@@ -240,14 +238,13 @@ function AssistantBubble({
         <Sparkles size={14} strokeWidth={2.1} aria-hidden />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* 에이전트 라벨 제거 → 사고 패널(ThinkingPanel_A 인라인 미니멀).
-            medigate-manager/new 참조: 라벨 대신 "답변 과정" 토글을 답변
-            상단에 둔다. thinking 비어있고 비스트리밍이면 패널 자체 미표시. */}
-        {(thinking || (toolSteps?.length ?? 0) > 0 || streaming) && (
+        {/* 에이전트 라벨 제거 → 사고 패널. 단일 thinkingSteps[](교차
+            보존). medigate StreamingView/HistoryView 패턴. 데이터 없고
+            비스트리밍이면 패널 자체 미표시. */}
+        {((thinkingSteps?.length ?? 0) > 0 || streaming) && (
           <div style={{ marginBottom: 6 }}>
             <ThinkingPanel
-              thinking={thinking ?? ""}
-              toolSteps={toolSteps}
+              steps={thinkingSteps ?? []}
               streaming={streaming}
             />
           </div>
@@ -375,8 +372,7 @@ export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
               <AssistantBubble
                 key={i}
                 content={m.content}
-                thinking={m.thinking}
-                toolSteps={m.toolSteps}
+                thinkingSteps={m.thinkingSteps}
                 streaming={isStreaming && i === messages.length - 1}
               />
             ),
