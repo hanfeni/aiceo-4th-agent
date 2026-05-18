@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+/* 라이트 모드 기본 (requirements.md: UI는 기본 라이트 모드). */
+:root {
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+* {
+  box-sizing: border-box;
+}

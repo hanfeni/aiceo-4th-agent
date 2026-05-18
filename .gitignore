@@ -6,6 +6,8 @@ node_modules/
 .next/
 out/
 build/
+next-env.d.ts
+*.tsbuildinfo
 
 # checkpointer (LangGraph SQLite — NFR-8)
 .data/
