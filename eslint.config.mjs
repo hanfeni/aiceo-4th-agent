@@ -7,7 +7,16 @@ import nextTs from "eslint-config-next/typescript";
 const config = [
   ...nextCoreWebVitals,
   ...nextTs,
-  globalIgnores([".next/", "out/", "node_modules/", "coverage/", "tests/e2e/"]),
+  // docs/design-ref/ 는 외부 핸드오프 프로토타입(우리 코드 아님 — lint 비대상).
+  globalIgnores([
+    ".next/",
+    "out/",
+    "node_modules/",
+    "coverage/",
+    "tests/e2e/",
+    "docs/",
+    "scripts/probe.mts",
+  ]),
 ];
 
 export default config;
