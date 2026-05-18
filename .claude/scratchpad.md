@@ -20,9 +20,10 @@
 ### Wave 1
 - [x] Slice 1: 스캐폴드 + 의존성 + U2~U5 실측 — 35faaa5
 
-### Wave 2 (병렬 — Files 교집합 0)
-- [ ] Slice 2: 타입 + Zustand 스토어 (순수)
-- [ ] Slice 3: 순수 함수 chunkFilter + sseStreamParser + systemPrompt
+### Wave 2 (병렬 — Files 교집합 0) [COMPLETE]
+- [x] Slice 2: 타입 + Zustand 스토어 — b19c73c (14 TC)
+- [x] Slice 3: chunkFilter + sseStreamParser + systemPrompt — 602b567 (38 TC)
+- 통합 검증: 전체 vitest 52/52, tsc 0, eslint 0, build exit 0
 
 ### Wave 3
 - [ ] Slice 4: 하네스 model + checkpointer(AD-2 lazy) + tools/subagents 슬롯
