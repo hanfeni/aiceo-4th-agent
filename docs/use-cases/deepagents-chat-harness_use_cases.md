@@ -119,7 +119,7 @@
 
 ### Data Requirements
 - **Input**: `{ query: string }` (JSON), optional `conversationId: string`.
-- **Output**: SSE 이벤트 시퀀스 — ① `thread` ② `token`(반복) ③ `done` 또는 `error`.
+- **Output**: SSE 이벤트 시퀀스 — ① `thread` ② `token`/`thinking`/`tool_call`/`tool_result`(반복, 교차) ③ `done` 또는 `error`. (PRD §1.11 AD-7 — `thinking`/`tool_call`/`tool_result` 는 사고 패널 채널이며 `token` 본문엔 미혼입, FR-09 불변.)
 - **Side Effects**: checkpointer(SQLite 기본)에 thread_id 키로 그래프 상태 1턴 영속.
   실 LLM API 호출(과금 발생). 클라이언트 스토어 상태 갱신. 모킹 경로 없음(NFR-11).
 

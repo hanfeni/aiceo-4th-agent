@@ -4,7 +4,7 @@
 
 ## Branch: feat/deepagents-chat-harness (base: main)
 
-## Status: implementing wave 6 (slice 9) — Wave 1~5 complete (8/9 슬라이스)
+## Status: complete — Wave 1~6 (9/9 슬라이스) + 사고 패널. MERGE READY
 
 ## Context
 - 스펙: requirements.md / 생성규칙: CLAUDE.md(R1~R8) / 폐기: prompt-sample.md
@@ -51,10 +51,16 @@
 - 통합: 143/143, tsc 0, eslint 0, build 0, 1000줄초과 0. Files 교집합 0.
 - 디자인: docs/design-ref/ (handoff "09 풀시안"), globals.css 토큰 적용.
 
-### Wave 6
-- [ ] Slice 9: 통합 검증 + 보안/품질 merge-ready 게이트 + E2E
+### Wave 6 [COMPLETE]
+- [x] Slice 9: 통합 검증 + merge-ready 게이트 + E2E spec — 29438fa~
+  merge-ready 8게이트 PASS(Gate2 Auto-Fix 1회: chunkFilter extract
+  미러 +26 TC). 204/204, tsc 0, eslint 0, build 0, 실키 0건.
+  docs/notes/merge-ready-report.md. **MERGE READY**
 
 ## Completed
+- Slice 9 / merge-ready: 8게이트 PASS, 사고패널(reasoning Responses API +
+  도구 IN/OUT + web_search ServerTool + 단일 thinkingSteps[] 교차/서브
+  타이틀/실시간리플레이스), 런타임버그 4종 수정. origin push 완료
 - bootstrap 파이프라인 6단계 (PRD→UseCase→Architecture→QA→Plan→Git/scratchpad)
 - R8 실측: requirements.md/PRD/probe note 개정 (filesystem soft toggle, AD-6)
 - feat/deepagents-chat-harness 브랜치 + .gitignore 생성

@@ -11,7 +11,12 @@
 - 공식 최소 설치형 = `deepagents` + `langchain` + `@langchain/core`. 가장 무난·
   컴팩트한 형태가 요구사항. 불필요한 패키지 추가 금지.
 - `@langchain/langgraph` 는 deepagents 의 dependency. **package.json 에 직접
-  추가하지 말 것** (버전 갈림 위험). import 는 deepagents 트리에서 해석됨.
+  추가하지 말 것** (버전 갈림 위험). 단 실측 정정: pnpm strict node_modules
+  에선 앱 코드가 `@langchain/langgraph` 를 **직접 import 할 수 없다**
+  (`ERR_MODULE_NOT_FOUND`). 그래프는 deepagents 반환분을 쓰고,
+  checkpointer 는 직접 의존인 `@langchain/langgraph-checkpoint-sqlite`
+  (`SqliteSaver`, `:memory:` 포함)로 해결한다 — langgraph 본체 직접
+  import 0 (live-stream-events.md U5).
 - 패키지는 "가능한 최신 버전". 구현 시점에 `npm view <pkg> version` 으로
   재확인 후 캐럿(^) 범위로 핀. (2026-05-19 실측: deepagents 1.10.2,
   langchain 1.4.0, @langchain/core 1.1.46, next 16.2.6, react 19.2.6)
@@ -66,6 +71,23 @@ deepagents/@langchain API 는 빠르게 변한다. createDeepAgent 옵션 키
 실측이 requirements.md 와 충돌하면 임의 변경 말고 사용자 보고.
 (이미 확인된 차이: 공식 문서는 `createDeepAgent({ tools, systemPrompt })`,
 `tool` 은 `"langchain"` 에서 import — 초안의 instructions 추정과 다름.)
+
+**런타임 실측 확정(thinking-panel 작업 이후 추가 — 코드 정합 보정):**
+
+- OpenAI 에서 reasoning 텍스트를 받으려면 `ChatOpenAI` 에
+  `useResponsesApi:true` + `reasoning:{summary:"auto"}` 필수. Chat
+  Completions API 는 reasoning 을 카운트만 하고 텍스트를 반환 안 함
+  (사고 패널 데이터원 = Responses API summary). model.ts 에 격리.
+- 컴파일 그래프 `.stream()` 은 **`Promise<IterableReadableStream>`** 반환
+  → `await graph.stream(...)` 후 `for await`. await 누락 시 런타임
+  "not async iterable" (async generator mock 은 이 차이를 못 잡음).
+- 런타임 `AIMessageChunk` 는 살아있는 인스턴스라 텍스트가 `msg.content`
+  (최상위)에 있다. probe 의 `JSON.stringify` 직렬화형(`kwargs.content`)과
+  다름 → chunkFilter 는 `msg.content ?? msg.kwargs.content` 양쪽 방어.
+- OpenAI built-in `web_search` 는 ServerTool — ClientTool 의
+  `tool_call_chunks` 가 아니라 `additional_kwargs.tool_outputs[]`
+  (`{type:"web_search_call", action:{queries}}`) **다른 채널**로 온다.
+  ClientTool 채널만 보면 웹검색이 안 잡힘(extractToolOutputs 별도 수집).
 
 ## 보안
 
