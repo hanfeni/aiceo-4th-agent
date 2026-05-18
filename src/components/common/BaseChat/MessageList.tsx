@@ -34,19 +34,19 @@ import type { ChatMessage } from "@/types";
 const SUGGESTED_PROMPTS: { icon: ReactNode; text: string }[] = [
   {
     icon: <Sparkles size={12} strokeWidth={2.1} aria-hidden />,
-    text: "최근 30일 검색광고 ROAS 상위 5개 광고주를 알려줘",
+    text: "LangGraph와 일반 LLM 호출의 차이를 쉽게 설명해줘",
   },
   {
     icon: <Sparkles size={12} strokeWidth={2.1} aria-hidden />,
-    text: "의사 커뮤니티에서 이번 주 가장 많이 언급된 토픽은?",
+    text: "아래 글을 3문장으로 요약해줘 (글은 이어서 붙여넣을게)",
   },
   {
     icon: <Sparkles size={12} strokeWidth={2.1} aria-hidden />,
-    text: "캠페인별 의사 인증 회원 노출 비중을 비교해줘",
+    text: "주간 회고를 작성하려는데 어떤 항목을 넣으면 좋을까?",
   },
   {
     icon: <Sparkles size={12} strokeWidth={2.1} aria-hidden />,
-    text: "사용자 세션이 가장 많은 시간대를 분석해줘",
+    text: "재귀 함수를 단계별로 디버깅하는 방법을 알려줘",
   },
 ];
 
@@ -116,7 +116,7 @@ function EmptyState({
             lineHeight: 1.6,
           }}
         >
-          광고주 · 캠페인 · 의사 커뮤니티 · 사용성 데이터를 자연어로 질문하세요.
+          궁금한 것을 자연어로 자유롭게 질문하세요.
           <br />
           추천 질문을 선택하거나 직접 입력하실 수 있습니다.
         </div>

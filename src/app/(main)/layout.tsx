@@ -27,8 +27,9 @@ import {
  */
 
 // 고정 표시 이메일(Header — requirements.md §1.8 "고정 이메일 표시").
-const FIXED_USER_EMAIL = "dhkim@medicnc.co.kr";
-const USER_INITIALS = "DH";
+// PUBLIC 저장소 노출 방지를 위해 실명/사내 이메일 대신 예시값 사용.
+const FIXED_USER_EMAIL = "user@example.com";
+const USER_INITIALS = "US";
 
 const iconBtn: CSSProperties = {
   width: 26,
@@ -89,7 +90,16 @@ function Sidebar(): ReactNode {
         >
           M
         </span>
-        <div style={{ flex: 1, lineHeight: 1.2, minWidth: 0 }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            lineHeight: 1.2,
+          }}
+        >
           <div
             style={{
               fontWeight: 600,
@@ -217,7 +227,16 @@ function Sidebar(): ReactNode {
         >
           {USER_INITIALS}
         </div>
-        <div style={{ flex: 1, lineHeight: 1.2, minWidth: 0 }}>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            lineHeight: 1.2,
+          }}
+        >
           <div
             className="truncate"
             style={{

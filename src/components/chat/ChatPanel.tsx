@@ -94,6 +94,7 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
               fontWeight: 600,
               color: "var(--text-default)",
               letterSpacing: "-0.005em",
+              lineHeight: 1,
             }}
           >
             새 대화
@@ -103,6 +104,7 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
               fontSize: 11.5,
               color: "var(--text-subtle)",
               whiteSpace: "nowrap",
+              lineHeight: 1,
             }}
           >
             · {messageCount}개 메시지
