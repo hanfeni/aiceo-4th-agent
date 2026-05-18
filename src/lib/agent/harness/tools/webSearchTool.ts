@@ -23,24 +23,20 @@ import { tools as openaiTools } from "@langchain/openai";
 /**
  * webSearch 구성 옵션을 만드는 순수 함수 (단위 테스트 대상).
  *
- * TODO(USER): 운영 정책을 여기서 결정한다. 아래 셋의 트레이드오프:
+ * 운영 정책 확정(사용자 결정 — 보수적 기본):
+ *  - search_context_size: "medium" — 비용·지연과 근거 풍부도의 균형.
+ *    범용 시작점. 운영 데이터 누적 후 high/low 로 조정 가능.
+ *  - filters.allowedDomains 미지정 — 도메인 화이트리스트로 좁히면
+ *    최신·롱테일 정보 누락 위험. 필터 없이 시작(추후 정책화 여지).
+ *  - userLocation 미지정 — 위치 노출 회피 + 지역 무관 질의가 다수.
  *
- *  - filters.allowedDomains: 신뢰 도메인만 허용 → 환각·저품질 출처 차단.
- *    단 도메인을 좁히면 최신·롱테일 정보 누락 위험 (최대 100개).
- *  - userLocation: 지역 질의("근처 ...") 정확도↑. 단 위치 노출,
- *    지역 무관 질의엔 무의미. type:"approximate" 만 지원.
- *  - search_context_size("low"|"medium"|"high"): 컨텍스트 윈도우 사용량.
- *    high → 근거 풍부·정확도↑ but 토큰 비용·지연↑. 기본 "medium".
- *
- * 빈 객체({})를 넘기면 OpenAI 기본값(필터 없음·medium)으로 동작한다.
- * 가장 보수적인 시작점이 무엇인지는 운영 의도에 달려 있다.
+ * 옵션 타입 실측: @langchain/openai WebSearchOptions
+ * (search_context_size?: "low"|"medium"|"high").
  */
 export function buildWebSearchOptions(): Parameters<
   typeof openaiTools.webSearch
 >[0] {
-  // TODO(USER): 5~10줄 — 운영 정책 반영. 예: 신뢰 도메인 화이트리스트,
-  // search_context_size, (필요 시) userLocation. 미정이면 {} 반환 유지.
-  return {};
+  return { search_context_size: "medium" };
 }
 
 /**

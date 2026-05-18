@@ -189,7 +189,13 @@ describe("POST /api/chat — SSE + Zod(AD-4) + cancel(AD-5a)", () => {
   });
 
   // --- TC-1.6: createStream mid-stream throw → SSE error 이벤트 + 종료 ---
-  it("TC-1.6: createStream 제너레이터 mid-stream throw → SSE {type:'error',message} + 스트림 종료(좀비 0)", async () => {
+  // 보안(Gate 3 LOW): provider SDK 에러 원문에 키 일부·내부 경로 등 민감
+  // 정보가 담길 수 있으므로 클라이언트엔 고정 일반화 문구만, 상세(원문+
+  // stack)는 서버 로그(console.error)에만 남긴다.
+  const GENERIC_ERROR_MESSAGE =
+    "응답 생성 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
+
+  it("TC-1.6: createStream 제너레이터 mid-stream throw → SSE {type:'error'} 고정 일반화 문구 + 스트림 종료(좀비 0)", async () => {
     async function* throwingGen(): AsyncGenerator<{ type: string; text: string }> {
       yield { type: "token", text: "안" };
       throw new Error("rate limit exceeded");
@@ -203,10 +209,49 @@ describe("POST /api/chat — SSE + Zod(AD-4) + cancel(AD-5a)", () => {
     const events = parseSseEvents(await drainBody(res));
     const errEv = events.find((e) => e.type === "error");
     expect(errEv).toBeTruthy();
-    expect(String(errEv?.message)).toContain("rate limit exceeded");
+    // 클라이언트엔 provider 원문이 아니라 고정 일반화 문구만.
+    expect(errEv?.message).toBe(GENERIC_ERROR_MESSAGE);
     // thread 가 먼저, error 가 마지막.
     expect(events[0]?.type).toBe("thread");
     expect(events[events.length - 1]?.type).toBe("error");
+  });
+
+  // --- TC-1.6 보안 회귀 가드: provider 원문이 SSE 와이어에 절대 안 실림 ---
+  it("TC-1.6(보안): provider 에러 원문 문자열이 SSE wire 에 미포함 + console.error 로 서버측에만 상세 기록(Gate 3 LOW)", async () => {
+    // 키 일부·내부 경로를 흉내낸 민감 토큰을 에러 메시지에 심는다.
+    const SECRET = "sk-live-AKIA_INTERNAL_PATH_/var/secrets/openai.key";
+    async function* throwingGen(): AsyncGenerator<{ type: string; text: string }> {
+      yield { type: "token", text: "안" };
+      throw new Error(`OpenAI 5xx upstream: ${SECRET}`);
+    }
+    createStreamSpy.mockResolvedValue(throwingGen());
+
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      const res = await POST(postReq({ query: "안녕", conversationId: "c1" }));
+      const wire = await drainBody(res);
+
+      // (1) SSE wire(클라이언트로 나가는 바이트) 어디에도 원문/시크릿 미포함.
+      expect(wire).not.toContain(SECRET);
+      expect(wire).not.toContain("OpenAI 5xx upstream");
+      // (2) error 이벤트 message 는 고정 일반화 문구뿐.
+      const events = parseSseEvents(wire);
+      const errEv = events.find((e) => e.type === "error");
+      expect(errEv?.message).toBe(GENERIC_ERROR_MESSAGE);
+      // (3) 상세는 서버 로그(console.error)에만 — 원본 Error 가 전달됨.
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[/api/chat] stream error:",
+        expect.any(Error),
+      );
+      const loggedErr = errorSpy.mock.calls
+        .flat()
+        .find((a): a is Error => a instanceof Error);
+      expect(loggedErr?.message).toContain(SECRET);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   // --- TC-26.4: SSE 인젝션 차단(개행/data:/event: 경계 이스케이프) ---

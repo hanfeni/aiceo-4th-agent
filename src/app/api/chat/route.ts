@@ -91,8 +91,17 @@ export async function POST(req: Request): Promise<Response> {
         controller.enqueue(encodeSse({ type: "done" }));
       } catch (err) {
         // 제너레이터 throw(rate limit/5xx 등) → error 이벤트 후 종료(좀비 0).
-        const message = err instanceof Error ? err.message : String(err);
-        controller.enqueue(encodeSse({ type: "error", message }));
+        // 보안(Gate 3 LOW): provider SDK 에러 원문에 민감정보(키 일부·
+        // 내부 경로)가 담길 수 있으므로 클라이언트엔 **일반화 메시지**만
+        // 보내고, 상세(message+stack)는 서버 로그에만 남긴다.
+        console.error("[/api/chat] stream error:", err);
+        controller.enqueue(
+          encodeSse({
+            type: "error",
+            message:
+              "응답 생성 중 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+          }),
+        );
       } finally {
         controller.close();
       }

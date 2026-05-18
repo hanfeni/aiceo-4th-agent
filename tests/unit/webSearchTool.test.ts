@@ -31,9 +31,19 @@ describe("buildWebSearchOptions (순수 함수)", () => {
     expect(Array.isArray(opts)).toBe(false);
   });
 
-  it("기본값은 빈 옵션 — OpenAI 기본(필터 없음·medium) 동작 (TODO(USER) 미정 상태)", () => {
-    // 운영 정책(buildWebSearchOptions TODO)이 채워지면 이 단언을 갱신한다.
-    expect(buildWebSearchOptions()).toEqual({});
+  it("운영 정책 확정값: { search_context_size: 'medium' } 만 반환 (필터·위치 미지정)", () => {
+    // 사용자 결정(보수적 기본): 비용·지연과 근거 풍부도의 균형 → medium.
+    // filters.allowedDomains / userLocation 은 의도적으로 미지정(최신·롱테일
+    // 누락 회피 + 위치 노출 회피). 그 외 키가 새로 붙으면 이 단언이 깨져
+    // 정책 변경을 강제 인지하게 한다(toEqual = 정확 일치).
+    expect(buildWebSearchOptions()).toEqual({ search_context_size: "medium" });
+  });
+
+  it("filters / userLocation 키는 포함하지 않는다 (미지정 정책 회귀 가드)", () => {
+    const opts = buildWebSearchOptions() as Record<string, unknown>;
+    expect(opts).not.toHaveProperty("filters");
+    expect(opts).not.toHaveProperty("userLocation");
+    expect(Object.keys(opts)).toEqual(["search_context_size"]);
   });
 });
 
@@ -48,6 +58,16 @@ describe("webSearchTool (ServerTool 형태)", () => {
     const t = webSearchTool as Record<string, unknown>;
     expect(typeof t.invoke).not.toBe("function");
     expect(typeof t.func).not.toBe("function");
+  });
+
+  it("buildWebSearchOptions() 의 search_context_size='medium' 이 ServerTool 선언에 반영된다", () => {
+    // webSearchTool = openaiTools.webSearch(buildWebSearchOptions()) 이므로
+    // 확정 정책(medium)이 런타임 선언 객체에 실려야 한다(옵션 누락 회귀 가드).
+    // @langchain/openai 가 옵션을 어느 키로 펼치든(searchContextSize 등)
+    // 값 'medium' 이 선언 어딘가에 직렬화돼 존재해야 한다.
+    const serialized = JSON.stringify(webSearchTool);
+    expect(serialized).toContain("medium");
+    expect(webSearchTool).toMatchObject({ type: "web_search" });
   });
 });
 

@@ -46,14 +46,8 @@ interface ChunkShape {
  *     type:"web_search_call", status:"completed",
  *     action:{ type:"search", queries:[...], query:"..." } }]
  * ClientTool 의 tool_call_chunks(점진 델타)와 경로·형태가 다르다.
- * type 이 *_call 로 끝나는 완결 호출 1건이다(델타 누적 불필요).
+ * `extractToolOutputs` 가 인라인으로 안전 접근(별도 인터페이스 불요).
  */
-interface ServerToolOutput {
-  id?: unknown;
-  type?: unknown;
-  status?: unknown;
-  action?: { type?: unknown; query?: unknown; queries?: unknown };
-}
 
 /** 스트림 part[1] 메타데이터의 본 필터가 사용하는 부분. */
 interface ChunkMeta {
@@ -202,6 +196,11 @@ export interface ToolCallDelta {
  * 분리된 별도 채널(FR-09 유지) — filterChunk 는 이미 tool_call_chunks
  * 있으면 본문에서 제외한다.
  *
+ * **ClientTool 단일 채널.** ServerTool(web_search 등 provider 측 실행,
+ * additional_kwargs.tool_outputs)은 `extractToolOutputs` 가 전담한다.
+ * 한 청크를 양쪽이 잡아 tool_call 이 이중 emit 되던 문제를 일원화
+ * (code-review 권장 — agent.ts 에서 두 추출기를 별도 호출, 채널 분리).
+ *
  * @returns 도구 호출 델타 배열(비어있으면 null).
  */
 export function extractToolCalls(
@@ -214,7 +213,8 @@ export function extractToolCalls(
   const chunk = msg as ChunkShape;
   const kwargs = isRecord(chunk.kwargs) ? chunk.kwargs : undefined;
 
-  // ① ClientTool 경로 — tool_call_chunks 점진 델타(기존 동작 보존).
+  // ClientTool 경로만 — tool_call_chunks 점진 델타. ServerTool 은
+  // extractToolOutputs 단일 채널(중복 emit 일원화).
   const tcc = chunk.tool_call_chunks ?? kwargs?.tool_call_chunks;
   if (Array.isArray(tcc) && tcc.length > 0) {
     const out: ToolCallDelta[] = [];
@@ -229,51 +229,7 @@ export function extractToolCalls(
     if (out.length > 0) return out;
   }
 
-  // ② ServerTool 경로 — additional_kwargs.tool_outputs 완결 호출
-  //    (web_search 등 provider 측 실행). 기존엔 ② 부재로 못 잡았다.
-  const ao = chunk.additional_kwargs ?? kwargs?.additional_kwargs;
-  const outputs = isRecord(ao) ? ao.tool_outputs : undefined;
-  if (Array.isArray(outputs) && outputs.length > 0) {
-    const out = mapServerToolOutputs(outputs);
-    if (out.length > 0) return out;
-  }
-
   return null;
-}
-
-/**
- * ServerTool 출력 배열을 ToolCallDelta[] 로 정규화한다(순수 함수).
- *
- * type "web_search_call" → name "web_search" (ClientTool 과 동일 채널로
- * 통일 — agent.ts/UI 무수정). 검색어를 args 에 담아 UI 가 의미있게
- * 표시할 수 있게 한다.
- *
- * TODO(USER): args 매핑·status 정책 결정 (5~10줄). 트레이드오프:
- *  - args 에 무엇을: action.query(대표 1개, 짧음) vs action.queries
- *    (전체 배열, 풍부) vs action 전체 JSON(범용, 길다). UI 표시 품질↔간결.
- *  - status 정책: completed 만 방출(중복 0, 단 진행 표시 늦음) vs 모든
- *    status 방출(실시간 "검색 중" 가능, 단 같은 id 중복 → 클라이언트
- *    dedup 책임). ClientTool 은 델타라 자연 누적되지만 ServerTool 은
- *    완결 호출이라 정책을 명시해야 한다.
- *  미정 시 보수적 기본(completed 만, args=query)로 두고 추후 조정.
- */
-export function mapServerToolOutputs(outputs: unknown[]): ToolCallDelta[] {
-  const out: ToolCallDelta[] = [];
-  for (const o of outputs) {
-    if (!isRecord(o)) continue;
-    const so = o as ServerToolOutput;
-    const type = typeof so.type === "string" ? so.type : "";
-    if (!type.endsWith("_call")) continue; // web_search_call 등만
-    const name = type.replace(/_call$/, ""); // web_search_call → web_search
-    // TODO(USER): status 게이트 + args 구성을 정책에 맞춰 구현.
-    // 현재는 최소 동작(보수적 기본 — status 무관·args 미설정)만 둔다.
-    out.push({
-      id: typeof so.id === "string" ? so.id : undefined,
-      name,
-      args: undefined, // TODO(USER): action.query / queries / JSON 중 결정
-    });
-  }
-  return out;
 }
 
 /** 도구 실행 결과 1건(OUT). */
@@ -350,7 +306,14 @@ export interface ToolOutputDelta {
  * `{ id, type:"web_search_call", status, action:{type:"search",
  * queries:[...] } }` 형태로 온다. 그래서 extractToolCalls/Result 가
  * 못 잡는다(사용자 보고: "웹검색만 마크 안 됨"의 원인). 이 함수가
- * ServerTool 채널을 별도 수집한다. FR-09 유지(본문 미혼입 — 별도 채널).
+ * ServerTool 채널을 **단독** 전담한다(extractToolCalls 의 ServerTool
+ * 경로 제거 — 이중 emit 일원화). FR-09 유지(본문 미혼입 — 별도 채널).
+ *
+ * 정책 확정(사용자 결정):
+ *  - args = JSON.stringify({ queries }) — 모델이 던진 **전체 검색어
+ *    배열**을 사고 패널 IN 칸에 풍부하게 표시(디버깅·투명성 우선).
+ *  - result = status 원문(completed 등). status 게이트 없이 매 호출
+ *    방출하되 store reduceToolResult 가 id 매칭으로 자연 누적.
  *
  * @returns ServerTool 호출 배열 또는 null.
  */
