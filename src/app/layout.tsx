@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DeepAgents Chat",
+  title: "AICEO-4th AGENT",
   description: "LangGraph DeepAgents(JS) 하네스 + 스트리밍 챗 에이전트",
 };
 

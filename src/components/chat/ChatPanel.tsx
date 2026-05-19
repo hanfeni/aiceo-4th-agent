@@ -38,12 +38,34 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
   });
   const isStreaming = useChatStore((s) => s.isStreaming);
 
-  // stale isStreaming 복구. 마운트 시점엔 진행 중인 fetch 가 없다(전송은
-  // 사용자 액션으로만 시작). dev HMR/비정상 종료로 isStreaming=true 가
-  // 모듈 싱글톤에 남으면 입력이 영구 잠기므로(R6 함정의 역방향 — HMR 이
-  // 런타임 상태를 보존) 마운트 1회 false 로 정상화한다.
+  // stale isStreaming 복구 (SSE 가 store 싱글톤으로 이사된 뒤 핵심 분기).
+  //
+  // 이전엔 마운트 시 isStreaming=true 면 무조건 false 화했다. 그러나
+  // 이제 SSE 루프가 store.startStream 에서 돌므로, 메뉴 다녀와
+  // ChatPanel 이 재마운트될 때 **실제 진행 중인 스트림**이 있을 수 있다.
+  // 무조건 false 화하면 살아있는 스트림 UI 가 끊긴다(원래 버그의 변형).
+  //
+  // 구분: isStreaming=true 이면서
+  //  - isStreamActive()=true  → live(메뉴 다녀와도 진행 중) → 건드리지 X
+  //  - isStreamActive()=false → stale(dev HMR/비정상 종료 잔여) → false 화
+  //
+  // TODO(learning): 아래 shouldRecover() 의 stale 판정을 확정하라.
+  // 핵심 트레이드오프 — dev HMR 로 store 모듈이 재평가되면 클로저
+  // 변수 activeController 가 새로 만들어져 isStreamActive()=false 가
+  // 될 수 있다(live 인데 stale 로 오판 → 진행 스트림 끊김). 반대로
+  // 너무 보수적이면(항상 live 로 간주) 진짜 stale 잠금이 안 풀린다.
+  // 고려: ① isStreamActive() 만으로 충분한가 ② messages 마지막이
+  // 빈 assistant + isStreaming 인 조합을 보조 신호로 쓸까 ③ dev
+  // (process.env.NODE_ENV)에서만 공격적 복구할까. 5~10줄로 확정.
+  const shouldRecover = (): boolean => {
+    const s = chatStore.getState();
+    // PLACEHOLDER — 사용자가 stale 판정 정책을 확정할 지점.
+    // 기본 골격: live 신호 없을 때만 복구(가장 단순·안전한 출발점).
+    return s.isStreaming && !s.isStreamActive();
+  };
+
   useEffect(() => {
-    if (chatStore.getState().isStreaming) {
+    if (shouldRecover()) {
       chatStore.getState().setStreaming(false);
     }
   }, []);
@@ -58,8 +80,18 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
   }, []);
 
   const onSend = useCallback(
-    (value: string) => {
-      void send(value);
+    (value: string, files?: File[]) => {
+      void send(value, files);
+    },
+    [send],
+  );
+
+  // 추천 질문 칩 클릭 → 그 질문을 즉시 전송(사용자 결정 — 입력창
+  // 주입 onPickPrompt 와 구분). startStream 의 중복 가드가 진행 중
+  // 연타를 흡수하므로 별도 잠금 불필요.
+  const onRecQuery = useCallback(
+    (text: string) => {
+      void send(text);
     },
     [send],
   );
@@ -129,7 +161,7 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
       </div>
 
       {/* Messages area */}
-      <MessageList onPickPrompt={onPickPrompt} />
+      <MessageList onPickPrompt={onPickPrompt} onRecQuery={onRecQuery} />
 
       {/* Input bar — key 로 추천칩 주입 시 리마운트(초기값 반영) */}
       <ChatInput

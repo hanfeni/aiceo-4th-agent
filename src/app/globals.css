@@ -72,6 +72,19 @@
   --t-neutral-12: rgba(67, 73, 78, 0.12);
   --t-neutral-16: rgba(67, 73, 78, 0.16);
 
+  /* Control Atoms (medigate-manager Anthropic Theme2 폼 컴포넌트 정합 —
+     하네스/검색/메타/DART 4메뉴 입력 컴포넌트 레퍼런스. 폼 높이 34px,
+     focus=blue-500 ring. 기존 토큰(--t-neutral-6/8/12/16, --blue-700,
+     --r-sm, --surface/--text)은 재사용, 아래는 누락분만 추가). */
+  --blue-500: #2194f3;
+  --neutral-500: #848f99;
+  --neutral-700: #595f66;
+  --gray-800: #1a1a1a;
+  --t-neutral-32: rgba(67, 73, 78, 0.32);
+  --t-blue-6: rgba(33, 148, 243, 0.06);
+  --t-blue-8: rgba(33, 148, 243, 0.08);
+  --t-blue-12: rgba(33, 148, 243, 0.12);
+
   /* Semantic */
   --text-default: var(--medi-gray-800);
   --text-subtle: var(--neutral-600);
@@ -84,13 +97,43 @@
   --foreground: var(--text-default);
 }
 
-html,
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  letter-spacing: -0.005em;
+/* 디자인 원본: body 전역 폰트 + .dc-shell 스코프(font-size 13 /
+   letter-spacing -0.005em). 본 프로젝트는 .dc-shell 클래스를 쓰지
+   않고 앱 전체가 곧 셸이므로 셸 스코프 토큰을 body 로 흡수한다.
+   @layer base 로 감싸 Tailwind Preflight 보다 뒤 cascade 를
+   보장한다(@theme 자동 바인딩과 더불어 이중 안전장치).
+
+   ⚠ html 에는 font-size 를 주지 않는다. rem 은 root(html) 기준이라
+   html=13px 로 두면 Tailwind text-sm(0.875rem) 등 모든 rem/유틸리티가
+   13/16 비율로 축소된다(답변 본문 ~11px 로 작아지는 버그). 디자인의
+   13px 셸 기준은 body 에만 적용 — em/상속 기반 요소에만 영향. */
+@layer base {
+  html {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.005em;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.005em;
+  }
+
+  /* 디자인: 폼 요소는 폰트를 상속받지 못해 한글이 깨진다.
+     .dc-shell input/button/textarea { font-family: inherit } 이식. */
+  input,
+  button,
+  textarea,
+  select {
+    font-family: inherit;
+    letter-spacing: inherit;
+  }
 }
 
 * {
@@ -133,4 +176,175 @@ body {
     transform: scale(1);
     opacity: 1;
   }
+}
+
+/* 대화 기록 Popover 등장(디자인 chat.jsx:881 ConvHistoryPopover). */
+@keyframes popoverIn {
+  from {
+    transform: translateY(-6px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ────────────────────────────────────────────────────────────
+   Control Atoms — medigate-manager Anthropic Theme2 폼 컴포넌트
+   1:1 정합. 인라인 style 로는 :hover / :focus-within / select
+   커스텀 화살표를 못 만들어(정적 한계) 클래스로 분리.
+   하네스·검색·메타·DART 4메뉴가 className 으로 공유 → "동일
+   컴포넌트 = 동일 디자인". 폼 높이 34px 통일.
+   ──────────────────────────────────────────────────────────── */
+
+/* 그룹 accent 변수 — 컴포넌트 구조는 동일(medigate 원칙), 색만
+   컨텍스트로 치환. 기본 = 검색·라벨링 그룹(blue). AI 에이전트 그룹
+   (챗·하네스·DART) 페이지 루트에 .cf-scope--agent 1클래스만 붙이면
+   그 안 모든 cf-* 가 보라로 — 변형 클래스 N개 불필요. */
+:root {
+  --cf-solid: var(--blue-500);
+  --cf-solid-strong: var(--blue-700);
+  --cf-soft-bg: var(--t-blue-8);
+  --cf-soft-border: var(--t-blue-12);
+  --cf-soft-text: var(--blue-700);
+}
+.cf-scope--agent {
+  --cf-solid: var(--agent-500);
+  --cf-solid-strong: var(--agent-700);
+  --cf-soft-bg: color-mix(in srgb, var(--agent-500) 12%, transparent);
+  --cf-soft-border: color-mix(in srgb, var(--agent-500) 22%, transparent);
+  --cf-soft-text: var(--agent-700);
+}
+
+/* .cf-field — input / select 공통 (medigate .field) */
+.cf-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: var(--r-sm);
+  background: var(--surface-default);
+  border: 1px solid var(--t-neutral-16);
+  font-size: 13px;
+  color: var(--gray-800);
+  letter-spacing: -0.01em;
+  outline: none;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
+}
+.cf-field::placeholder {
+  color: var(--neutral-500);
+}
+.cf-field:hover {
+  border-color: var(--t-neutral-32);
+}
+.cf-field:focus,
+.cf-field:focus-within {
+  border-color: var(--cf-solid);
+  box-shadow: 0 0 0 3px var(--cf-soft-border);
+}
+
+/* .cf-select — select 네이티브 화살표 제거 + medigate chevron */
+.cf-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23848f99' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+/* .cf-btn — 버튼 (medigate .btn) */
+.cf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 16px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid var(--t-neutral-16);
+  background: var(--surface-default);
+  color: var(--gray-800);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+.cf-btn:hover:not(:disabled) {
+  background: var(--medi-gray-100);
+}
+.cf-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.cf-btn--primary {
+  background: var(--cf-solid);
+  border-color: var(--cf-solid);
+  color: #fff;
+}
+.cf-btn--primary:hover:not(:disabled) {
+  background: var(--cf-solid-strong);
+  border-color: var(--cf-solid-strong);
+}
+.cf-btn--accent {
+  background: var(--cf-soft-bg);
+  border-color: var(--cf-soft-border);
+  color: var(--cf-soft-text);
+}
+.cf-btn--accent:hover:not(:disabled) {
+  background: var(--cf-soft-border);
+}
+
+/* .cf-pill — 칩/필 토글 (medigate PillTog, 높이 24px) */
+.cf-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 12px;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  border-radius: 999px;
+  border: 1px solid var(--t-neutral-8);
+  background: var(--t-neutral-6);
+  color: var(--neutral-700);
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+.cf-pill:hover {
+  border-color: var(--t-neutral-32);
+}
+.cf-pill[aria-pressed="true"],
+.cf-pill.is-active {
+  background: var(--cf-soft-bg);
+  border-color: var(--cf-soft-border);
+  color: var(--cf-soft-text);
+}
+
+/* 메타랩 올인원 — 진행 중 단계 페이드인 (key 변경 시 remount→재생).
+   사용자 결정 2026-05-19: 블록을 아래로 쌓지 말고 현재 단계만
+   페이드로 교체 표시(효과를 본다). 다음 블록 등장 시 이전은
+   언마운트되어 자연 페이드아웃 효과. popoverIn 패턴 일관. */
+@keyframes cfMetaFade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.cf-meta-fade {
+  animation: cfMetaFade 0.35s ease-out;
 }

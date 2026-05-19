@@ -341,4 +341,139 @@ describe("POST /api/chat — SSE + Zod(AD-4) + cancel(AD-5a)", () => {
     expect(codeOnly).not.toMatch(/E2E_MOCK/);
     expect(codeOnly).not.toMatch(/MOCK_MODE/);
   });
+
+  // --- 런타임 모델 선택: bodySchema.model zod enum (FR-14·FR-15 / AD-14 / C5) ---
+  describe("model 필드 — zod enum 검증 SSOT", () => {
+    it("허용 모델(gpt-5.5)은 createStream 에 model 로 전달된다", async () => {
+      createStreamSpy.mockResolvedValue(twoTokenGen());
+      const res = await POST(
+        postReq({ query: "안녕", conversationId: "c1", model: "gpt-5.5" }),
+      );
+      expect(res.status).toBe(200);
+      expect(createStreamSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: "안녕",
+          conversationId: "c1",
+          model: "gpt-5.5",
+        }),
+      );
+    });
+
+    it.each(["gpt-5.4", "gpt-5.4-mini"])(
+      "허용 모델 '%s' → 200 + model 전달",
+      async (m) => {
+        createStreamSpy.mockResolvedValue(twoTokenGen());
+        const res = await POST(postReq({ query: "q", model: m }));
+        expect(res.status).toBe(200);
+        expect(createStreamSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ model: m }),
+        );
+      },
+    );
+
+    it("화이트리스트 밖 model(gpt-4o) → 400 application/json, createStream 미호출", async () => {
+      const res = await POST(
+        postReq({ query: "안녕", model: "gpt-4o" }),
+      );
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).toMatch(/application\/json/);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("model 타입 오류(숫자) → 400, createStream 미호출", async () => {
+      const res = await POST(postReq({ query: "안녕", model: 123 }));
+      expect(res.status).toBe(400);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("model 미전송(optional) → 200, createStream 에 model 미포함(env 경로)", async () => {
+      createStreamSpy.mockResolvedValue(twoTokenGen());
+      const res = await POST(postReq({ query: "안녕" }));
+      expect(res.status).toBe(200);
+      const arg = createStreamSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg.model).toBeUndefined();
+    });
+
+    it("model 검증 실패는 SSE 아닌 JSON 400 (AD-4 패턴 일관)", async () => {
+      const res = await POST(postReq({ query: "안녕", model: "evil-model" }));
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).not.toMatch(/event-stream/);
+      const body = (await res.json()) as { error?: string };
+      expect(typeof body.error).toBe("string");
+    });
+  });
+
+  // --- 멀티모달 이미지: images zod refine (Plan Critic E2/A1) ---
+  describe("images 필드 — base64 data URL + 크기/개수 한도", () => {
+    const pngDataUrl = "data:image/png;base64,iVBORw0KGgo=";
+
+    it("유효한 image data URL 배열 → createStream 에 images 전달", async () => {
+      createStreamSpy.mockResolvedValue(twoTokenGen());
+      const res = await POST(
+        postReq({ query: "이 이미지 설명해줘", images: [pngDataUrl] }),
+      );
+      expect(res.status).toBe(200);
+      expect(createStreamSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ images: [pngDataUrl] }),
+      );
+    });
+
+    it("images 미전송(optional) → 200, createStream 에 images 미포함(무회귀)", async () => {
+      createStreamSpy.mockResolvedValue(twoTokenGen());
+      const res = await POST(postReq({ query: "안녕" }));
+      expect(res.status).toBe(200);
+      const arg = createStreamSpy.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(arg.images).toBeUndefined();
+    });
+
+    it("data:image/ 아닌 임의 data URL → 400 (E2: MIME 화이트리스트)", async () => {
+      const res = await POST(
+        postReq({
+          query: "x",
+          images: ["data:text/html;base64,PHNjcmlwdD4="],
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("일반 URL(http) 주입 → 400 (data URL 만 허용)", async () => {
+      const res = await POST(
+        postReq({ query: "x", images: ["https://evil.com/x.png"] }),
+      );
+      expect(res.status).toBe(400);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("턴당 이미지 개수 초과(>3) → 400 (A1 누적 완화)", async () => {
+      const res = await POST(
+        postReq({ query: "x", images: Array(4).fill(pngDataUrl) }),
+      );
+      expect(res.status).toBe(400);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("거대 이미지(1MB 초과 base64) → 400 (E2: 크기 상한)", async () => {
+      const huge = "data:image/png;base64," + "A".repeat(2_000_000);
+      const res = await POST(postReq({ query: "x", images: [huge] }));
+      expect(res.status).toBe(400);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("거대 query(추출 텍스트 폭주) → 400 (E1: query 길이 상한)", async () => {
+      const res = await POST(postReq({ query: "A".repeat(300_000) }));
+      expect(res.status).toBe(400);
+      expect(createStreamSpy).not.toHaveBeenCalled();
+    });
+
+    it("images 검증 실패는 SSE 아닌 JSON 400 (AD-4 일관)", async () => {
+      const res = await POST(
+        postReq({ query: "x", images: ["not-a-data-url"] }),
+      );
+      expect(res.status).toBe(400);
+      expect(res.headers.get("content-type")).not.toMatch(/event-stream/);
+      const body = (await res.json()) as { error?: string };
+      expect(typeof body.error).toBe("string");
+    });
+  });
 });

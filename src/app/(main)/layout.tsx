@@ -1,13 +1,7 @@
 import type { ReactNode, CSSProperties } from "react";
 import Link from "next/link";
-import {
-  ChevronDown,
-  MoreHorizontal,
-  MessageSquare,
-  Megaphone,
-  Users,
-  BarChart3,
-} from "lucide-react";
+import { ChevronDown, MoreHorizontal, Home } from "lucide-react";
+import { AgentNav } from "./AgentNav";
 
 /**
  * (main) 그룹 셸 — 디자인 핸드오프 AdminCompactSidebar 재현.
@@ -38,12 +32,11 @@ const iconBtn: CSSProperties = {
   justifyContent: "center",
 };
 
-// 그룹 nav — 시각 전용 mock(미구현). "채팅"만 실 라우트.
-const MOCK_NAV: { icon: ReactNode; label: string }[] = [
-  { icon: <Megaphone size={14} aria-hidden />, label: "검색광고" },
-  { icon: <Users size={14} aria-hidden />, label: "의사 커뮤니티" },
-  { icon: <BarChart3 size={14} aria-hidden />, label: "사용성 분석" },
-];
+// 그룹 accent(보라/blue)는 AgentNav.tsx 가 그룹별로 관리한다
+// (layout 의 단일 박스/헤더 wrapper 제거 — 이중 박스 해소).
+
+// 그룹 항목 + active(현재 경로) 강조는 AgentNav.tsx
+// (client — usePathname). layout 은 server 유지를 위해 nav 조각만 분리.
 
 function Sidebar(): ReactNode {
   return (
@@ -82,7 +75,7 @@ function Sidebar(): ReactNode {
             fontSize: 12,
           }}
         >
-          M
+          4
         </span>
         <div
           style={{
@@ -101,7 +94,7 @@ function Sidebar(): ReactNode {
               color: "var(--text-default)",
             }}
           >
-            DeepAgents Chat
+            AICEO-4th AGENT
           </div>
           <div style={{ fontSize: 10.5, color: "var(--text-subtle)" }}>
             에이전트 워크스페이스
@@ -112,7 +105,8 @@ function Sidebar(): ReactNode {
         </button>
       </div>
 
-      {/* Nav — "채팅" 실 링크 + 그룹 mock */}
+      {/* Nav — 디자인 소스 ShellB(B · Card Group) 정합.
+          홈(single 실 링크) + "AI 에이전트" 카드 그룹 1개. */}
       <nav
         className="thin-scroll"
         style={{
@@ -123,8 +117,9 @@ function Sidebar(): ReactNode {
           gap: 8,
         }}
       >
+        {/* 홈 — single nav. ShellB single 행 스타일(:80). */}
         <Link
-          href="/chat"
+          href="/"
           style={{
             display: "flex",
             alignItems: "center",
@@ -139,57 +134,16 @@ function Sidebar(): ReactNode {
             textDecoration: "none",
           }}
         >
-          <MessageSquare size={15} aria-hidden />
-          <span>채팅</span>
+          <Home size={15} aria-hidden />
+          <span>홈</span>
         </Link>
 
-        <div
-          style={{
-            background: "var(--surface-default)",
-            border: "1px solid var(--t-neutral-8)",
-            borderRadius: 12,
-            padding: 8,
-          }}
-        >
-          <div
-            style={{
-              padding: "4px 6px 6px",
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--text-subtle)",
-              textTransform: "uppercase",
-              letterSpacing: "0.04em",
-            }}
-          >
-            워크스페이스
-          </div>
-          {MOCK_NAV.map((it) => (
-            <button
-              key={it.label}
-              type="button"
-              disabled
-              title="준비 중"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                borderRadius: 8,
-                width: "100%",
-                border: "none",
-                background: "transparent",
-                color: "var(--text-subtle)",
-                fontSize: 12.5,
-                fontWeight: 500,
-                cursor: "not-allowed",
-                textAlign: "left",
-              }}
-            >
-              {it.icon}
-              <span style={{ flex: 1 }}>{it.label}</span>
-            </button>
-          ))}
-        </div>
+        {/* 그룹별 독립 카드 박스는 AgentNav 가 완결 렌더한다(레퍼런스
+            medigate 사이드바 — 검색광고/AI에이전트/도구처럼 그룹마다
+            형제 박스). layout 은 박스/헤더 wrapper 없이 AgentNav 만
+            nav 직속으로 둔다(이중 박스/이중 헤더 제거). active 강조는
+            usePathname 필요라 client 분리(AgentNav) — layout server 유지. */}
+        <AgentNav />
       </nav>
 
       {/* User card — 고정 이메일 표시(Header 등가, 스펙 §1.8). */}
@@ -239,7 +193,7 @@ function Sidebar(): ReactNode {
               color: "var(--text-default)",
             }}
           >
-            관리자
+            CEO
           </div>
           <div
             className="truncate"

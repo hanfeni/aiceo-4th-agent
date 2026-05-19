@@ -3,6 +3,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import clsx from "clsx";
@@ -129,7 +130,12 @@ export function ChatMarkdown({
       )}
     >
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        // remarkCjkFriendly: CommonMark flanking 규칙상 닫는 ** 앞이
+        // 따옴표·구두점이고 뒤에 한글(CJK)이 붙으면 강조가 무효화돼
+        // **굵게**가 리터럴 별표로 남는 문제를 보정한다(LLM 답변에 빈번:
+        // **"제목"**입니다 / **중요**: 등). micromark 토크나이저 단계만
+        // 확장하므로 아래 보안 불변식(rehype 체인)에는 영향 0.
+        remarkPlugins={[remarkGfm, remarkCjkFriendly]}
         // AD-5d: rehypeRaw 먼저 -> rehypeSanitize 뒤. 순서 변경 금지.
         rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
         components={components}

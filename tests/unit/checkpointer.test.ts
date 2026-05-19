@@ -33,7 +33,11 @@ vi.mock("@langchain/langgraph-checkpoint-sqlite", () => ({
 }));
 
 // 소스 모듈은 Slice 4 구현 전이라 부재 — TDD red 단계에서 import 실패가 정상.
-import { createCheckpointer } from "@/lib/agent/harness/checkpointer";
+import {
+  createCheckpointer,
+  getCheckpointer,
+  __resetCheckpointerSingletonForTest,
+} from "@/lib/agent/harness/checkpointer";
 
 const DATA_DIR = "./.data";
 const TEST_SQLITE_PATH = "./.data/test-x.sqlite";
@@ -78,12 +82,16 @@ describe("createCheckpointer — checkpointer 백엔드 분기 + AD-2 lazy (FR-1
   beforeEach(() => {
     fromConnStringSpy.mockClear();
     rmDataDir();
+    // Slice 1 — 싱글톤 캐시가 테스트 간 핸들을 누수시키지 않게 리셋.
+    // (캐시된 핸들은 이미 first-use 됐을 수 있어 fromConnString 재호출 0)
+    __resetCheckpointerSingletonForTest();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
     // 테스트가 만들었을 수 있는 ./.data/ 정리(AD-2 회귀 격리).
     rmDataDir();
+    __resetCheckpointerSingletonForTest();
   });
 
   // TC-11.3 / TC-25.16 — sqlite 분기: 최초 사용 시 CHECKPOINTER_SQLITE_PATH 로 fromConnString
@@ -153,6 +161,76 @@ describe("createCheckpointer — checkpointer 백엔드 분기 + AD-2 lazy (FR-1
     });
     triggerFirstUse(handle);
     triggerFirstUse(handle);
+    expect(fromConnStringSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Slice 1 — globalThis 싱글톤 (Plan Critic C2). 대화 히스토리 API 와 registry
+// 가 각각 createCheckpointer 를 호출해도 동일 env 면 같은 saver 인스턴스를
+// 공유해야 한다(별도 DB 핸들 = :memory: 모드에서 빈 DB 읽는 버그). agent.ts
+// 의 globalThis.__agent 패턴 미러링. AD-2 lazy 불변식은 그대로 유지.
+describe("checkpointer globalThis 싱글톤 (C2 — API↔registry 동일 인스턴스 공유)", () => {
+  beforeEach(() => {
+    fromConnStringSpy.mockClear();
+    rmDataDir();
+    __resetCheckpointerSingletonForTest();
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+    rmDataDir();
+    __resetCheckpointerSingletonForTest();
+  });
+
+  it("동일 env 로 createCheckpointer 2회 호출 시 같은 인스턴스 반환(메모이즈)", () => {
+    const env = {
+      HARNESS_CHECKPOINTER: "sqlite",
+      CHECKPOINTER_SQLITE_PATH: TEST_SQLITE_PATH,
+    };
+    const a = createCheckpointer(env);
+    const b = createCheckpointer(env);
+    expect(a).toBe(b);
+  });
+
+  it("getCheckpointer() 는 createCheckpointer 와 동일 인스턴스를 돌려준다(API 진입점)", () => {
+    const env = {
+      HARNESS_CHECKPOINTER: "sqlite",
+      CHECKPOINTER_SQLITE_PATH: TEST_SQLITE_PATH,
+    };
+    const fromRegistry = createCheckpointer(env);
+    const fromApi = getCheckpointer(env);
+    expect(fromApi).toBe(fromRegistry);
+  });
+
+  it("getCheckpointer() 단독 선호출도 1 인스턴스를 만들고 이후 createCheckpointer 가 그것을 재사용", () => {
+    const env = { HARNESS_CHECKPOINTER: "memory" };
+    const first = getCheckpointer(env);
+    const second = createCheckpointer(env);
+    expect(second).toBe(first);
+  });
+
+  it("AD-2 유지: 싱글톤이라도 인스턴스 획득만으로 fromConnString 미호출(lazy 불변)", () => {
+    const env = {
+      HARNESS_CHECKPOINTER: "sqlite",
+      CHECKPOINTER_SQLITE_PATH: TEST_SQLITE_PATH,
+    };
+    const handle = getCheckpointer(env);
+    createCheckpointer(env); // 재획득해도
+    expect(fromConnStringSpy).not.toHaveBeenCalled(); // 여전히 lazy
+
+    triggerFirstUse(handle);
+    expect(fromConnStringSpy).toHaveBeenCalledTimes(1);
+    expect(fromConnStringSpy).toHaveBeenCalledWith(TEST_SQLITE_PATH);
+  });
+
+  it("싱글톤 공유 결과: 두 경로 핸들이 같으므로 최초 사용 후 fromConnString 1회만", () => {
+    const env = {
+      HARNESS_CHECKPOINTER: "sqlite",
+      CHECKPOINTER_SQLITE_PATH: TEST_SQLITE_PATH,
+    };
+    const fromRegistry = createCheckpointer(env);
+    const fromApi = getCheckpointer(env);
+    triggerFirstUse(fromRegistry);
+    triggerFirstUse(fromApi);
     expect(fromConnStringSpy).toHaveBeenCalledTimes(1);
   });
 });

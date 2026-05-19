@@ -183,3 +183,76 @@ describe("createModel — LLM 프로바이더 추상화 (FR-10 / AC-9,10)", () =
     expect(chatOpenAISpy).not.toHaveBeenCalled();
   });
 });
+
+// --- 런타임 모델 선택: modelOverride 인자 (FR-14 / AD-12·AD-14) ---
+// Plan Critic C1 해소 검증: createModel(env, model?) 에서 model 이 주어지면
+// .env LLM_PROVIDER 와 무관하게 그 모델의 provider(MODEL_PROVIDER)로 역산.
+describe("createModel — modelOverride (런타임 모델 선택 / C1)", () => {
+  beforeEach(() => {
+    chatOpenAISpy.mockClear();
+    chatAnthropicSpy.mockClear();
+  });
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("modelOverride 지정 시 env.LLM_MODEL 대신 그 모델을 쓴다", () => {
+    createModel(
+      {
+        LLM_PROVIDER: "openai",
+        LLM_MODEL: "gpt-5.4-mini",
+        OPENAI_API_KEY: "sk-openai-test",
+      },
+      "gpt-5.5",
+    );
+    expect(chatOpenAISpy).toHaveBeenCalledTimes(1);
+    expect(modelIdOf(chatOpenAISpy.mock.calls[0]?.[0])).toBe("gpt-5.5");
+  });
+
+  it("C1: .env LLM_PROVIDER 가 anthropic 이어도 OpenAI 모델 override 면 ChatOpenAI 로 역산", () => {
+    createModel(
+      {
+        LLM_PROVIDER: "anthropic",
+        LLM_MODEL: "claude-x",
+        OPENAI_API_KEY: "sk-openai-test",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+      },
+      "gpt-5.4",
+    );
+    // provider 가 모델에서 역산됨 — anthropic env 였지만 OpenAI 생성.
+    expect(chatOpenAISpy).toHaveBeenCalledTimes(1);
+    expect(chatAnthropicSpy).not.toHaveBeenCalled();
+    expect(modelIdOf(chatOpenAISpy.mock.calls[0]?.[0])).toBe("gpt-5.4");
+  });
+
+  it("modelOverride 미지정(undefined) 시 기존 env 경로 그대로 (무회귀)", () => {
+    createModel({
+      LLM_PROVIDER: "openai",
+      LLM_MODEL: "gpt-5.4-mini",
+      OPENAI_API_KEY: "sk-openai-test",
+    });
+    expect(chatOpenAISpy).toHaveBeenCalledTimes(1);
+    expect(modelIdOf(chatOpenAISpy.mock.calls[0]?.[0])).toBe("gpt-5.4-mini");
+  });
+
+  it("화이트리스트 밖 modelOverride → throw (defense-in-depth, 생성자 미진입)", () => {
+    expect(() =>
+      createModel(
+        { LLM_PROVIDER: "openai", LLM_MODEL: "gpt-5.4-mini", OPENAI_API_KEY: "k" },
+        "gpt-4o",
+      ),
+    ).toThrow();
+    expect(chatOpenAISpy).not.toHaveBeenCalled();
+    expect(chatAnthropicSpy).not.toHaveBeenCalled();
+  });
+
+  it("override 시에도 Responses API + reasoning 옵션 유지 (R8 실측 정합)", () => {
+    createModel(
+      { LLM_PROVIDER: "openai", LLM_MODEL: "gpt-5.4-mini", OPENAI_API_KEY: "k" },
+      "gpt-5.5",
+    );
+    const opts = chatOpenAISpy.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(opts.useResponsesApi).toBe(true);
+    expect(opts.reasoning).toBeTruthy();
+  });
+});

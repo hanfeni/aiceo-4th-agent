@@ -1,0 +1,131 @@
+/**
+ * 파일 텍스트 추출 (클라이언트 전용 — 백엔드 무변경).
+ *
+ * 첨부 파일을 LLM 에 보낼 수 있게 텍스트로 변환한다. 결과 텍스트는
+ * useChat 이 query 에 합쳐 기존 경로로 전송하므로 route/agent 변경 0
+ * (R2/R3 무영향). 이미지는 별도 멀티모달 경로(extractText 대상 아님).
+ *
+ * 포맷별 전략 (R8 실측 — file-extract-probe 노트):
+ *  - 텍스트 계열(txt/md/csv/json/코드): 브라우저 FileReader.readAsText.
+ *    의존성 0. jsdom 네이티브 동작(단위 테스트 가능).
+ *  - PDF: pdfjs-dist 5.x. SSR 에서 window/canvas 접근 → **동적 import**
+ *    (모듈 top-level 금지). legacy 빌드 + GlobalWorkerOptions.workerSrc.
+ *  - DOCX: mammoth. Node 전제 main 이라 **브라우저 진입점 명시**
+ *    (`mammoth/mammoth.browser`) + 동적 import.
+ *
+ * 동적 import 이유(Plan Critic D1): pdfjs/mammoth 가 모듈 top-level 에
+ * 없어야 prod 번들에서 물리적으로 빠진다(NODE_ENV dev 전용 노출 +
+ * `.next/static/` grep 0 검증). pickFormat/isSupportedFile 은 라이브러리
+ * 로드 없이 평가되는 순수 함수라 단위 테스트가 가볍다.
+ */
+
+export type FileFormat = "text" | "pdf" | "docx";
+
+/** FileReader.readAsText 로 처리하는 텍스트 계열 확장자. */
+export const SUPPORTED_TEXT_EXT = [
+  "txt",
+  "md",
+  "markdown",
+  "csv",
+  "tsv",
+  "json",
+  "log",
+  "yaml",
+  "yml",
+  "xml",
+  "html",
+  // 코드 파일(LLM 컨텍스트로 흔히 첨부)
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "py",
+  "java",
+  "c",
+  "cpp",
+  "go",
+  "rs",
+  "rb",
+  "sh",
+  "sql",
+  "css",
+] as const;
+
+function extOf(filename: string): string {
+  const i = filename.lastIndexOf(".");
+  return i < 0 ? "" : filename.slice(i + 1).toLowerCase();
+}
+
+/** 확장자로 추출 포맷을 결정한다. 미지원이면 null(순수 함수). */
+export function pickFormat(filename: string): FileFormat | null {
+  const ext = extOf(filename);
+  if ((SUPPORTED_TEXT_EXT as readonly string[]).includes(ext)) return "text";
+  if (ext === "pdf") return "pdf";
+  if (ext === "docx") return "docx";
+  return null;
+}
+
+/** 추출 가능한 파일인지(확장자 기준). */
+export function isSupportedFile(file: File): boolean {
+  return pickFormat(file.name) !== null;
+}
+
+/** 텍스트 계열 — 브라우저 FileReader(jsdom 네이티브). */
+function readAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ""));
+    r.onerror = () => reject(new Error(`파일을 읽지 못했습니다: ${file.name}`));
+    r.readAsText(file);
+  });
+}
+
+/** PDF — pdfjs-dist 동적 import(SSR/prod 번들 제외). */
+async function readPdf(file: File): Promise<string> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  // worker 버전은 pdfjs-dist 와 정확히 일치해야 함(R8 실측). 번들러가
+  // worker 자산을 emit 하도록 URL 로 지정.
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+    import.meta.url,
+  ).toString();
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjs.getDocument({ data }).promise;
+  const parts: string[] = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    parts.push(
+      content.items
+        .map((it) => ("str" in it ? it.str : ""))
+        .join(" "),
+    );
+  }
+  return parts.join("\n").trim();
+}
+
+/** DOCX — mammoth 브라우저 진입점 동적 import. */
+async function readDocx(file: File): Promise<string> {
+  const mammoth = await import("mammoth/mammoth.browser");
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value.trim();
+}
+
+/**
+ * 파일에서 텍스트를 추출한다. 미지원 확장자는 명확히 throw(무음 실패 0).
+ * pdf/docx 추출 실패(암호화·손상)는 라이브러리 reject 가 그대로 전파되어
+ * 호출부(UI)가 사용자에게 표면화한다(Plan Critic E3).
+ */
+export async function extractTextFromFile(file: File): Promise<string> {
+  const fmt = pickFormat(file.name);
+  if (fmt === null) {
+    throw new Error(
+      `지원하지 않는 파일 형식입니다: ${file.name} ` +
+        `(텍스트 계열 / .pdf / .docx 만 가능)`,
+    );
+  }
+  if (fmt === "text") return readAsText(file);
+  if (fmt === "pdf") return readPdf(file);
+  return readDocx(file);
+}

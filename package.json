@@ -38,6 +38,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-cjk-friendly": "^2.0.1",
     "remark-gfm": "^4.0.1",
+    "tiktoken": "^1.0.22",
     "zod": "^4.4.3",
     "zustand": "^5.0.13"
   },

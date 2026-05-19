@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createChatStore } from "@/store";
 import type { StoreApi } from "zustand";
 import type { ChatStore } from "@/store";
@@ -287,6 +287,116 @@ describe("chat store", () => {
       expect(g().lastStreamEvent).toBe("token");
       g().setLastStreamEvent("tool"); // 출력 멈추고 도구 재개
       expect(g().lastStreamEvent).toBe("tool");
+    });
+  });
+
+  // startStream — SSE 소비를 store 싱글톤으로(컴포넌트 생명주기 분리).
+  // 메뉴 이동 중 지속의 핵심: fetch+SSE 루프가 store 액션 클로저에
+  // 묶여 ChatPanel 언마운트와 무관하게 계속 돈다.
+  describe("startStream — SSE 싱글톤 소비", () => {
+    const enc = new TextEncoder();
+
+    function sseBody(events: object[]): ReadableStream<Uint8Array> {
+      const frames = events.map((e) => `data: ${JSON.stringify(e)}\n\n`);
+      let i = 0;
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (i < frames.length) controller.enqueue(enc.encode(frames[i++]));
+          else controller.close();
+        },
+      });
+    }
+
+    function mockFetch(events: object[]): ReturnType<typeof vi.fn> {
+      const spy = vi.fn().mockResolvedValue(
+        new Response(sseBody(events), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+      vi.stubGlobal("fetch", spy);
+      return spy;
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it("user+assistant 메시지 원자 추가 후 토큰 누적, 종료 시 isStreaming=false", async () => {
+      mockFetch([
+        { type: "thread", conversationId: "c1" },
+        { type: "token", text: "안녕" },
+        { type: "token", text: "하세요" },
+        { type: "done" },
+      ]);
+      await store.getState().startStream({ query: "테스트" });
+      const s = store.getState();
+      expect(s.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+      expect(s.messages[0]?.content).toBe("테스트");
+      expect(s.messages[1]?.content).toBe("안녕하세요");
+      expect(s.conversationId).toBe("c1");
+      expect(s.isStreaming).toBe(false);
+    });
+
+    it("진행 중이면 새 startStream 은 no-op(중복 전송 차단)", async () => {
+      const spy = mockFetch([{ type: "done" }]);
+      // 인위적으로 진행 중 상태로
+      store.setState({ isStreaming: true });
+      await store.getState().startStream({ query: "중복" });
+      expect(spy).not.toHaveBeenCalled();
+      expect(store.getState().messages).toHaveLength(0);
+    });
+
+    it("스트림 진행 중 isStreaming=true (메뉴 이동해도 store 보존)", async () => {
+      let resolvePull: (() => void) | null = null;
+      const gate = new Promise<void>((r) => (resolvePull = r));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              async pull(c) {
+                await gate; // 첫 청크 전 멈춤 → 진행 중 상태 관찰
+                c.enqueue(enc.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
+                c.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+      );
+      const p = store.getState().startStream({ query: "진행중" });
+      // 마이크로태스크 양보 후: 메시지 추가 + isStreaming true
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(store.getState().isStreaming).toBe(true);
+      resolvePull!();
+      await p;
+      expect(store.getState().isStreaming).toBe(false);
+    });
+
+    it("error 이벤트 → setError + 종료(터미널 아님, isStreaming false)", async () => {
+      mockFetch([{ type: "error", message: "서버 오류" }]);
+      await store.getState().startStream({ query: "에러" });
+      expect(store.getState().error).toBe("서버 오류");
+      expect(store.getState().isStreaming).toBe(false);
+    });
+
+    it("conversationId/model/images 를 body 에 정확히 싣는다", async () => {
+      const spy = mockFetch([{ type: "done" }]);
+      store.setState({ conversationId: "prev", model: "gpt-x" });
+      await store.getState().startStream({
+        query: "Q",
+        images: ["data:image/png;base64,AAA"],
+      });
+      const body = JSON.parse(spy.mock.calls[0]?.[1]?.body as string);
+      expect(body).toMatchObject({
+        query: "Q",
+        conversationId: "prev",
+        model: "gpt-x",
+        images: ["data:image/png;base64,AAA"],
+      });
     });
   });
 });

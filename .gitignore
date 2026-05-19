@@ -12,6 +12,10 @@ next-env.d.ts
 # checkpointer (LangGraph SQLite — NFR-8)
 .data/
 
+# OpenSearch 검색 실습 데이터 볼륨 (인덱스 = 원문 코퍼스 역추출 가능 →
+# 제3자 저작권 본문. 공개 리포 유출 치명. docker-compose.opensearch.yml)
+.opensearch-data/
+
 # env (서버 전용 키 — 절대 커밋 금지)
 .env
 .env.local
