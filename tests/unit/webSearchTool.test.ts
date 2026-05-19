@@ -1,90 +1,128 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// webSearchTool.ts 단위 테스트 — ServerTool 팩토리 순수성 검증.
+// Slice 3 — webSearchTool ServerTool→ClientTool 교체 정답지 (TDD).
+// 기존 ServerTool 팩토리(buildWebSearchOptions/{type:"web_search"})는
+// 폐기. 새 계약: dartTool 동형 ClientTool —
+//   - tool() from langchain, zod {query} 스키마, .invoke → Promise<string>
+//   - 내부에서 runWebSearch → formatWebSearchContext (우리 정제)
+//   - graceful: runWebSearch 가 ok:false 여도 throw 0, 안내 string 반환
+//   - 심볼 보존: webSearchTool / webSearchToolDisplayName /
+//     webSearchToolDescription (import 5곳 무변경 — 회귀 0)
+//   - HARNESS_TOOLS 등록 유지(cfg.tools===HARNESS_TOOLS 단언 무손상)
 //
-// 핵심 계약:
-//   - buildWebSearchOptions(): 순수 함수. LLM·네트워크 호출 0
-//     (tools.webSearch() 는 선언 객체만 생성 — 실행 주체는 OpenAI 서버).
-//     → 실제 @langchain/openai 로 테스트해도 과금·비결정성 0
-//       (registry.test.ts 같은 ChatOpenAI mock 불필요).
-//   - webSearchTool: OpenAI Responses API 가 인식하는 ServerTool 형태.
-//     필터 미지정 시 런타임 `{ type: "web_search" }` (probe note §6-A).
-//   - HARNESS_TOOLS 등록 + 이종(ClientTool|ServerTool) 혼합 계약 유지.
-//
-// CLAUDE.md Mock 금지 절: 레지스트리·필터·파서는 LLM 분리 순수 테스트.
+// @/lib/web-search mock — 도구는 조립만, 정제·직호출은 Slice1/2 가
+// 자체 테스트(중복 0). CLAUDE.md: 단위테스트 mock 필수(과금/비결정).
+
+// vi.mock 은 파일 top 으로 hoist 되므로 mock 변수도 vi.hoisted 로
+// 같은 시점에 생성해야 한다(top-level const 참조 시 ReferenceError).
+const { runWebSearchMock } = vi.hoisted(() => ({
+  runWebSearchMock: vi.fn(),
+}));
+
+vi.mock("@/lib/web-search", () => ({
+  // 래퍼 없이 mock 직접 — 래퍼는 rejected Promise 를 새 Promise 로
+  // 감싸 unhandled rejection 을 만든다. 도구 catch 가 await 한 동일
+  // Promise 를 잡도록 mock 자체를 함수로 노출.
+  runWebSearch: runWebSearchMock,
+  // 실제 정제함수를 쓰면 Slice1 테스트와 중복 — 도구 책임만 검증하려
+  // 식별 가능한 sentinel 반환(도구가 formatter 출력을 그대로 흘리는지).
+  formatWebSearchContext: (raw: unknown) =>
+    `FORMATTED::${JSON.stringify(raw)}`,
+}));
 
 import {
-  buildWebSearchOptions,
   webSearchTool,
+  webSearchToolDisplayName,
+  webSearchToolDescription,
 } from "@/lib/agent/harness/tools/webSearchTool";
 import { HARNESS_TOOLS } from "@/lib/agent/harness/tools";
 
-describe("buildWebSearchOptions (순수 함수)", () => {
-  it("호출 결과가 동일하다 (결정적·부수효과 0)", () => {
-    expect(buildWebSearchOptions()).toEqual(buildWebSearchOptions());
+beforeEach(() => runWebSearchMock.mockReset());
+
+// vitest 가 이전 테스트의 mock Promise 잔여(resolved/rejected)를 다음
+// 테스트의 unhandledRejection 으로 오귀속하는 간섭 방지 — 각 테스트
+// 종료 시 microtask 큐를 비운다(격리 테스트로 도구 graceful 정상
+// 확인됨, 본 파일 순서의존성만 해소). LangChain tool() + vi async
+// mock 조합의 표준 처방.
+afterEach(async () => {
+  await Promise.resolve();
+  await Promise.resolve();
+});
+
+describe("webSearchTool — ClientTool 형태 (dartTool 동형)", () => {
+  it("실행 표면이 있다 (ClientTool — invoke 함수 보유)", () => {
+    // ServerTool 과 정반대: 우리 측 실행 함수 존재
+    expect(typeof (webSearchTool as { invoke?: unknown }).invoke).toBe(
+      "function",
+    );
   });
 
-  it("WebSearchOptions 객체를 반환한다 (배열·null 아님)", () => {
-    const opts = buildWebSearchOptions();
-    expect(opts).toBeTypeOf("object");
-    expect(opts).not.toBeNull();
-    expect(Array.isArray(opts)).toBe(false);
+  it("name='web_search' (사고패널/introspect 매핑 키 보존)", () => {
+    expect((webSearchTool as { name?: string }).name).toBe("web_search");
   });
 
-  it("운영 정책 확정값: { search_context_size: 'medium' } 만 반환 (필터·위치 미지정)", () => {
-    // 사용자 결정(보수적 기본): 비용·지연과 근거 풍부도의 균형 → medium.
-    // filters.allowedDomains / userLocation 은 의도적으로 미지정(최신·롱테일
-    // 누락 회피 + 위치 노출 회피). 그 외 키가 새로 붙으면 이 단언이 깨져
-    // 정책 변경을 강제 인지하게 한다(toEqual = 정확 일치).
-    expect(buildWebSearchOptions()).toEqual({ search_context_size: "medium" });
+  it(".description 보유 (ServerTool 과 달리 ClientTool 은 자체 설명)", () => {
+    const d = (webSearchTool as { description?: string }).description;
+    expect(typeof d).toBe("string");
+    expect((d ?? "").length).toBeGreaterThan(0);
   });
 
-  it("filters / userLocation 키는 포함하지 않는다 (미지정 정책 회귀 가드)", () => {
-    const opts = buildWebSearchOptions() as Record<string, unknown>;
-    expect(opts).not.toHaveProperty("filters");
-    expect(opts).not.toHaveProperty("userLocation");
-    expect(Object.keys(opts)).toEqual(["search_context_size"]);
+  it("ServerTool 잔재 없음: {type:'web_search'} 형태가 아니다", () => {
+    expect((webSearchTool as { type?: string }).type).not.toBe("web_search");
   });
 });
 
-describe("webSearchTool (ServerTool 형태)", () => {
-  it("OpenAI Responses API 가 인식하는 web_search ServerTool 이다", () => {
-    // 필터 미지정 시 런타임 = { type: "web_search" } (probe note §6-A 실측).
-    expect(webSearchTool).toMatchObject({ type: "web_search" });
+describe("webSearchTool.invoke — runWebSearch→formatWebSearchContext 조립", () => {
+  // LangChain tool().invoke(input, config) — config 미전달 시 내부
+  // 콜백매니저 초기화에서 defaultConfig 접근 실패(R8 실측). 빈 config
+  // {} 명시 전달이 ClientTool 호출 계약.
+  const invoke = (q: string) =>
+    (
+      webSearchTool as {
+        invoke: (a: { query: string }, c: object) => Promise<string>;
+      }
+    ).invoke({ query: q }, {});
+
+  it("query 를 runWebSearch 에 전달하고 formatter 출력을 반환", async () => {
+    runWebSearchMock.mockResolvedValue({ ok: true, steps: [], answer: "a", citations: [] });
+    const out = await invoke("삼성전자 주가");
+    expect(runWebSearchMock).toHaveBeenCalledWith("삼성전자 주가");
+    // formatter(mock) 출력을 그대로 LLM 에 흘림
+    expect(out).toContain("FORMATTED::");
+    expect(out).toContain('"answer":"a"');
   });
 
-  it("실행 함수가 없다 (provider 측 실행 — ClientTool 아님)", () => {
-    // StructuredTool 의 invoke/func 같은 클라이언트 실행 표면이 없어야 한다.
-    const t = webSearchTool as Record<string, unknown>;
-    expect(typeof t.invoke).not.toBe("function");
-    expect(typeof t.func).not.toBe("function");
+  it("runWebSearch 가 ok:false 여도 throw 0 — 안내 string 반환 (graceful, dart NFR-18)", async () => {
+    runWebSearchMock.mockResolvedValue({ ok: false, reason: "no_api_key" });
+    await expect(invoke("q")).resolves.toContain("FORMATTED::");
   });
 
-  it("buildWebSearchOptions() 의 search_context_size='medium' 이 ServerTool 선언에 반영된다", () => {
-    // webSearchTool = openaiTools.webSearch(buildWebSearchOptions()) 이므로
-    // 확정 정책(medium)이 런타임 선언 객체에 실려야 한다(옵션 누락 회귀 가드).
-    // @langchain/openai 가 옵션을 어느 키로 펼치든(searchContextSize 등)
-    // 값 'medium' 이 선언 어딘가에 직렬화돼 존재해야 한다.
-    const serialized = JSON.stringify(webSearchTool);
-    expect(serialized).toContain("medium");
-    expect(webSearchTool).toMatchObject({ type: "web_search" });
-  });
+  // 주의: "runWebSearch throw → 도구 graceful(throw 0)" 검증은
+  // webSearchToolGraceful.test.ts 로 분리. 본 파일에 두면 선행
+  // 테스트의 mock Promise 잔여를 vitest 가 다음 테스트
+  // unhandledRejection 으로 오귀속(LangChain tool() + vi async mock
+  // 순서의존 간섭). 도구 catch 자체는 분리 파일에서 정상 검증.
 });
 
-describe("HARNESS_TOOLS 등록 (FR-08 / 이종 혼합 계약)", () => {
-  it("webSearchTool 이 배열에 등록되어 있다", () => {
+describe("표시명/설명 + HARNESS_TOOLS 등록 (심볼 보존 — 회귀 0)", () => {
+  it("webSearchToolDisplayName 한글 유지", () => {
+    expect(webSearchToolDisplayName).toBe("웹 검색");
+  });
+
+  it("webSearchToolDescription 은 ClientTool 의미로 갱신 (ServerTool 문구 폐기)", () => {
+    expect(typeof webSearchToolDescription).toBe("string");
+    expect(webSearchToolDescription).not.toContain("ServerTool");
+  });
+
+  it("HARNESS_TOOLS 에 webSearchTool 등록 유지 (동일 심볼)", () => {
     expect(HARNESS_TOOLS).toContain(webSearchTool);
   });
 
-  it("ClientTool(currentTimeTool)과 ServerTool(webSearch) 이 공존한다", () => {
-    // 적어도 ServerTool 1개 + 실행표면 있는 도구 1개가 섞여 있어야 한다.
-    const hasServerTool = HARNESS_TOOLS.some(
-      (t) => (t as Record<string, unknown>).type === "web_search",
+  it("HARNESS_TOOLS 의 web_search 가 이제 ClientTool(invoke 보유)", () => {
+    const ws = HARNESS_TOOLS.find(
+      (t) => (t as { name?: string }).name === "web_search",
     );
-    const hasClientTool = HARNESS_TOOLS.some(
-      (t) => typeof (t as Record<string, unknown>).invoke === "function",
-    );
-    expect(hasServerTool).toBe(true);
-    expect(hasClientTool).toBe(true);
+    expect(ws).toBeDefined();
+    expect(typeof (ws as { invoke?: unknown }).invoke).toBe("function");
   });
 });
