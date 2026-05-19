@@ -1,6 +1,10 @@
 import { currentTimeToolDisplayName } from "@/lib/agent/harness/tools/exampleTool";
-import { webSearchToolDisplayName } from "@/lib/agent/harness/tools/webSearchTool";
-import { webSearcherSubagentDisplayName } from "@/lib/agent/harness/subagents/webSearcher";
+// 경량 meta 에서 직접 import — webSearchTool.ts(openai SDK 의존
+// 서버 전용)를 클라이언트 번들로 끌어오지 않기 위함(보안 — 번들 누출 차단).
+import { webSearchToolDisplayName } from "@/lib/agent/harness/tools/webSearchTool.meta";
+// 경량 meta 에서 직접 — webSearcher.ts(webSearchTool→openai SDK
+// 끌어옴)를 클라이언트 번들에서 배제(보안).
+import { webSearcherSubagentDisplayName } from "@/lib/agent/harness/subagents/webSearcher.meta";
 
 /**
  * 사고 패널 한글 안내문구 생성 — 순수 함수(LLM/React 무관, NFR-11).

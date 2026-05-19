@@ -22,21 +22,15 @@ import { runWebSearch, formatWebSearchContext } from "@/lib/web-search";
  * (index.ts/webSearcher.ts/thinkingLabels.ts 등) 무변경(회귀 0).
  */
 
-/**
- * 사고 패널 한글 표시명 (FR-08 — 백엔드 미제공, 도구 파일이 선언).
- * ClientTool 은 .name="web_search" 로 흐른다(HARNESS_TOOL_DISPLAY_NAMES
- * 매핑 키 보존).
- */
-export const webSearchToolDisplayName = "웹 검색";
-
-/**
- * ClientTool 설명 (FR-08 동적화 — introspect 가 .description 우선
- * 사용). ServerTool 문구 폐기 — 이제 우리가 OpenAI 를 직호출해 정제.
- */
-export const webSearchToolDescription =
-  "웹에서 최신 정보를 검색한다. OpenAI Responses API 웹검색을 직호출해 " +
-  "여러 단계의 검색·페이지 열람을 수행하고, 검색어·출처·요약을 정제한 " +
-  "결과를 반환한다. 최신 시세·뉴스·사실 확인이 필요할 때 사용.";
+// 표시 메타는 경량 모듈로 분리(보안 — 클라이언트가 openai SDK 를
+// 번들하지 않도록). 심볼명 보존 위해 여기서 re-export: index.ts 등
+// 서버 경로는 기존대로 webSearchTool.ts 에서 import(무변경), 클라
+// 이언트(thinkingLabels)는 webSearchTool.meta 에서 직접 import.
+export {
+  webSearchToolDisplayName,
+  webSearchToolDescription,
+} from "./webSearchTool.meta";
+import { webSearchToolDescription } from "./webSearchTool.meta";
 
 export const webSearchTool = tool(
   async ({ query }: { query: string }): Promise<string> => {

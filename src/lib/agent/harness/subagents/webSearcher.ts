@@ -24,8 +24,11 @@ import { webSearchTool } from "../tools/webSearchTool";
  * "web-searcher") 백엔드가 한글을 안 준다 — subagent 파일이 직접 선언
  * (FR-08 요소1개=파일1개, 도구 *DisplayName 과 동일 패턴).
  * thinkingLabels.subagentDisplayName 이 subagent_type→이 라벨 수집.
+ *
+ * 표시명은 경량 meta 로 분리(보안 — 클라이언트가 webSearchTool→
+ * openai SDK 를 번들하지 않도록). 심볼 보존 re-export.
  */
-export const webSearcherSubagentDisplayName = "웹 검색";
+export { webSearcherSubagentDisplayName } from "./webSearcher.meta";
 
 export const webSearcherSubagent: SubagentSpec = {
   name: "web-searcher",
