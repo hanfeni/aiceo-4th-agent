@@ -16,7 +16,14 @@ import { subsetUrl, GRAPH_SCHEMA } from "./config";
 export type LoadEvent =
   | { type: "load"; phase: string; text: string }
   | { type: "load_progress"; done: number; total: number }
-  | { type: "load_done"; managers: number; companies: number; owns: number }
+  | {
+      type: "load_done";
+      managers: number;
+      companies: number;
+      owns: number;
+      /** crowding 속성이 부여된 Company 수(top_issuers 매칭분) */
+      enriched?: number;
+    }
   | { type: "load_error"; message: string };
 
 /** holdings 1행 (CSV → 그래프 엣지 & SQL row 공용) */
@@ -34,6 +41,16 @@ export interface ManagerRow {
   name: string;
   city: string;
   state: string;
+}
+/** top_issuers 1행 — Company crowding 속성 소스(웹 사례: 13F
+ *  crowding score = distinct holder 수 + 보유가치 합계). */
+export interface TopIssuerRow {
+  cusip: string;
+  issuer: string;
+  /** 이 종목을 신고한 13F 기관 수 (crowding/인기도 지표) */
+  holderCount: number;
+  /** 보유가치 합계(USD 천 단위) */
+  totalValueK: number;
 }
 
 /** 인메모리 보관소 — SQL/RAG 패널이 그래프와 같은 데이터를 쓰도록.
@@ -92,7 +109,7 @@ function parseCsv(text: string): string[][] {
 }
 
 async function fetchCsv(
-  file: "holdings" | "managers",
+  file: "holdings" | "managers" | "topIssuers",
 ): Promise<string[][]> {
   const url = subsetUrl(file);
   const res = await fetch(url);
@@ -190,6 +207,31 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
         total: holdings.length,
       };
     }
+
+    // ── #2b Company crowding 속성 (top_issuers) ──────────
+    // 웹 사례: 퀀트 리스크의 crowding score = distinct 13F
+    // holder 수 + 보유가치 합계. top_issuers_subset.csv 가
+    // 사전계산해 둔 값을 Company 노드 속성으로 박는다 → "허브
+    // 종목" 류 질의가 매번 count 재계산 없이 속성 직조회.
+    // Company 는 위 OWNS 적재에서 이미 MERGE 됨 → MATCH(없으면
+    // skip, 유령 노드 생성 방지). top_issuers 가 서브셋이라
+    // holdings 에 없을 수도 있어 MERGE 가 아니라 MATCH.
+    yield { type: "load", phase: "crowding", text: "종목 인기도(crowding) 속성 적재…" };
+    // top_issuers: cusip,name_of_issuer,n_filer_managers,total_value_usd_thousands
+    const tiRows = await fetchCsv("topIssuers");
+    const topIssuers: TopIssuerRow[] = tiRows.slice(1).map((r) => ({
+      cusip: r[0],
+      issuer: r[1],
+      holderCount: Number(r[2]) || 0,
+      totalValueK: Number(r[3]) || 0,
+    }));
+    await runCypher(
+      `UNWIND $rows AS r
+       MATCH (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
+       SET c.holder_count = r.holderCount,
+           c.total_value_k = r.totalValueK`,
+      { rows: topIssuers },
+    );
   } catch (e) {
     yield { type: "load_error", message: e instanceof Error ? e.message : String(e) };
     return;
@@ -201,11 +243,18 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
   const [{ companies = 0 } = {}] = (await runCypher(
     `MATCH (c:${GRAPH_SCHEMA.companyLabel}) RETURN count(c) AS companies`,
   )) as { companies?: number }[];
+  // crowding 속성이 실제 부여된 Company 수(UI 보고용)
+  const [{ enriched = 0 } = {}] = (await runCypher(
+    `MATCH (c:${GRAPH_SCHEMA.companyLabel})
+     WHERE c.holder_count IS NOT NULL
+     RETURN count(c) AS enriched`,
+  )) as { enriched?: number }[];
 
   yield {
     type: "load_done",
     managers: managers.length,
     companies,
+    enriched,
     owns: holdings.length,
   };
 }

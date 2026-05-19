@@ -183,11 +183,15 @@ export function GraphLabView(): ReactNode {
             ).toLocaleString()}`,
           ]);
         else if (t === "load_done") {
+          const enr = ev.enriched as number | undefined;
           setBuildLog((l) => [
             ...l,
             `✓ 완료: 기관 ${ev.managers} · 종목 ${ev.companies} · 보유엣지 ${(
               ev.owns as number
-            ).toLocaleString()}`,
+            ).toLocaleString()}` +
+              (enr !== undefined
+                ? ` · crowding 속성 ${enr.toLocaleString()}종목`
+                : ""),
           ]);
         }
       });

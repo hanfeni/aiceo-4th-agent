@@ -41,11 +41,25 @@ export function subsetUrl(file: keyof typeof SUBSET_FILES): string {
   return `${GRAPH_RAW_BASE}/${SUBSET_FILES[file]}`;
 }
 
-/** Neo4j 그래프 노드/엣지 라벨 (Cypher·UI 일관) */
+/**
+ * Neo4j 그래프 노드/엣지 라벨 SSOT (Cypher·UI·LLM 프롬프트 일관).
+ *
+ * 스키마 진화(2026-05-20, 웹 사례 기반 — Neo4j 공식 mutual-fund
+ * 패턴 + 13F crowding 실무):
+ *  - Company 에 crowding 속성(holder_count·total_value) 부여
+ *    → "허브 종목" 류 질의를 매번 count 재계산 않고 속성 직조회
+ *  - (:Position) 중간 노드 — Neo4j 공식 Holdings 패턴.
+ *    (Manager)-[HOLDS]->(Position {value_usd_k,shares,put_call})
+ *    -[OF]->(Company). 포지션 자체에 대한 질의(옵션 보유 등) 가능.
+ *    기존 (Manager)-[OWNS]->(Company) 는 호환 위해 유지(병존).
+ */
 export const GRAPH_SCHEMA = {
   managerLabel: "Manager",
   companyLabel: "Company",
   ownsRel: "OWNS",
+  positionLabel: "Position",
+  holdsRel: "HOLDS",
+  ofRel: "OF",
 } as const;
 
 /**
