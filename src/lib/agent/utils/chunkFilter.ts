@@ -293,7 +293,13 @@ export interface ToolOutputDelta {
   id: string;
   name: string;
   args: string;
-  result: string;
+  /**
+   * 결과 표시값. web_search 는 **undefined**(검색 진행 — 출처는 별도
+   * annotations 청크에서 와서 store reduceToolResult name 폴백으로 채움.
+   * status "completed" 를 그대로 쓰면 OUT 이 무의미해 사용자 보고 버그).
+   * 그 외 ServerTool(code_interpreter 등)은 status 원문.
+   */
+  result: string | undefined;
 }
 
 /**
@@ -309,11 +315,13 @@ export interface ToolOutputDelta {
  * ServerTool 채널을 **단독** 전담한다(extractToolCalls 의 ServerTool
  * 경로 제거 — 이중 emit 일원화). FR-09 유지(본문 미혼입 — 별도 채널).
  *
- * 정책 확정(사용자 결정):
+ * 정책:
  *  - args = JSON.stringify({ queries }) — 모델이 던진 **전체 검색어
  *    배열**을 사고 패널 IN 칸에 풍부하게 표시(디버깅·투명성 우선).
- *  - result = status 원문(completed 등). status 게이트 없이 매 호출
- *    방출하되 store reduceToolResult 가 id 매칭으로 자연 누적.
+ *  - result = web_search 면 undefined(검색 진행 — OUT 은 별도 청크의
+ *    annotations 에서 옴, `extractWebSearchCitations` 가 전담). 그 외
+ *    ServerTool 은 status 원문(기존 동작 유지). web_search 의
+ *    "completed" 만 OUT 에 박혀 무의미하던 사용자 보고 버그 수정.
  *
  * @returns ServerTool 호출 배열 또는 null.
  */
@@ -343,13 +351,128 @@ export function extractToolOutputs(
         ? action.queries.filter((q): q is string => typeof q === "string")
         : [];
     const name = type.replace(/_call$/, ""); // web_search_call → web_search
+    const isWebSearch = type === "web_search_call";
     const status = typeof o.status === "string" ? o.status : "completed";
     out.push({
       id: typeof o.id === "string" ? o.id : "",
       name,
       args: queries.length > 0 ? JSON.stringify({ queries }) : "",
-      result: status,
+      // web_search: 결과 미정(출처는 annotations 청크에서 → name 폴백).
+      // 그 외 ServerTool: 기존대로 status 표시.
+      result: isWebSearch ? undefined : status,
     });
+  }
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * web_search OUT(출처) 추출 — content 블록의 `annotations[]`.
+ *
+ * 실측(scripts/ws-log-probe deep dump): OpenAI built-in web_search 는
+ * 검색 결과 본문(스니펫)을 스트림에 **싣지 않는다**(모델이 소비해 최종
+ * 답변에 녹임). 대신 답변 text 블록에 출처를 붙여 보낸다:
+ *   content:[{ type:"text", text:"...", annotations:[
+ *     { type:"citation", source:"url_citation",
+ *       url:"https://...", title:"...", startIndex, endIndex } ] }]
+ *
+ * 이 청크는 `extractToolOutputs` 가 보는 web_search_call 청크와 **별개**
+ * (검색 실행 청크가 먼저, 출처 붙은 답변 청크가 나중). 그래서 같은
+ * web_search step 에 id 가 없다 → store `reduceToolResult` 의 name 폴백
+ * (name 일치 + result===undefined 인 step)으로 채워진다(extractToolOutputs
+ * 가 result=undefined 로 둔 이유). medigate 의 OUT(검색 출처) UX 와 동형.
+ *
+ * FR-09 유지: text 본문 자체는 건드리지 않는다(filterChunk 가 계속
+ * 전담 — 본문 누출 0). 여기선 annotations 메타만 읽는다.
+ *
+ * @returns "참고 출처 N건:\n• 제목 (url)\n…" 또는 url_citation 부재 시 null.
+ */
+export function extractWebSearchCitations(
+  msg: unknown,
+  meta: unknown,
+): string | null {
+  const m = meta as ChunkMeta | undefined | null;
+  if (!isRecord(m) || m.langgraph_node !== MAIN_ANSWER_NODE) return null;
+  if (!isRecord(msg)) return null;
+  const chunk = msg as ChunkShape;
+  const content = chunk.content ?? chunk.kwargs?.content;
+  if (!Array.isArray(content)) return null;
+
+  // url 중복 제거(여러 청크/블록에 같은 출처 반복) — 순서 보존.
+  // RAW 체계화(사용자 요구): 출처 줄(• 제목 (url))은 거울함수
+  // parseCitationText 호환 형식 그대로 유지하고, annotation 의
+  // startIndex/endIndex(인용 위치 RAW)는 `↳ 인용 위치: a–b자`
+  // **들여쓰기 별줄**로 덧붙인다. `•` 로 시작 안 하므로
+  // parseCitationText 가 무시 → SourcesPanel 무손상. 검색어는
+  // IN(args)에 이미 있어 OUT 에선 제외(중복 방지 — 사용자 지시).
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  let n = 0;
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    const annotations = block.annotations;
+    if (!Array.isArray(annotations)) continue;
+    for (const a of annotations) {
+      if (!isRecord(a)) continue;
+      if (a.source !== "url_citation") continue;
+      const url = typeof a.url === "string" ? a.url : "";
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      n++;
+      const title = typeof a.title === "string" ? a.title.trim() : "";
+      lines.push(title.length > 0 ? `• ${title} (${url})` : `• ${url}`);
+      // 인용 위치 RAW — startIndex/endIndex 가 둘 다 유효 숫자일 때만.
+      const s = a.startIndex;
+      const e = a.endIndex;
+      if (typeof s === "number" && typeof e === "number") {
+        lines.push(`  ↳ 인용 위치: ${s}–${e}자`);
+      }
+    }
+  }
+  if (n === 0) return null;
+  return `참고 출처 ${n}건:\n${lines.join("\n")}`;
+}
+
+/** WebSource 와 동형(타입 import 회피 — chunkFilter 는 LLM/타입 비의존). */
+interface ParsedCitation {
+  title: string;
+  url: string;
+}
+
+/**
+ * `extractWebSearchCitations` 의 거울 함수 — 그 출력 텍스트를 다시
+ * `{title,url}[]` 로 복원한다(답변 하단 References 패널 데이터원).
+ *
+ * 입력: "참고 출처 N건:\n• 제목 (url)\n• url\n…"
+ *  - 각 항목은 `• ` 로 시작. 마지막 `(http(s)://...)` 가 url, 그 앞이
+ *    제목(없으면 url 자체를 제목 자리에 — SourcesPanel 폴백).
+ *  - http/https 만 url 로 인정(javascript: 등 스킴 차단 — 링크 안전).
+ *
+ * 사고 패널 일반 result("completed"/"검색 완료" 등)와 구분: 유효
+ * 항목이 0개면 null(→ sources 미적재, 패널 미표시).
+ *
+ * agent.ts/chunkFilter 기존 코드 무변경 — 신규 export 만 추가(다른
+ * 에이전트 동시 작업과 git 충돌 0). 순수 함수(LLM 무관, 단위 테스트).
+ */
+export function parseCitationText(text: string): ParsedCitation[] | null {
+  if (typeof text !== "string" || text.length === 0) return null;
+  const out: ParsedCitation[] = [];
+  // 마지막 (http(s)://...) 캡처 — 제목에 괄호가 있어도 url 만 분리.
+  const urlTail = /^(.*?)\s*\((https?:\/\/[^\s)]+)\)\s*$/;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line.startsWith("•")) continue;
+    const body = line.replace(/^•\s*/, "").trim();
+    const m = body.match(urlTail);
+    if (m) {
+      const title = m[1].trim();
+      const url = m[2];
+      out.push({ title: title.length > 0 ? title : url, url });
+      continue;
+    }
+    // 제목 없이 url 단독 — "• https://..."
+    if (/^https?:\/\/\S+$/.test(body)) {
+      out.push({ title: body, url: body });
+    }
   }
   return out.length > 0 ? out : null;
 }
