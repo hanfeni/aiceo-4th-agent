@@ -307,14 +307,29 @@ function ToolBlock({
       >
         <div style={ioCell}>
           <span style={ioLabel}>IN</span>
-          <span style={{ minWidth: 0 }}>
+          {/* 도구명 + args 요약을 한 줄에(사용자 요구: 합쳐서 1줄).
+              도구명은 고정폭, args 요약은 flex:1 로 패널폭 내 한 줄
+              +말줄임(FoldableValue 내부가 nowrap+ellipsis). 펼치면
+              FoldableValue 가 <pre> 를 세로로 — 접힘만 한 줄. */}
+          <span
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 6,
+              minWidth: 0,
+            }}
+          >
             <strong
-              style={{ color: "var(--text-default)", fontSize: 12 }}
+              style={{
+                flexShrink: 0,
+                color: "var(--text-default)",
+                fontSize: 12,
+              }}
             >
               {step.name}
             </strong>
             {step.args && step.args !== "{}" ? (
-              <span style={{ display: "block", marginTop: 2 }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
                 <FoldableValue raw={step.args} />
               </span>
             ) : null}
