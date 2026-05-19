@@ -161,6 +161,75 @@ async function multiHopInsight(
   const managers = ids.filter((x) => x.kind === "m:").map((x) => x.raw);
   const lines: string[] = [];
 
+  // ── 0순위: 방금 밟은 마지막 두 노드의 "직접 연결" ────────
+  // 사용자가 prev→last 를 클릭했으면 그 두 노드가 *어떻게*
+  // 이어졌는지가 가장 직관적인 첫 정보(요구: "2개 사이 연결
+  // 정보가 먼저"). 기관↔종목=OWNS 직접 엣지(가치 포함),
+  // 기관↔기관·종목↔종목=직접 엣지 없음 → 매개(공통보유) 한 줄.
+  if (ids.length >= 2) {
+    const prev = ids[ids.length - 2];
+    const last = ids[ids.length - 1];
+    const mgr =
+      prev.kind === "m:" ? prev : last.kind === "m:" ? last : null;
+    const co =
+      prev.kind === "c:" ? prev : last.kind === "c:" ? last : null;
+
+    if (mgr && co) {
+      // 기관 ↔ 종목 : OWNS 직접 엣지
+      const [r] = (await runCypher(
+        `MATCH (m:${managerLabel} {accession:$a})-[o:${ownsRel}]->
+               (c:${companyLabel} {cusip:$cu})
+         RETURN m.name AS mn, c.name AS cn, o.value_usd AS v`,
+        { a: mgr.raw, cu: co.raw },
+      )) as { mn: string; cn: string; v: number | null }[];
+      if (r) {
+        const valPart =
+          hasValue && r.v ? ` (신고가치 ${fmtUsd(r.v)})` : "";
+        lines.push(
+          `➡ 연결: 「${r.mn}」 ──[보유]──▶ 「${r.cn}」${valPart}. ` +
+            `방금 따라온 이 엣지가 "이 기관이 이 종목을 보유"라는 ` +
+            `사실 1건 — 경로의 기본 단위입니다.`,
+        );
+      }
+    } else if (prev.kind === "m:" && last.kind === "m:") {
+      // 기관 ↔ 기관 : 직접 엣지 없음 → 공통 보유 종목이 매개
+      const [r] = (await runCypher(
+        `MATCH (a:${managerLabel} {accession:$a})-[:${ownsRel}]->(c:${companyLabel})
+         MATCH (b:${managerLabel} {accession:$b})-[:${ownsRel}]->(c)
+         RETURN a.name AS an, b.name AS bn,
+                count(DISTINCT c) AS k, collect(DISTINCT c.name)[0..3] AS s`,
+        { a: prev.raw, b: last.raw },
+      )) as {
+        an: string;
+        bn: string;
+        k: number;
+        s: string[];
+      }[];
+      if (r && r.k > 0)
+        lines.push(
+          `➡ 연결: 「${r.an}」와 「${r.bn}」은 직접 엣지가 없습니다. ` +
+            `대신 공통 보유 종목 ${r.k}개(${r.s.join(", ")}${
+              r.k > 3 ? " 등" : ""
+            })가 두 기관을 잇는 다리입니다.`,
+        );
+    } else if (prev.kind === "c:" && last.kind === "c:") {
+      // 종목 ↔ 종목 : 직접 엣지 없음 → 공통 보유 기관이 매개
+      const [r] = (await runCypher(
+        `MATCH (m:${managerLabel})-[:${ownsRel}]->(:${companyLabel} {cusip:$a})
+         MATCH (m)-[:${ownsRel}]->(:${companyLabel} {cusip:$b})
+         RETURN count(DISTINCT m) AS k, collect(DISTINCT m.name)[0..3] AS s`,
+        { a: prev.raw, b: last.raw },
+      )) as { k: number; s: string[] }[];
+      if (r && r.k > 0)
+        lines.push(
+          `➡ 연결: 이 두 종목은 직접 엣지가 없습니다. 대신 둘 다 ` +
+            `보유한 기관 ${r.k}곳(${r.s.join(", ")}${
+              r.k > 3 ? " 등" : ""
+            })이 두 종목을 잇는 다리 — common ownership 신호입니다.`,
+        );
+    }
+  }
+
   // 경로에 종목 2개+ → 그 종목들을 "모두" 보유한 기관 (common ownership)
   if (companies.length >= 2) {
     const uniq = [...new Set(companies)];
