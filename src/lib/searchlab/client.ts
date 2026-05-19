@@ -34,6 +34,12 @@ export interface IndexBuildOpts {
   decompoundMode?: DecompoundMode;
   /** knn 벡터 차원(임베딩 모델 기본 차원). 미지정 시 EMBED_DIM. */
   embedDim?: number;
+  /**
+   * 올인원 메타 색인용 동적 메타 필드(main/mid/sub_category,
+   * keywords) 매핑 포함 여부. 기본 false(기존 색인 동작 불변 —
+   * 일반 색인엔 메타 필드 없음). 올인원 ⑤ 메타색인만 true.
+   */
+  withMeta?: boolean;
 }
 
 const OS_NODE = process.env.OPENSEARCH_URL ?? "http://localhost:9200";
@@ -111,6 +117,22 @@ export function buildIndexBody(opts: IndexBuildOpts = {}) {
             parameters: { m: 16, ef_construction: 256 },
           },
         },
+        // 올인원 ⑤ 메타색인 — LLM 분류기 산출 메타. keyword 라
+        // 검색 실습에서 정확 필터·집계 가능. sub_category 만
+        // 자유 텍스트(15자 핵심주제)라 text+keyword 멀티필드.
+        ...(opts.withMeta
+          ? {
+              main_category: { type: "keyword" },
+              mid_category: { type: "keyword" },
+              sub_category: {
+                type: "text",
+                analyzer: "ko_nori",
+                fields: { kw: { type: "keyword" } },
+              },
+              keywords: { type: "keyword" },
+              meta_description: { type: "text", analyzer: "ko_nori" },
+            }
+          : {}),
       },
     },
   };

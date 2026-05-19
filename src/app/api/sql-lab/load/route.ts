@@ -1,22 +1,23 @@
 /**
- * 메타라벨링 실습 API — POST /api/meta-lab (SSE).
+ * 데이터 적재 API — POST /api/sql-lab/load (SSE).
  *
- * chat route 의 SSE 패턴 재사용: bodySchema(zod) → ReadableStream →
- * `data: <JSON>\n\n` 직렬화 → text/event-stream. R7 runtime=nodejs.
- * 학생이 LLM 이 실제 토큰을 뱉는 모습 + 시스템 인스트럭션을 본다.
+ * "CSV → SQLite 적재" 버튼이 호출 → loadDomain 제너레이터를 SSE
+ * 로 직렬화(search-lab/index route 와 동일 패턴). 학생이
+ * fetch→파싱→트랜잭션 적재 진행을 실시간으로 본다.
+ * R7 runtime=nodejs (better-sqlite3 네이티브).
  */
 
 import { z } from "zod";
-import { runMetaLab } from "@/lib/metalab/run";
-import { SEARCH_DOMAINS } from "@/lib/searchlab/domains";
+import { loadDomain } from "@/lib/sqllab/load";
+import { SQL_DOMAINS } from "@/lib/sqllab/domains";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
-  domain: z.enum(SEARCH_DOMAINS),
-  task: z.enum(["label", "discover", "allinone", "allinone_index"]),
-  // allinone 은 발굴 20×10·실분류 5 고정이라 count 불필요(옵션).
-  count: z.number().int().min(1).max(30).optional(),
+  domain: z.enum(SQL_DOMAINS),
+  // 적재 행수 상한(강의장 메모리/시간 절약 — 검색 limit 패턴 동형).
+  limit: z.number().int().min(1).max(50000).optional(),
 });
 
 function encodeSse(ev: unknown): Uint8Array {
@@ -41,10 +42,11 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
+  const { domain, limit } = parsed.data;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const ev of runMetaLab(parsed.data)) {
+        for await (const ev of loadDomain(domain, limit)) {
           controller.enqueue(encodeSse(ev));
         }
       } catch (e) {

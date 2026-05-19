@@ -6,9 +6,11 @@ import {
   MessageSquare,
   SlidersHorizontal,
   Database,
+  HardDriveDownload,
   Search,
   Tags,
   Pill,
+  Network,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 
@@ -79,6 +81,11 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/index-lab",
       },
       {
+        icon: <HardDriveDownload size={14} aria-hidden />,
+        label: "데이터 적재",
+        href: "/data-load",
+      },
+      {
         icon: <Search size={14} aria-hidden />,
         label: "검색 실습",
         href: "/search-lab",
@@ -87,6 +94,11 @@ const NAV_GROUPS: NavGroup[] = [
         icon: <Tags size={14} aria-hidden />,
         label: "메타 라벨링 실습",
         href: "/meta-lab",
+      },
+      {
+        icon: <Network size={14} aria-hidden />,
+        label: "온톨로지 실습",
+        href: "/graph-lab",
       },
     ],
   },
@@ -163,7 +175,7 @@ export function AgentNav(): ReactNode {
 
   return (
     <>
-      {NAV_GROUPS.map((group, gi) => (
+      {NAV_GROUPS.map((group) => (
         // 그룹 = 독립 카드 박스(레퍼런스 medigate 사이드바 — 흰 배경
         // + 미세 보더 + radius + 그룹 간 여백). 헤더(accent 점 + 라벨)
         // 가 박스 상단에 위치. layout 의 "AI 에이전트" 헤더와 첫 그룹
@@ -171,12 +183,14 @@ export function AgentNav(): ReactNode {
         // 회피 위해 AgentNav 가 박스+헤더를 완결 렌더(layout 미변경).
         <div
           key={group.title}
+          // marginTop 제거 — 그룹 간격은 layout nav 의 flex gap(8)이
+          // 홈↔그룹과 동일하게 일괄 처리(margin+gap 합산 방지). 사용자
+          // 요청: 그룹 간격을 홈-그룹 간격처럼 좁게.
           style={{
             background: "var(--surface-default)",
             border: "1px solid var(--t-neutral-8)",
             borderRadius: 10,
             padding: "10px 8px",
-            marginTop: gi === 0 ? 0 : 10,
           }}
         >
           <div

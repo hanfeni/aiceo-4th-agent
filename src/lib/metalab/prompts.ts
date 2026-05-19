@@ -7,7 +7,14 @@
  * (사내 커뮤니티 AI검색 05-llm-metadata 1단계 분류 이식).
  */
 
-export type MetaTask = "label" | "discover" | "allinone";
+// allinone = ①~④(발굴·수렴·픽스·실분류, 화면 확인만)
+// allinone_index = 위 + ⑤ 메타 OpenSearch 색인 (사용자 결정
+// 2026-05-19: 기존 올인원과 색인 올인원을 별개 작업으로 분리)
+export type MetaTask =
+  | "label"
+  | "discover"
+  | "allinone"
+  | "allinone_index";
 
 /** 1단계 분류 — 문서 1건에 메타 부착 */
 export const LABEL_SYSTEM = `당신은 한국어 문서에 검색용 메타 정보를 붙이는 분류기입니다.
@@ -107,4 +114,55 @@ ${mids}
 
 규칙: 추측 금지(본문 근거만). 위 확정 목록 외 중분류 생성 금지.
 이상·위험 신호 있으면 system_alert=true.`;
+}
+
+/** 분류기 LLM 출력에서 파싱한 메타 (OpenSearch 색인 필드원) */
+export interface ParsedMeta {
+  main_category: string;
+  mid_category: string;
+  sub_category: string;
+  description: string;
+  keywords: string[];
+  system_alert: boolean;
+}
+
+/**
+ * 분류기 LLM 출력 텍스트 → ParsedMeta.
+ *
+ * LLM 이 코드펜스(```json)·앞뒤 설명을 붙일 수 있어 첫 { … }
+ * 블록만 추출해 JSON.parse. 실패·필드 누락은 안전 기본값(빈
+ * 문자열·빈 배열)으로 — 색인 bulk 가 깨지지 않게(graceful).
+ * buildClassifierSystem 스키마와 1:1 (같은 파일에 둬 응집).
+ */
+export function parseClassifierOutput(raw: string): ParsedMeta {
+  const empty: ParsedMeta = {
+    main_category: "",
+    mid_category: "",
+    sub_category: "",
+    description: "",
+    keywords: [],
+    system_alert: false,
+  };
+  const m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return empty;
+  let o: Record<string, unknown>;
+  try {
+    o = JSON.parse(m[0]) as Record<string, unknown>;
+  } catch {
+    return empty;
+  }
+  const str = (v: unknown): string =>
+    typeof v === "string" ? v.trim() : "";
+  return {
+    main_category: str(o.main_category),
+    mid_category: str(o.mid_category),
+    sub_category: str(o.sub_category),
+    description: str(o.description),
+    keywords: Array.isArray(o.keywords)
+      ? o.keywords
+          .map((k) => (typeof k === "string" ? k.trim() : ""))
+          .filter((k) => k.length > 0)
+      : [],
+    system_alert: o.system_alert === true,
+  };
 }

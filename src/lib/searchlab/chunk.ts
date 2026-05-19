@@ -10,11 +10,14 @@
  * 하고 문서 전체를 청크 1개로(기존 문서=1벡터 동작 보존). ON 일
  * 때만 size 토큰 윈도우 + overlap 토큰 겹침으로 슬라이딩 분할.
  *
- * tiktoken WASM — runtime=nodejs 색인 경로 전용(검증 완료).
- * decode 는 Uint8Array → UTF-8 문자열 변환 필요.
+ * 구현: js-tiktoken (순수 JS, WASM 없음). tiktoken WASM 은
+ * Turbopack(Next16) 서버 번들에서 'Missing tiktoken_bg.wasm'
+ * 으로 모듈 평가 실패 → 색인 라우트 500. js-tiktoken 은 동일
+ * cl100k_base BPE 를 JS 로 — 토큰화 결과 비트 단위 동일, 번들
+ * 문제 원천 차단. decode 가 문자열 직접 반환(TextDecoder 불요).
  */
 
-import { get_encoding, type Tiktoken } from "tiktoken";
+import { getEncoding, type Tiktoken } from "js-tiktoken";
 
 export interface ChunkOptions {
   /** 청크 크기(토큰). 0/미지정 = 청킹 안 함(문서 전체 1청크). */
@@ -33,16 +36,15 @@ export interface Chunk {
 }
 
 let _enc: Tiktoken | null = null;
-/** cl100k 인코더 1회 생성·재사용 (free 안 함 — 프로세스 수명) */
+/** cl100k 인코더 1회 생성·재사용 (js-tiktoken 은 free 불요) */
 function enc(): Tiktoken {
-  if (!_enc) _enc = get_encoding("cl100k_base");
+  if (!_enc) _enc = getEncoding("cl100k_base");
   return _enc;
 }
 
-const _td = new TextDecoder("utf-8");
-/** 토큰 배열 → 문자열 (tiktoken decode 는 Uint8Array) */
-function decode(e: Tiktoken, tokens: Uint32Array): string {
-  return _td.decode(e.decode(tokens));
+/** 토큰 배열 → 문자열 (js-tiktoken decode 는 string 직접 반환) */
+function decode(e: Tiktoken, tokens: number[]): string {
+  return e.decode(tokens);
 }
 
 /**
@@ -76,7 +78,7 @@ export function chunkText(text: string, opts: ChunkOptions = {}): Chunk[] {
     return [{ index: 0, text, tokens: e.encode(text).length }];
   }
 
-  const tokens = e.encode(text); // Uint32Array
+  const tokens = e.encode(text); // number[] (js-tiktoken)
   const out: Chunk[] = [];
 
   // 슬라이딩 윈도우: step 스텝으로 [start,start+size) 윈도우 이동.

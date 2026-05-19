@@ -5,6 +5,19 @@ import {
   webSearchToolDisplayName,
   webSearchToolDescription,
 } from "./webSearchTool";
+// index_search 는 도메인별 팩토리(makeIndexSearchTool)라 정적
+// HARNESS_TOOLS 배열엔 안 들어간다(registry 가 세션 도메인으로
+// 조건부 합성). 표시 메타만 여기서 매핑(사고패널/introspect 동적).
+import {
+  indexSearchToolDisplayName,
+  indexSearchToolDescription,
+} from "./indexSearchTool.meta";
+// sql_query 도 도메인별 팩토리(makeSqlQueryTool) — index_search
+// 와 동일하게 정적 배열 미포함, registry 가 조건부 합성.
+import {
+  sqlQueryToolDisplayName,
+  sqlQueryToolDescription,
+} from "./sqlQueryTool.meta";
 
 /**
  * H4 커스텀 도구 등록 지점 (스펙 디렉토리 원칙의 re-export
@@ -52,5 +65,17 @@ export const HARNESS_TOOL_DISPLAY_NAMES: {
     name: "web_search",
     displayName: webSearchToolDisplayName,
     description: webSearchToolDescription,
+  },
+  // index_search: 팩토리 도구라 객체 .description 이 도메인별로
+  // 다르나, 사고패널 표시는 도메인 무관 단일 매핑으로 충분.
+  {
+    name: "index_search",
+    displayName: indexSearchToolDisplayName,
+    description: indexSearchToolDescription,
+  },
+  {
+    name: "sql_query",
+    displayName: sqlQueryToolDisplayName,
+    description: sqlQueryToolDescription,
   },
 ];
