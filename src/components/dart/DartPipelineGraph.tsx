@@ -17,19 +17,29 @@ import {
 } from "./dartStageNodes";
 
 /**
- * DART 고정 파이프라인 노드-엣지 시각화 (교육용 — D14b).
+ * DART 고정 파이프라인 노드-엣지 시각화 (교육용 — D14b + 웹검색).
  *
- * React Flow(@xyflow/react@^12, client-only) 캔버스. 5단계
- * (dartStageNodes 순수 상수)를 수평 노드 + 4엣지로 그린다. 런타임
- * stage 상태(SseEvent stage 이벤트 — DartAnalyzeView 가 누적)를
- * prop 으로 받아 노드 색 구동(대기/진행/완료/실패). stage 4(OpenAI)
- * 는 emphasis — 교육생이 "AI 작동 단계" 인지(사용자 HITL).
+ * React Flow(@xyflow/react@^12, client-only) 캔버스. DART_STAGE_NODES
+ * 는 6단계 SSOT(라우트 emit·SseEvent·테스트와 1:1) 불변이나, 그래프
+ * 는 가독성을 위해 **컨텍스트 압축(stage 3)을 시각적으로 숨겨** 5개
+ * 노드만 그린다(사용자 요청 — 라우트는 6단계 emit·압축 로직 유지,
+ * OPEN-5). 가시 stage = [1,2,4,5,6](비연속 — onStageClick·stageStates
+ * 는 SSOT stage 번호 그대로). 런타임 stage 상태로 노드 색 구동.
+ * emphasis(stage 4 웹검색·5 OpenAI) = "AI 작동 단계" 강조(사용자 HITL).
  *
+ * 가운데 정렬: fitView 가 가시 노드 bounding box 를 뷰포트 중앙에
+ * 자동 배치(노드 필터만으로 5노드 기준 재중앙화 — 추가 정렬 코드 0).
  * 노드 클릭 → onStageClick(stage) 콜백(D14c 입출력 패널 연동).
- * 커스텀 nodeTypes 미사용(over-engineering 회피 — 기본 노드 +
- * style 로 교육 시각화 충분). zustand 는 xyflow 내부 4.x 격리
- * (앱 5.x 와 공존 — docs/notes/dart-d14-reactflow-probe.md).
+ * 커스텀 nodeTypes 미사용(over-engineering 회피). zustand 는 xyflow
+ * 내부 4.x 격리(앱 5.x 공존 — docs/notes/dart-d14-reactflow-probe.md).
  */
+
+/** 그래프 시각 숨김 stage (라우트 emit·SSOT 는 불변 — 표시만 제외). */
+const HIDDEN_STAGE = 3; // 컨텍스트 압축 — 가독성(사용자 요청)
+/** 그래프에 그릴 노드 = 6단계 SSOT 중 압축 제외(파생 — SSOT 변형 0). */
+const VISIBLE_NODES = DART_STAGE_NODES.filter(
+  (n) => n.stage !== HIDDEN_STAGE,
+);
 
 export interface DartPipelineGraphProps {
   /** stage 번호(1..5) → 현재 상태. 미수신 stage 는 idle. */
@@ -38,8 +48,10 @@ export interface DartPipelineGraphProps {
   onStageClick?: (stage: number) => void;
 }
 
-const NODE_W = 168;
-const NODE_GAP = 56;
+// 가독성 향상(사용자 요청 — 노드·폰트 확대). fitView 가 폰트 확대를
+// 상쇄하지 않도록 노드·폰트·컨테이너 height 를 비례 확대(약 1.4×).
+const NODE_W = 228;
+const NODE_GAP = 64;
 
 export function DartPipelineGraph({
   stageStates,
@@ -47,7 +59,7 @@ export function DartPipelineGraph({
 }: DartPipelineGraphProps): ReactNode {
   const nodes: Node[] = useMemo(
     () =>
-      DART_STAGE_NODES.map((meta, i) => {
+      VISIBLE_NODES.map((meta, i) => {
         const status: StageStatus = stageStates[meta.stage] ?? "idle";
         const c = stageColor(status, meta.emphasis);
         return {
@@ -58,17 +70,17 @@ export function DartPipelineGraph({
           targetPosition: Position.Left,
           data: {
             label: (
-              <div style={{ textAlign: "center", lineHeight: 1.35 }}>
-                <div style={{ fontWeight: 700, fontSize: 12.5 }}>
+              <div style={{ textAlign: "center", lineHeight: 1.4 }}>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>
                   {meta.emphasis ? "🤖 " : ""}
                   {meta.label}
                 </div>
                 <div
                   style={{
-                    fontSize: 10,
+                    fontSize: 12,
                     color: c.text,
                     opacity: 0.85,
-                    marginTop: 3,
+                    marginTop: 5,
                   }}
                 >
                   {status === "running"
@@ -84,8 +96,8 @@ export function DartPipelineGraph({
           },
           style: {
             width: NODE_W,
-            padding: "10px 8px",
-            borderRadius: 10,
+            padding: "16px 12px",
+            borderRadius: 12,
             border: `2px solid ${c.border}`,
             background: c.bg,
             color: c.text,
@@ -102,8 +114,10 @@ export function DartPipelineGraph({
 
   const edges: Edge[] = useMemo(
     () =>
-      DART_STAGE_NODES.slice(0, -1).map((meta, i) => {
-        const nextStage = DART_STAGE_NODES[i + 1].stage;
+      // 가시 노드 연속 쌍을 잇는다(압축 제외로 stage 2→4 직결 —
+      // 끊긴 엣지 0. SSOT slice 가 아닌 VISIBLE_NODES 기준이 핵심).
+      VISIBLE_NODES.slice(0, -1).map((meta, i) => {
+        const nextStage = VISIBLE_NODES[i + 1].stage;
         // 엣지 활성: 다음 단계가 진행/완료면 흐름 강조(애니메이션).
         const nextStatus: StageStatus = stageStates[nextStage] ?? "idle";
         const active = nextStatus === "running";
@@ -131,9 +145,9 @@ export function DartPipelineGraph({
   return (
     <div
       style={{
-        height: 180,
+        height: 240,
         border: "1px solid var(--border, #e4e4e7)",
-        borderRadius: 10,
+        borderRadius: 12,
         background: "#fff",
         marginBottom: 16,
       }}
@@ -143,7 +157,7 @@ export function DartPipelineGraph({
         edges={edges}
         onNodeClick={(_e, n) => onStageClick?.(Number(n.id))}
         fitView
-        fitViewOptions={{ padding: 0.18 }}
+        fitViewOptions={{ padding: 0.12 }}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}

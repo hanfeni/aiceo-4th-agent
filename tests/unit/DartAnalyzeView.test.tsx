@@ -215,12 +215,12 @@ describe("DartAnalyzeView — 정상 SSE 흐름 (UC-41 / TC-41.1)", () => {
     });
   });
 
-  it("노드-엣지 파이프라인 그래프는 분석 전에도 6단계 항상 렌더된다", () => {
+  it("노드-엣지 파이프라인 그래프는 분석 전에도 5개 노드 항상 렌더된다", () => {
     // progress 텍스트 배너 폐지 → DartPipelineGraph 상시 렌더(교육생이
-    // 분석 전 6단계 구조를 idle 노드로 미리 인지 — 웹검색 단계 삽입).
-    // 모킹된 ReactFlow 가 data-node-count 로 전달 노드 수를 노출.
+    // 분석 전 흐름을 idle 노드로 미리 인지). DART_STAGE_NODES 는 6단계
+    // SSOT 이나 그래프는 압축(stage3) 시각 숨김 → 가시 5노드(가독성).
     render(<DartAnalyzeView />);
-    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("6");
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
   });
 
   it("stage 이벤트 → 해당 노드가 진행/완료 상태로 전이된다", async () => {
@@ -243,10 +243,11 @@ describe("DartAnalyzeView — 정상 SSE 흐름 (UC-41 / TC-41.1)", () => {
     fireEvent.click(screen.getByRole("button", { name: "분석" }));
 
     await waitFor(() => {
-      // stage 이벤트 소비 후에도 6노드 캔버스 유지(상시 렌더 불변).
+      // stage 이벤트 소비 후에도 가시 5노드 유지(압축 stage3 숨김 불변).
       expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe(
-        "6",
+        "5",
       );
+      // stage 5(OpenAI) 노드는 가시(압축만 숨김 — emphasis 노드 정상).
       expect(screen.getByTestId("rf-node-5")).toBeTruthy();
     });
   });

@@ -9,11 +9,12 @@ import type { ReactNode } from "react";
 // 최소 모킹(ReactFlow → nodes 개수 div + onNodeClick 트리거 버튼,
 // Background → null, Position/MarkerType → 객체 stub)하여 컴포넌트
 // 계약만 검증한다:
-//   (a) stageStates 무관 항상 DART_STAGE_NODES 6개 노드를 ReactFlow 에 전달
-//   (b) 노드 클릭 → onStageClick(숫자 stage id) 호출
+//   (a) DART_STAGE_NODES(6단계 SSOT) 중 압축(stage 3) 제외 5개 렌더
+//       (사용자 요청 — 가독성. 라우트는 6단계 emit 불변, 그래프만 필터)
+//   (b) 노드 클릭 → onStageClick(SSOT stage id, 비연속 [1,2,4,5,6])
 //
 // 매핑:
-//   - 노드-엣지 시각화 (6단계 = SseEvent stage 1..6 1:1, 웹검색 삽입)
+//   - 노드-엣지 시각화 (6단계 SSOT, 압축 시각 숨김 → 가시 5노드)
 //   - 노드 클릭 → onStageClick(stage) (D14c 입출력 패널 연동)
 // SSE 통합(DartAnalyzeView)은 D14d 범위 — 여기서 미검증.
 
@@ -68,29 +69,36 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. 항상 6개 노드 전달 (stageStates 무관 — 웹검색 단계 삽입)
+// 1. 가시 노드 = 6단계 중 압축(stage 3) 제외한 5개 (사용자 요청 —
+//    가독성. DART_STAGE_NODES SSOT 는 6단계 불변, 그래프만 필터).
+//    가시 stage = [1,2,4,5,6] (stage 번호 비연속 — SSOT 정합 유지).
 // ---------------------------------------------------------------------------
-describe("DartPipelineGraph — DART_STAGE_NODES 6개 노드 렌더", () => {
-  it("stageStates={} (전부 idle) 일 때 ReactFlow 에 노드 6개 전달", () => {
+const HIDDEN_STAGE = 3; // 컨텍스트 압축 — 시각적 숨김(라우트는 emit 유지)
+const VISIBLE_STAGES = DART_STAGE_NODES.map((n) => n.stage).filter(
+  (s) => s !== HIDDEN_STAGE,
+);
+
+describe("DartPipelineGraph — 압축 제외 5개 노드 렌더", () => {
+  it("stageStates={} (전부 idle) 일 때 ReactFlow 에 노드 5개 전달", () => {
     render(<DartPipelineGraph stageStates={{}} />);
     const rf = screen.getByTestId("rf");
-    expect(rf.getAttribute("data-node-count")).toBe("6");
+    expect(rf.getAttribute("data-node-count")).toBe("5");
     expect(rf.getAttribute("data-node-count")).toBe(
-      String(DART_STAGE_NODES.length),
+      String(VISIBLE_STAGES.length),
     );
   });
 
-  it("일부 stage 상태가 주어져도 노드는 항상 6개 (상태는 색만 구동)", () => {
+  it("일부 stage 상태가 주어져도 노드는 항상 5개 (상태는 색만 구동)", () => {
     const states: Record<number, StageStatus> = {
       1: "done",
       2: "running",
       4: "error",
     };
     render(<DartPipelineGraph stageStates={states} />);
-    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("6");
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
   });
 
-  it("전 단계 done 이어도 노드는 6개 유지", () => {
+  it("전 단계 done 이어도 노드는 5개 유지(압축 stage3 제외)", () => {
     const allDone: Record<number, StageStatus> = {
       1: "done",
       2: "done",
@@ -100,16 +108,16 @@ describe("DartPipelineGraph — DART_STAGE_NODES 6개 노드 렌더", () => {
       6: "done",
     };
     render(<DartPipelineGraph stageStates={allDone} />);
-    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("6");
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
   });
 
-  it("노드 id 가 DART_STAGE_NODES stage 와 1:1 (1..6 문자열 id)", () => {
+  it("가시 노드 id = [1,2,4,5,6] (압축 stage3 노드 미렌더)", () => {
     render(<DartPipelineGraph stageStates={{}} />);
-    for (const meta of DART_STAGE_NODES) {
-      expect(
-        screen.getByTestId(`rf-node-${meta.stage}`),
-      ).toBeTruthy();
+    for (const stage of VISIBLE_STAGES) {
+      expect(screen.getByTestId(`rf-node-${stage}`)).toBeTruthy();
     }
+    // 압축(stage 3) 노드는 그래프에 존재하지 않는다.
+    expect(screen.queryByTestId(`rf-node-${HIDDEN_STAGE}`)).toBeNull();
   });
 });
 
@@ -130,16 +138,17 @@ describe("DartPipelineGraph — 노드 클릭 → onStageClick(stage:number)", (
     expect(typeof onStageClick.mock.calls[0][0]).toBe("number");
   });
 
-  it("각 노드 클릭이 해당 숫자 stage 로 콜백한다 (1..6 전수)", () => {
+  it("각 가시 노드 클릭이 해당 숫자 stage 로 콜백한다 ([1,2,4,5,6])", () => {
     const onStageClick = vi.fn();
     render(
       <DartPipelineGraph stageStates={{}} onStageClick={onStageClick} />,
     );
-    for (const meta of DART_STAGE_NODES) {
-      fireEvent.click(screen.getByTestId(`rf-node-${meta.stage}`));
+    for (const stage of VISIBLE_STAGES) {
+      fireEvent.click(screen.getByTestId(`rf-node-${stage}`));
     }
+    // 압축(3) 제외 — onStageClick 은 SSOT stage 번호 그대로(비연속).
     expect(onStageClick.mock.calls.map((c) => c[0])).toEqual([
-      1, 2, 3, 4, 5, 6,
+      1, 2, 4, 5, 6,
     ]);
   });
 
