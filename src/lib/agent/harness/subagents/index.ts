@@ -1,4 +1,6 @@
 import type { SubagentSpec } from "@/types";
+import { webSearcherSubagent } from "./webSearcher";
+import { dartAnalystSubagent } from "./dartAnalyst";
 
 /**
  * H2-b Subagent 등록 지점 (스펙 디렉토리 원칙의 re-export 허용 예외).
@@ -16,4 +18,7 @@ import type { SubagentSpec } from "@/types";
  * task 스캐폴딩 자체는 항상 존재한다. 이 배열을 비우고 GP subagent 를
  * 끄는(off) 변환은 Slice 5 buildAgentOptions.ts 가 흡수한다.
  */
-export const HARNESS_SUBAGENTS: SubagentSpec[] = [];
+export const HARNESS_SUBAGENTS: SubagentSpec[] = [
+  webSearcherSubagent,
+  dartAnalystSubagent,
+];
