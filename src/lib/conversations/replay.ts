@@ -4,12 +4,10 @@ import {
   filterChunk,
   extractThinking,
   extractToolCalls,
-  extractToolOutputs,
 } from "@/lib/agent/utils/chunkFilter";
 import {
   reduceReasoning,
   reduceToolCall,
-  reduceToolResult,
 } from "@/lib/agent/utils/thinkingSteps";
 
 /**
@@ -94,21 +92,12 @@ function replayAssistant(msg: unknown): ChatMessage {
     }
   }
 
-  // 3) ServerTool(web_search 등) — additional_kwargs.tool_outputs[].
-  //    스트림에선 tool_call→tool_result 2단계로 오므로 동일하게 재생.
-  //    ToolOutputDelta = {id,name,args,result}. result 가 undefined(웹검색
-  //    진행형)면 reduceToolResult 의 name 폴백 경로(스트림과 동일).
-  const outputs = extractToolOutputs(msg, REPLAY_META);
-  if (outputs) {
-    for (const o of outputs) {
-      steps = reduceToolCall(
-        steps,
-        { id: o.id, name: o.name, args: o.args },
-        steps.length,
-      );
-      steps = reduceToolResult(steps, o.name, o.result ?? o.name, o.id);
-    }
-  }
+  // (ServerTool 재생 제거 — web_search 가 ClientTool 로 교체되어
+  //  additional_kwargs.tool_outputs 채널 소멸. web_search 는 이제 위
+  //  extractToolCalls + checkpoint ToolMessage 일반 ClientTool 경로로
+  //  복원된다 — dartTool 동형, 라이브=히스토리 유지. 베이스라인 이전
+  //  ServerTool checkpoint 는 비호환(ClientTool 전면 교체의 의도된
+  //  트레이드오프 — 신규 대화는 정상).)
 
   const out: ChatMessage = { role: "assistant", content };
   if (steps.length > 0) out.thinkingSteps = steps;

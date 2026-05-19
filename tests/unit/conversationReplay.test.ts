@@ -100,22 +100,24 @@ describe("replayMessages — checkpoint messages → ChatMessage[] (C8 순수)",
     expect(out.map((m) => m.content)).toEqual(["질문1", "답변1"]);
   });
 
-  it("reasoning + tool_outputs 보존: assistant 에 thinkingSteps 재구성(전체 복원 정책)", () => {
+  it("reasoning 복원 + 본문 reasoning 누출 0 (전체 복원 정책)", () => {
+    // web_search 가 ServerTool→ClientTool 교체되어 checkpoint 의
+    // additional_kwargs.tool_outputs(ServerTool 채널)는 더 이상 replay
+    // 가 복원하지 않는다(extractToolOutputs 제거). ClientTool web_search
+    // 는 checkpoint 의 tool_call_chunks/ToolMessage 일반 경로로 복원
+    // (dartTool 동형). 본 테스트는 reasoning 복원 + R5 누출가드만 검증
+    // (ServerTool tool step 단언 폐기 — 그룹화/citation describe 와 함께
+    // 제거된 ServerTool 복원 경로).
     const out = replayMessages([human("웹검색 통해 삼성전자 확인"), aiReasoningTextWeb()]);
     const ai = out[1];
     expect(ai.role).toBe("assistant");
     // 본문(text 블록)은 reasoning 블록을 제외하고 추출
     expect(ai.content).toContain("삼성전자");
     expect(ai.content).not.toContain("Searching Samsung"); // reasoning 누출 0(R5)
-    // 사고 패널 복원 — reasoning step + web_search tool step 존재
+    // 사고 패널 복원 — reasoning step 존재(ClientTool 무관 — 보존)
     expect(Array.isArray(ai.thinkingSteps)).toBe(true);
     const kinds = (ai.thinkingSteps ?? []).map((s) => s.kind);
     expect(kinds).toContain("reasoning");
-    expect(kinds).toContain("tool");
-    const toolStep = (ai.thinkingSteps ?? []).find((s) => s.kind === "tool");
-    expect(toolStep && toolStep.kind === "tool" && toolStep.name).toBe(
-      "web_search",
-    );
   });
 
   it("빈 messages → 빈 배열 (대화 0건 graceful)", () => {
@@ -132,69 +134,6 @@ describe("replayMessages — checkpoint messages → ChatMessage[] (C8 순수)",
     // 정상 1건만, 크래시 0
     expect(out).toHaveLength(1);
     expect(out[0].content).toBe("정상");
-  });
-
-  // S2 그룹화 + S4 replay 정합 (Plan Critic 2차 항목4). checkpoint 에
-  // web_search_call 이 N개여도 replay 가 같은 reduceToolCall 을 재생하므로
-  // **1 그룹 tool step 으로 복원**(라이브=히스토리 일치). 항목4-c: 매
-  // action 마다 reduceToolResult 반복 호출돼도 그룹 step 이 부풀거나
-  // 깨지지 않는지(멱등) 검증.
-  it("checkpoint web_search 다중 action → replay 1 그룹 tool step (라이브=히스토리)", () => {
-    const aiMultiWs = () => ({
-      lc: 1,
-      type: "constructor",
-      id: ["langchain_core", "messages", "AIMessageChunk"],
-      kwargs: {
-        content: [{ type: "text", text: "삼성전자 결과", index: 0, annotations: [] }],
-        additional_kwargs: {
-          // 모델이 한 답변서 search→open_page→find_in_page 3번 자율 호출
-          tool_outputs: [
-            {
-              id: "ws_a",
-              type: "web_search_call",
-              status: "completed",
-              action: { type: "search", queries: ["삼성전자 005930"] },
-            },
-            {
-              id: "ws_b",
-              type: "web_search_call",
-              status: "completed",
-              action: { type: "open_page", url: "https://x.com/p" },
-            },
-            {
-              id: "ws_c",
-              type: "web_search_call",
-              status: "completed",
-              action: {
-                type: "find_in_page",
-                pattern: "Revenue",
-                url: "https://x.com/p",
-              },
-            },
-          ],
-        },
-        response_metadata: {},
-        tool_call_chunks: [],
-        tool_calls: [],
-      },
-    });
-    const out = replayMessages([human("삼성전자 확인"), aiMultiWs()]);
-    const ai = out[1];
-    const toolSteps = (ai.thinkingSteps ?? []).filter(
-      (s) => s.kind === "tool",
-    );
-    // 3 action → 1 그룹 step (N개로 흩어지지 않음)
-    expect(toolSteps).toHaveLength(1);
-    const ws = toolSteps[0];
-    expect(ws.kind === "tool" && ws.name).toBe("web_search");
-    if (ws.kind === "tool") {
-      // 3 action 전부 args.actions 에 누적(라이브 그룹화와 동일 결과)
-      const parsed = JSON.parse(ws.args) as { actions?: unknown[] };
-      expect(parsed.actions).toHaveLength(3);
-      expect(
-        (parsed.actions ?? []).map((a) => (a as { type: string }).type),
-      ).toEqual(["search", "open_page", "find_in_page"]);
-    }
   });
 });
 
