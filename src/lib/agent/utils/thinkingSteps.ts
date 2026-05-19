@@ -187,6 +187,21 @@ export function reduceToolResult(
   if (id) {
     idx = steps.findIndex((s) => s.kind === "tool" && s.id === id);
   }
+  // Slice K — web_search citations 덮어쓰기. citations 는 id 없이
+  // (별도 청크) name="web_search" + "참고 출처…" 패턴으로 온다.
+  // status='completed' 로 모든 step 이 이미 완료돼 result===undefined
+  // step 이 없어도, **마지막 web_search step** 에 출처를 덮어쓴다
+  // (N:1 — 출처는 OpenAI 가 답변에 종합해 1번만 옴). 일반 status
+  // result("검색 완료" 등)는 이 패턴이 아니라 기존 name 폴백 유지.
+  if (idx < 0 && name === "web_search" && result.startsWith("참고 출처")) {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const s = steps[i];
+      if (s.kind === "tool" && s.name === "web_search") {
+        idx = i;
+        break;
+      }
+    }
+  }
   if (idx < 0) {
     idx = steps.findIndex(
       (s) => s.kind === "tool" && s.name === name && s.result === undefined,

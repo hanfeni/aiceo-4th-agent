@@ -322,13 +322,13 @@ describe("이중 emit 일원화 — web_search tool_outputs 는 단일 채널만
     // ClientTool 채널은 ServerTool 을 절대 잡지 않는다(이중 emit 제거).
     expect(clientCalls).toBeNull();
     // ServerTool 채널만 정확히 1건 — 이전엔 양쪽이 잡아 2건이 됐다.
-    // web_search_call result 는 미정(undefined) — 출처는 annotations 청크에서.
+    // status='completed' → result='검색 완료'(Slice K — 자기 완료 신호).
     expect(serverOutputs).toEqual([
       {
         id: "ws_dedup",
         name: "web_search",
         args: JSON.stringify({ queries: ["q1", "q2"] }),
-        result: undefined,
+        result: "검색 완료",
       },
     ]);
     expect(serverOutputs).toHaveLength(1);
@@ -367,9 +367,11 @@ describe("이중 emit 일원화 — web_search tool_outputs 는 단일 채널만
 });
 
 describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채널 단독 전담)", () => {
-  // web_search_call: 결과는 미정(undefined) — 출처는 별도 annotations 청크에서
-  // 와서 reduceToolResult name 폴백으로 채워진다. status 는 표시 안 함.
-  it("web_search_call: name='web_search', args=JSON({queries}), result=undefined", () => {
+  // Slice K — web_search status='completed' → result '검색 완료'(각
+  // step 자기 완료 신호, "실행 중…" 잔류 0). 진행 중(in_progress/
+  // searching)은 result=undefined 유지(거짓 완료 방지). 출처는
+  // citations 가 별도로 마지막 step 에 덮어쓴다(reduceToolResult).
+  it("web_search_call status='completed' → result='검색 완료'", () => {
     const msg = {
       kwargs: {
         additional_kwargs: {
@@ -389,12 +391,12 @@ describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채�
         id: "ws_1",
         name: "web_search",
         args: JSON.stringify({ queries: ["a 검색", "b query"] }),
-        result: undefined,
+        result: "검색 완료",
       },
     ]);
   });
 
-  it("런타임 인스턴스형(additional_kwargs 최상위) web_search 도 result 미정", () => {
+  it("web_search status='in_progress' → result=undefined(진짜 진행 중)", () => {
     const msg = {
       additional_kwargs: {
         tool_outputs: [
@@ -404,6 +406,30 @@ describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채�
     };
     expect(extractToolOutputs(msg, meta())).toEqual([
       { id: "ws_2", name: "web_search", args: "", result: undefined },
+    ]);
+  });
+
+  it("web_search status='searching' → result=undefined(진행형)", () => {
+    const msg = {
+      additional_kwargs: {
+        tool_outputs: [
+          { id: "ws_3", type: "web_search_call", status: "searching" },
+        ],
+      },
+    };
+    expect(extractToolOutputs(msg, meta())).toEqual([
+      { id: "ws_3", name: "web_search", args: "", result: undefined },
+    ]);
+  });
+
+  it("web_search status 누락 → result=undefined(불명 = 진행 중 가정)", () => {
+    const msg = {
+      additional_kwargs: {
+        tool_outputs: [{ id: "ws_4", type: "web_search_call" }],
+      },
+    };
+    expect(extractToolOutputs(msg, meta())).toEqual([
+      { id: "ws_4", name: "web_search", args: "", result: undefined },
     ]);
   });
 
@@ -502,11 +528,11 @@ describe("extractToolResult — 도구 실행 결과 추출 (FR-09 거울상)", 
 });
 
 describe("extractToolOutputs — ServerTool(web_search) 호출 추출 (FR-09 거울상)", () => {
-  // 계약 변경(사용자 보고 버그 수정): web_search_call 단계는 검색어(IN)만
-  // 확정이고 결과는 미정 → result=undefined. ToolBlock 이 "실행 중…" 표시.
-  // 실제 OUT(출처)은 별도 청크의 annotations 에서 와서 reduceToolResult 의
-  // name 폴백(result===undefined 인 step)으로 채워진다(extractWebSearchCitations).
-  it("model_request + web_search_call → result 미정(undefined), IN(검색어)만 확정", () => {
+  // Slice K — web_search status='completed' → result='검색 완료'(각
+  // step 자기 완료 신호; 출처(citations)는 별도 청크 N:1 라 안 와도
+  // "실행 중…" 잔류 0). 진행형(running/in_progress)·누락은
+  // result=undefined(거짓 완료 방지 — 진짜 진행 중만 "실행 중…").
+  it("model_request + web_search_call status='completed' → result='검색 완료'", () => {
     const msg = {
       kwargs: {
         additional_kwargs: {
@@ -527,7 +553,7 @@ describe("extractToolOutputs — ServerTool(web_search) 호출 추출 (FR-09 거
         id: "ws_1",
         name: "web_search",
         args: JSON.stringify({ queries: ["q1", "q2"] }),
-        result: undefined,
+        result: "검색 완료",
       },
     ]);
   });

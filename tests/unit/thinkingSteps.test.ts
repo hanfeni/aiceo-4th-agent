@@ -257,6 +257,60 @@ describe("reduceToolResult — id/name 매칭 result 채움", () => {
   });
 });
 
+// Slice K — web_search citations 덮어쓰기.
+// 원인: web_search N개면 IN step N개, 출처(citations)는 OpenAI 가
+// 답변에 종합해 1번만 옴(id 없음, "참고 출처..."). status='completed'
+// 로 모든 step 이 '검색 완료'된 뒤 citations 가 와도 name 폴백
+// (result===undefined)은 채울 step 이 없어 출처가 사라짐. 해법:
+// id 없는 web_search citations 는 **마지막 web_search step** result 를
+// '검색 완료 + 출처'로 덮어쓴다(result 유무 무관).
+describe("reduceToolResult — web_search citations 마지막 step 덮어쓰기", () => {
+  const CITE = "참고 출처 1건:\n• 삼성 (https://s.example)";
+
+  it("status 로 모두 '검색 완료'된 후 citations → 마지막 step 에 출처 덮어씀", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
+    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
+    s = reduceToolResult(s, "web_search", "검색 완료", "w2");
+    // citations: id 없음 + "참고 출처" 패턴 → 마지막(w2) 덮어쓰기.
+    s = reduceToolResult(s, "web_search", CITE, "");
+    expect(asTool(s[0]).result).toBe("검색 완료"); // w1 불변
+    expect(asTool(s[1]).result).toBe(CITE); // w2 출처로 덮임
+  });
+
+  it("web_search step 1개일 때도 citations 가 그 step 에 덮임", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
+    s = reduceToolResult(s, "web_search", CITE, "");
+    expect(asTool(s[0]).result).toBe(CITE);
+  });
+
+  it("id 없는 일반 result(출처 패턴 아님)는 기존 name 폴백 유지(미완료 step)", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
+    // "검색 완료"(출처 패턴 아님) + id 없음 → 첫 미완료(w1).
+    s = reduceToolResult(s, "web_search", "검색 완료", "");
+    expect(asTool(s[0]).result).toBe("검색 완료");
+    expect(asTool(s[1]).result).toBeUndefined();
+  });
+
+  it("citations 인데 web_search step 이 하나도 없으면 same-ref(무시)", () => {
+    const input: ThinkingStep[] = [
+      { kind: "reasoning", title: "질문 분석 중", content: "x", order: 0 },
+    ];
+    const r = reduceToolResult(input, "web_search", CITE, "");
+    expect(r).toBe(input);
+  });
+
+  it("id 있는 citations(드묾)는 id 매칭 우선(덮어쓰기 분기 안 탐)", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
+    s = reduceToolResult(s, "web_search", CITE, "w1"); // id 명시 → w1
+    expect(asTool(s[0]).result).toBe(CITE);
+    expect(asTool(s[1]).result).toBeUndefined();
+  });
+});
+
 describe("교차 통합 — 회귀 가드 (사고→도구→사고→도구 순서 보존)", () => {
   it("reasoning → tool t1 → result t1 → reasoning → tool t2 → result t2 순서 그대로", () => {
     let steps: ThinkingStep[] = [];
