@@ -120,7 +120,8 @@ export async function POST(req: Request): Promise<Response> {
     async start(controller) {
       controller.enqueue(encodeSse({ type: "thread", conversationId }));
       try {
-        // ── Step 1: DART 데이터 수집 (고정 — LLM 위임 0) ──
+        // ── 단계 1: 기업 식별 (고정 파이프라인 — D14 교육 시각화) ──
+        // tool_call 은 기존 D12 UI 호환 위해 유지(D14b 에서 노드로 교체).
         controller.enqueue(
           encodeSse({
             type: "tool_call",
@@ -129,13 +130,67 @@ export async function POST(req: Request): Promise<Response> {
             args: JSON.stringify({ corpName: corpNameInput, perspective }),
           }),
         );
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 1,
+            status: "start",
+            label: "기업 식별",
+            input: `기업명: ${corpNameInput}`,
+          }),
+        );
+
+        // collectDartContext 가 ①식별 ②수집 ③압축을 내부 수행(단일
+        // 반환 — analyze-pipeline 순수/IO 분리 보존, 변경 0). 라우트는
+        // 호출 전후로 단계 경계만 합성 emit(교육 진행 표시엔 충분 —
+        // architect B 결정). 실패 시 어느 단계인지 stage.error 로 표시.
         const ctx = await collectDartContext(corpNameInput, perspective);
         if (!ctx.ok) {
-          // 식별 실패·비상장 공시 없음 등 — 안내문을 본문으로 전달.
+          // 식별 실패·비상장 공시 없음 — 단계 1 error + 안내문 본문.
+          controller.enqueue(
+            encodeSse({
+              type: "stage",
+              stage: 1,
+              status: "error",
+              label: "기업 식별",
+              output: ctx.text,
+            }),
+          );
           controller.enqueue(encodeSse({ type: "token", text: ctx.text }));
           controller.enqueue(encodeSse({ type: "done" }));
           return;
         }
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 1,
+            status: "done",
+            label: "기업 식별",
+            output: `corp_code=${ctx.corpCode}, ${
+              ctx.isListed ? "상장사" : "비상장사"
+            }`,
+          }),
+        );
+        // ── 단계 2: DART 공시 수집 (collectDartContext 내부 완료) ──
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 2,
+            status: "done",
+            label: "DART 공시 수집",
+            output: `${ctx.corpName} 공시 데이터 수집 완료`,
+          }),
+        );
+        // ── 단계 3: 컨텍스트 압축 (OPEN-5 — context-formatter) ──
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 3,
+            status: "done",
+            label: "컨텍스트 압축",
+            output: `압축 컨텍스트 ${ctx.text.length}자 (raw JSON 미진입 — OPEN-5)`,
+          }),
+        );
         controller.enqueue(
           encodeSse({
             type: "tool_result",
@@ -145,7 +200,7 @@ export async function POST(req: Request): Promise<Response> {
           }),
         );
 
-        // ── Step 2: OpenAI 8관점 분석 스트리밍 ──
+        // ── 단계 4: OpenAI 8관점 분석 (LLM — 교육 강조 노드) ──
         const model = createModel(
           process.env as Record<string, string | undefined>,
           parsed.data.model,
@@ -157,6 +212,17 @@ export async function POST(req: Request): Promise<Response> {
           ctx.text,
           getTaskInstruction(perspective),
         );
+        // R5: stage.input 은 우리 코드 산출물(system+human 프롬프트)
+        // 만. LLM 응답 객체를 stage.input 에 절대 대입 금지(불변식).
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 4,
+            status: "start",
+            label: "OpenAI 8관점 분석",
+            input: `[SYSTEM]\n${system}\n\n[USER]\n${human}`,
+          }),
+        );
 
         const s = await model.stream([
           new SystemMessage(system),
@@ -164,9 +230,29 @@ export async function POST(req: Request): Promise<Response> {
         ]);
         llmStream = s as unknown as AsyncGenerator<unknown>;
         for await (const chunk of s) {
+          // R5: chunkText 가 reasoning/thinking 블록 폐기 — token 으로만
+          // 본문. stage.output 에 raw chunk 직접 대입 금지(불변식).
           const text = chunkText(chunk);
           if (text) controller.enqueue(encodeSse({ type: "token", text }));
         }
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 4,
+            status: "done",
+            label: "OpenAI 8관점 분석",
+            output: "분석 리포트 스트리밍 완료",
+          }),
+        );
+        // ── 단계 5: 완료 ──
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 5,
+            status: "done",
+            label: "완료",
+          }),
+        );
         controller.enqueue(encodeSse({ type: "done" }));
       } catch (err) {
         // 보안(chat route 동형): SDK 에러 원문 비노출, 일반화 메시지만.

@@ -550,6 +550,245 @@ describe("POST /api/dart/analyze — 고정흐름 SSE + Zod(AD-4) + R5/R7", () =
   });
 
   // ============================================================
+  // 5b. D14a — SseEvent stage 타입 + 라우트 stage emit
+  //     (UC-41 파이프라인 진행 시각화 / R5 input 산출물만 / AC-28)
+  // ============================================================
+  describe("D14a: stage 이벤트 emit 순서·R5·실패·label", () => {
+    /** events 중 type==="stage" 만 추려 순서 보존 배열로. */
+    function stageEvents(
+      events: Array<Record<string, unknown>>,
+    ): Array<Record<string, unknown>> {
+      return events.filter((e) => e.type === "stage");
+    }
+
+    // --- 1. stage emit 순서 (정상 흐름) — P0 / UC-41 ---
+    it("정상 흐름: stage1 start→done→2 done→3 done→4 start→token→4 done→5 done→done (단조 1→5)", async () => {
+      collectDartContextSpy.mockResolvedValue({
+        ok: true,
+        corpName: "삼성전자",
+        corpCode: "00126380",
+        isListed: true,
+        text: "CTX",
+      });
+      createModelSpy.mockReturnValue({
+        stream: () => stringChunkGen("결과"),
+      });
+
+      const res = await POST(
+        postReq({ corpName: "삼성전자", perspective: "financial_health" }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = parseSseEvents(await drainBody(res));
+      const types = events.map((e) => e.type);
+      const stages = stageEvents(events);
+
+      // stage 이벤트 시퀀스 — (stage, status) 순서 계약.
+      const seq = stages.map((s) => `${s.stage}:${s.status}`);
+      expect(seq).toEqual([
+        "1:start",
+        "1:done",
+        "2:done",
+        "3:done",
+        "4:start",
+        "4:done",
+        "5:done",
+      ]);
+
+      // stage 번호 단조 비감소(1→5).
+      const nums = stages.map((s) => s.stage as number);
+      for (let i = 1; i < nums.length; i++) {
+        expect(nums[i]).toBeGreaterThanOrEqual(nums[i - 1]);
+      }
+      expect(nums[0]).toBe(1);
+      expect(nums[nums.length - 1]).toBe(5);
+
+      // status 규칙: 1·4 는 start/done 쌍, 2·3·5 는 done 만(start/error 0).
+      const byStage = (n: number) =>
+        stages.filter((s) => s.stage === n).map((s) => s.status);
+      expect(byStage(1)).toEqual(["start", "done"]);
+      expect(byStage(4)).toEqual(["start", "done"]);
+      expect(byStage(2)).toEqual(["done"]);
+      expect(byStage(3)).toEqual(["done"]);
+      expect(byStage(5)).toEqual(["done"]);
+      expect(stages.some((s) => s.status === "error")).toBe(false);
+
+      // stage1 done.output 에 corp_code + 상장 여부.
+      const s1done = stages.find(
+        (s) => s.stage === 1 && s.status === "done",
+      );
+      expect(s1done?.output).toContain("corp_code=00126380");
+      expect(s1done?.output).toContain("상장사");
+
+      // stage3 done.output 에 "압축 컨텍스트" + text.length(3).
+      const s3done = stages.find((s) => s.stage === 3);
+      expect(s3done?.output).toContain("압축 컨텍스트");
+      expect(s3done?.output).toContain("3자");
+
+      // token "결과" 가 stage4 start 이후·stage4 done 이전.
+      const idxStage4Start = types.findIndex(
+        (_, i) =>
+          events[i].type === "stage" &&
+          events[i].stage === 4 &&
+          events[i].status === "start",
+      );
+      const idxStage4Done = types.findIndex(
+        (_, i) =>
+          events[i].type === "stage" &&
+          events[i].stage === 4 &&
+          events[i].status === "done",
+      );
+      const idxToken = types.indexOf("token");
+      expect(idxToken).toBeGreaterThan(idxStage4Start);
+      expect(idxToken).toBeLessThan(idxStage4Done);
+      const tokenText = events
+        .filter((e) => e.type === "token")
+        .map((e) => e.text as string)
+        .join("");
+      expect(tokenText).toBe("결과");
+
+      // done 이 마지막, stage5 done 직후.
+      expect(types[types.length - 1]).toBe("done");
+      const idxStage5 = types.findIndex(
+        (_, i) => events[i].type === "stage" && events[i].stage === 5,
+      );
+      expect(types.lastIndexOf("done")).toBeGreaterThan(idxStage5);
+    });
+
+    // --- 2. R5: stage4.input = 우리 산출물만 (핵심 불변식) — P0 ---
+    it("R5: stage4.input 은 system+human 프롬프트만, reasoning/LLM 응답 0건 누출", async () => {
+      collectDartContextSpy.mockResolvedValue({
+        ok: true,
+        corpName: "삼성전자",
+        corpCode: "00126380",
+        isListed: true,
+        text: "CTX",
+      });
+      getFullSystemPromptSpy.mockReturnValue("SYS");
+      buildDartAnalysisQuerySpy.mockReturnValue("HUMAN");
+      // 라이브 인스턴스 모사: content 블록 배열(text + reasoning).
+      async function* blockGen(): AsyncGenerator<{ content: unknown }> {
+        yield {
+          content: [
+            { type: "text", text: "본문출력" },
+            { type: "reasoning", reasoning: "속생각" },
+          ],
+        };
+      }
+      createModelSpy.mockReturnValue({ stream: () => blockGen() });
+
+      const res = await POST(
+        postReq({ corpName: "삼성전자", perspective: "governance" }),
+      );
+      const wire = await drainBody(res);
+      const events = parseSseEvents(wire);
+      const stages = stageEvents(events);
+
+      // stage4 start.input = `[SYSTEM]\nSYS\n\n[USER]\nHUMAN` (우리 산출물만).
+      const s4start = stages.find(
+        (s) => s.stage === 4 && s.status === "start",
+      );
+      expect(s4start?.input).toBe("[SYSTEM]\nSYS\n\n[USER]\nHUMAN");
+
+      // 어떤 stage 이벤트의 input/output 에도 reasoning/LLM 응답 0건.
+      for (const s of stages) {
+        const blob = `${s.input ?? ""}${s.output ?? ""}`;
+        expect(blob).not.toContain("속생각");
+        expect(blob).not.toContain("reasoning");
+        expect(blob).not.toContain("본문출력"); // LLM 응답은 stage 미혼입
+      }
+
+      // LLM 본문은 token 채널로만(=text 블록만), reasoning 0건.
+      const tokenText = events
+        .filter((e) => e.type === "token")
+        .map((e) => e.text as string)
+        .join("");
+      expect(tokenText).toBe("본문출력");
+      // SSE wire 전체에 reasoning 텍스트 0건(누출 가드).
+      expect(wire).not.toContain("속생각");
+    });
+
+    // --- 3. collectDartContext 실패 → stage1 error (LLM 0) — P0 ---
+    it("ok:false → stage1 start→error(output=안내문)→token→done, stage2~5/LLM 0", async () => {
+      collectDartContextSpy.mockResolvedValue({
+        ok: false,
+        corpName: "없는회사",
+        text: '"없는회사" 에 해당하는 DART 기업을 찾지 못했습니다.',
+      });
+
+      const res = await POST(
+        postReq({ corpName: "없는회사", perspective: "risk" }),
+      );
+      expect(res.status).toBe(200);
+
+      const events = parseSseEvents(await drainBody(res));
+      const types = events.map((e) => e.type);
+      const stages = stageEvents(events);
+
+      // stage1 start → stage1 error 만(stage2~5 미발생).
+      const seq = stages.map((s) => `${s.stage}:${s.status}`);
+      expect(seq).toEqual(["1:start", "1:error"]);
+      expect(stages.some((s) => (s.stage as number) >= 2)).toBe(false);
+
+      // stage1 error.output = 안내문.
+      const s1err = stages.find(
+        (s) => s.stage === 1 && s.status === "error",
+      );
+      expect(s1err?.output).toContain("찾지 못했");
+
+      // 안내문 token + done 정상 종결(error 이벤트 아님).
+      const tokenEv = events.find((e) => e.type === "token");
+      expect(tokenEv?.text).toContain("찾지 못했");
+      expect(types[types.length - 1]).toBe("done");
+      expect(types).not.toContain("error");
+
+      // LLM 비용 0.
+      expect(createModelSpy).not.toHaveBeenCalled();
+      expect(buildDartAnalysisQuerySpy).not.toHaveBeenCalled();
+    });
+
+    // --- 4. stage label 정확 — P1 ---
+    it("각 stage label = 기업 식별/DART 공시 수집/컨텍스트 압축/OpenAI 8관점 분석/완료", async () => {
+      collectDartContextSpy.mockResolvedValue({
+        ok: true,
+        corpName: "삼성전자",
+        corpCode: "00126380",
+        isListed: false,
+        text: "C",
+      });
+      createModelSpy.mockReturnValue({
+        stream: () => stringChunkGen("r"),
+      });
+
+      const res = await POST(
+        postReq({ corpName: "삼성전자", perspective: "valuation" }),
+      );
+      const events = parseSseEvents(await drainBody(res));
+      const stages = stageEvents(events);
+
+      const labelOf = (n: number) =>
+        stages.find((s) => s.stage === n)?.label;
+      expect(labelOf(1)).toBe("기업 식별");
+      expect(labelOf(2)).toBe("DART 공시 수집");
+      expect(labelOf(3)).toBe("컨텍스트 압축");
+      expect(labelOf(4)).toBe("OpenAI 8관점 분석");
+      expect(labelOf(5)).toBe("완료");
+
+      // 같은 stage 의 start/done 이 동일 label 인지(1·4).
+      const s1 = stages.filter((s) => s.stage === 1);
+      expect(new Set(s1.map((s) => s.label)).size).toBe(1);
+      const s4 = stages.filter((s) => s.stage === 4);
+      expect(new Set(s4.map((s) => s.label)).size).toBe(1);
+
+      // 비상장사 분기 — stage1 done.output 에 "비상장사".
+      const s1done = stages.find(
+        (s) => s.stage === 1 && s.status === "done",
+      );
+      expect(s1done?.output).toContain("비상장사");
+    });
+  });
+
+  // ============================================================
   // 6. R7 + 폐기 0 (소스 정적 검사)
   // ============================================================
   describe("R7: runtime/dynamic 헤더 + 고정흐름 import 0 (P0)", () => {

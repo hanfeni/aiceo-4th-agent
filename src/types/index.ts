@@ -21,6 +21,27 @@ export interface ChatMessage {
    * 역파싱해 적재한다. 비면 패널 미표시(chat.jsx:502 게이트).
    */
   sources?: WebSource[];
+  /**
+   * 첨부 흔적 — user 만. 사용자가 무엇을 보냈는지 메시지 버블에 표시
+   * (Plan Critic I1). 이미지는 base64 로 body.images, 텍스트/PDF/DOCX 는
+   * 추출돼 query 에 합쳐지므로 content 만으론 첨부 사실이 안 보임 → 별도
+   * 메타로 칩 렌더(MessageList). image 는 썸네일(dataUrl) 노출.
+   */
+  attachments?: Array<{
+    name: string;
+    kind: "image" | "text";
+    /** image 일 때 썸네일용 base64 data URL(선택). */
+    dataUrl?: string;
+  }>;
+  /**
+   * 후속 추천 질문 — assistant 만. LLM 이 응답 끝에 [REC_QUERY]…
+   * [/REC_QUERY] 마커로 심은 것을 splitRecQueries 가 본문과 분리해
+   * 적재한다(medigate-new rec_query 패턴 모방). 답변 하단에 클릭
+   * 가능한 칩으로 렌더(클릭 = 그 질문 재전송). 본문(content)에는
+   * 마커·질문이 남지 않는다(스트리밍 중에도 즉시 분리 — 누출 0).
+   * 비면 칩 미표시.
+   */
+  recQueries?: string[];
 }
 
 /** 참고 출처 1건(References 패널 항목). web_search url_citation 유래. */
@@ -87,17 +108,39 @@ export type SseEvent =
   | { type: "tool_call"; id: string; name: string; args: string }
   // 도구 실행 결과 OUT(tools 노드의 tool 메시지).
   | { type: "tool_result"; id: string; name: string; result: string }
+  // DART 전용 라우트(/api/dart/analyze) 고정 파이프라인 5단계 진행
+  // (교육용 노드-엣지 시각화 데이터원 — D14). 챗 라우트는 이 타입을
+  // emit 하지 않으며, 챗 store asSseEvent 는 switch default:null 로
+  // 자동 폐기(case "stage" 추가 금지 — 챗 회귀 0 구조 불변식).
+  // R5: input 은 우리 코드 산출물(corpCode/압축컨텍스트/system+human
+  // 프롬프트)만 — LLM reasoning 절대 미포함. LLM 출력은 token 이벤트
+  // (chunkText 통과분)로 별도 흐름.
+  | {
+      type: "stage";
+      stage: 1 | 2 | 3 | 4 | 5;
+      status: "start" | "done" | "error";
+      label: string;
+      input?: string;
+      output?: string;
+    }
   | { type: "done" }
   | { type: "error"; message: string };
 
 /**
  * 서브에이전트 명세. deepagents subagents[] 슬롯에 합성된다.
  * (PRD FR-12 / harness/subagents/ — Slice 5 에서 레지스트리 합성.)
+ *
+ * tools: deepagents SubAgent.tools (옵션 — 미지정 시 defaultTools 상속).
+ * web-searcher 처럼 특정 도구만 줘 역할을 좁힐 때 사용. R8 에 따라
+ * 느슨하게(unknown[]) 둔다 — ClientTool/ServerTool 혼재 가능, 정밀
+ * 타입 narrow 는 buildAgentOptions 경계에서만.
  */
 export interface SubagentSpec {
   name: string;
   description: string;
   systemPrompt: string;
+  /** deepagents SubAgent.tools — 미지정 시 메인 defaultTools 상속. */
+  tools?: unknown[];
 }
 
 /**
@@ -112,4 +155,11 @@ export interface HarnessConfig {
   subagents: SubagentSpec[];
   tools: unknown[];
   checkpointer: unknown;
+  /**
+   * SKILL 요소 (deepagents SkillsMiddleware — PoC). skill 소스 경로 +
+   * backend 인스턴스. enabled=false 또는 filesystem off 시 sources=[]
+   * (skill 은 본문을 read_file 로 읽으므로 filesystem 미들웨어 의존).
+   * backend 는 R8 에 따라 느슨하게 둔다(buildAgentOptions 경계에서 narrow).
+   */
+  skills: { enabled: boolean; sources: string[]; backend: unknown };
 }
