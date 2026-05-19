@@ -139,6 +139,9 @@ export function GraphExploreModal({
   const [err, setErr] = useState<string | null>(null);
   // 토글: owns(2-노드) ↔ position(3-노드, Position 매개 구조).
   const [mode, setMode] = useState<ViewMode>("owns");
+  // 해석 패널 — 경로 깊이별 그래프 사실/멀티홉 통찰(LLM 없음).
+  const [insight, setInsight] = useState<string[]>([]);
+  const [rebuildHint, setRebuildHint] = useState(false);
 
   // 누적 그래프 → reactflow 노드/엣지 (selectedId 변할 때만 재배치).
   const { nodes, edges } = useMemo(
@@ -277,6 +280,38 @@ export function GraphExploreModal({
     },
     [mode, fetchGraph],
   );
+
+  // 경로(path)가 바뀔 때마다 해석 갱신 — 깊이별 그래프 사실/
+  // 멀티홉 통찰. path 자체를 deps 로(클릭·되돌아가기·리셋 모두
+  // path 변경 → 해석 재계산). alive 가드로 경합/언마운트 방지.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await fetch("/api/graph-lab/summary", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: path.map((c) => ({ id: c.id, label: c.label })),
+          }),
+        });
+        const d = await r.json();
+        if (!alive) return;
+        if (!r.ok) {
+          setInsight([d.error ?? "해석을 불러오지 못했습니다."]);
+          setRebuildHint(false);
+          return;
+        }
+        setInsight(d.lines ?? []);
+        setRebuildHint(!!d.rebuildHint);
+      } catch {
+        if (alive) setInsight([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [path]);
 
   // 마운트 시 1회 초기 그래프 로드. setState 는 await 경계(IIFE)
   // 뒤에서만 — effect 본문 동기 setState 금지(GraphLabView 동형).
@@ -575,6 +610,59 @@ export function GraphExploreModal({
             <Background />
             <Controls showInteractive={false} />
           </ReactFlow>
+        </div>
+
+        {/* 해석 패널 — 경로 깊이별 그래프 사실/멀티홉 통찰
+            (LLM 없이 Neo4j 집계만 — '그래프가 곧 답'). */}
+        <div
+          style={{
+            borderTop: "1px solid var(--t-neutral-8)",
+            background: "var(--cf-soft-bg, #f8fafc)",
+            padding: "12px 20px",
+            maxHeight: 168,
+            overflowY: "auto",
+          }}
+          className="thin-scroll"
+        >
+          {rebuildHint && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--t-warning-11, #b45309)",
+                background: "var(--t-warning-3, #fffbeb)",
+                border: "1px solid var(--t-warning-7, #fbbf24)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                marginBottom: 8,
+              }}
+            >
+              ⚠ 현재 그래프가 이전 스키마라 보유가치가 표시되지
+              않습니다. graph-lab 화면에서 <strong>그래프 재구축</strong>을
+              한 번 실행하면 가치·Position 통찰까지 모두 보입니다.
+              (관계 기반 통찰은 지금도 정상)
+            </div>
+          )}
+          {insight.length > 0 ? (
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: 18,
+                fontSize: 12,
+                lineHeight: 1.65,
+                color: "var(--text-default)",
+              }}
+            >
+              {insight.map((ln, i) => (
+                <li key={i} style={{ marginBottom: 4 }}>
+                  {ln}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span style={{ fontSize: 11.5, color: "var(--text-subtle)" }}>
+              해석 불러오는 중…
+            </span>
+          )}
         </div>
 
         <div
