@@ -28,12 +28,19 @@ export type LoadEvent =
     }
   | { type: "load_error"; message: string };
 
-/** holdings 1행 (CSV → 그래프 엣지 & SQL row 공용) */
+/** holdings 1행 (CSV → 그래프 엣지 & SQL row 공용).
+ *
+ * 단위 주의(2026-05-20 실측 확정): SEC 원본 컬럼명은
+ * value_usd_thousands 이지만 실제 단위는 그냥 USD 다.
+ * value/shares = 종목 주당가($517≈MS주가)로 일정 →
+ * 천 단위면 주가가 ×1000 폭발. 그래서 valueUsd(달러)로
+ * 명명한다(이전 valueUsdK 는 오해 소지 — 정정). */
 export interface HoldingRow {
   accession: string;
   cusip: string;
   issuer: string;
-  valueUsdK: number;
+  /** 보유가치(USD). 원본 컬럼명은 _thousands 지만 실단위 USD. */
+  valueUsd: number;
   shares: number;
   /** 옵션 포지션 구분: ""=현물(SH) / "Call" / "Put"
    *  (웹 사례: 옵션 보유만 따로 질의 — Position 노드 속성). */
@@ -54,8 +61,8 @@ export interface TopIssuerRow {
   issuer: string;
   /** 이 종목을 신고한 13F 기관 수 (crowding/인기도 지표) */
   holderCount: number;
-  /** 보유가치 합계(USD 천 단위) */
-  totalValueK: number;
+  /** 보유가치 합계(USD). 원본 _thousands 지만 실단위 USD. */
+  totalValueUsd: number;
 }
 
 /** 인메모리 보관소 — SQL/RAG 패널이 그래프와 같은 데이터를 쓰도록.
@@ -157,11 +164,12 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
     state: r[4] ?? "",
   }));
   // holdings: accession_number,cusip,name_of_issuer,value_usd_thousands,shares,shares_type,put_call
+  // r[3] 컬럼명은 _thousands 지만 실단위 USD(2026-05-20 실측).
   const holdings: HoldingRow[] = holdRows.slice(1).map((r) => ({
     accession: r[0],
     cusip: r[1],
     issuer: r[2],
-    valueUsdK: Number(r[3]) || 0,
+    valueUsd: Number(r[3]) || 0,
     shares: Number(r[4]) || 0,
     putCall: (r[6] ?? "").trim(),
   }));
@@ -204,7 +212,7 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
          MERGE (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
            ON CREATE SET c.name = r.issuer
          MERGE (m)-[o:${GRAPH_SCHEMA.ownsRel}]->(c)
-         SET o.value_usd_k = r.valueUsdK, o.shares = r.shares`,
+         SET o.value_usd = r.valueUsd, o.shares = r.shares`,
         { rows: chunk },
       );
       yield {
@@ -225,17 +233,18 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
     yield { type: "load", phase: "crowding", text: "종목 인기도(crowding) 속성 적재…" };
     // top_issuers: cusip,name_of_issuer,n_filer_managers,total_value_usd_thousands
     const tiRows = await fetchCsv("topIssuers");
+    // r[3] 컬럼명 total_value_usd_thousands 지만 실단위 USD.
     const topIssuers: TopIssuerRow[] = tiRows.slice(1).map((r) => ({
       cusip: r[0],
       issuer: r[1],
       holderCount: Number(r[2]) || 0,
-      totalValueK: Number(r[3]) || 0,
+      totalValueUsd: Number(r[3]) || 0,
     }));
     await runCypher(
       `UNWIND $rows AS r
        MATCH (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
        SET c.holder_count = r.holderCount,
-           c.total_value_k = r.totalValueK`,
+           c.total_value_usd = r.totalValueUsd`,
       { rows: topIssuers },
     );
 
@@ -268,9 +277,9 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
          MERGE (m)-[:${GRAPH_SCHEMA.holdsRel}]->
                (p:${GRAPH_SCHEMA.positionLabel} {accession: r.accession, cusip: r.cusip})
          MERGE (p)-[:${GRAPH_SCHEMA.ofRel}]->(c)
-         ON CREATE SET p.value_usd_k = r.valueUsdK, p.shares = r.shares,
+         ON CREATE SET p.value_usd = r.valueUsd, p.shares = r.shares,
                        p.put_call = r.putCall
-         ON MATCH SET p.value_usd_k = p.value_usd_k + r.valueUsdK,
+         ON MATCH SET p.value_usd = p.value_usd + r.valueUsd,
                       p.shares = p.shares + r.shares`,
         { rows: chunk },
       );

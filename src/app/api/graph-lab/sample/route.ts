@@ -97,7 +97,7 @@ async function positionRows(
 ): Promise<Record<string, unknown>[]> {
   const ret = `RETURN m.accession AS mid, m.name AS mname,
               p.accession AS pa, p.cusip AS pc, p.put_call AS pput,
-              p.value_usd_k AS pval, p.shares AS psh,
+              p.value_usd AS pval, p.shares AS psh,
               c.cusip AS cid, c.name AS cname`;
   if (!seed) {
     // 초기 뷰: Position 보유 최다 종목 6개 + 그 Position·기관

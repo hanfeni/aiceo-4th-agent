@@ -49,7 +49,7 @@ export function subsetUrl(file: keyof typeof SUBSET_FILES): string {
  *  - Company 에 crowding 속성(holder_count·total_value) 부여
  *    → "허브 종목" 류 질의를 매번 count 재계산 않고 속성 직조회
  *  - (:Position) 중간 노드 — Neo4j 공식 Holdings 패턴.
- *    (Manager)-[HOLDS]->(Position {value_usd_k,shares,put_call})
+ *    (Manager)-[HOLDS]->(Position {value_usd,shares,put_call})
  *    -[OF]->(Company). 포지션 자체에 대한 질의(옵션 보유 등) 가능.
  *    기존 (Manager)-[OWNS]->(Company) 는 호환 위해 유지(병존).
  */
