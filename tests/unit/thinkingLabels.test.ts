@@ -145,3 +145,79 @@ describe("toolTitle — name='task' 면 Agent 위임 표현", () => {
     );
   });
 });
+
+// Slice P — SKILL 추론 + 파일시스템 도구 한글화.
+// 실측: deepagents 는 SKILL 을 별도 이벤트로 안 주고 read_file 로
+// SKILL.md 를 읽어 실행한다. read_file + file_path 가 /<skill>/SKILL.md
+// 패턴이면 'SKILL 진입'으로 휴리스틱 추론(사용자 결정). 일반
+// 파일시스템 도구(ls/read_file/...)는 한글 도구명으로.
+describe("toolTitle — SKILL 추론(read_file + SKILL.md 경로)", () => {
+  it("read_file + /deep-web-research/SKILL.md → '심층 웹조사 지침 적용 중'", () => {
+    const args = JSON.stringify({
+      file_path: "/deep-web-research/SKILL.md",
+    });
+    expect(toolTitle("read_file", false, args)).toBe(
+      "심층 웹조사 지침 적용 중",
+    );
+  });
+
+  it("read_file + SKILL.md, 완료 → '심층 웹조사 지침 적용 완료'", () => {
+    const args = JSON.stringify({
+      file_path: "/deep-web-research/SKILL.md",
+    });
+    expect(toolTitle("read_file", true, args)).toBe(
+      "심층 웹조사 지침 적용 완료",
+    );
+  });
+
+  it("미매핑 skill 디렉토리 → 디렉토리명 폴백 '{dir} 지침 적용 중'", () => {
+    const args = JSON.stringify({
+      file_path: "/custom-skill/SKILL.md",
+    });
+    expect(toolTitle("read_file", false, args)).toBe(
+      "custom-skill 지침 적용 중",
+    );
+  });
+
+  it("read_file 인데 SKILL.md 아님 → 일반 '파일 읽기 도구 실행 중'", () => {
+    const args = JSON.stringify({ file_path: "/data/notes.txt" });
+    expect(toolTitle("read_file", false, args)).toBe(
+      "파일 읽기 도구 실행 중",
+    );
+  });
+
+  it("경로가 정확히 SKILL.md 로 안 끝나면 추론 안 함(오분류 방지)", () => {
+    // SKILL.md.bak, MY_SKILL.md 등은 SKILL 진입 아님.
+    expect(
+      toolTitle("read_file", false, JSON.stringify({ file_path: "/x/SKILL.md.bak" })),
+    ).toBe("파일 읽기 도구 실행 중");
+    expect(
+      toolTitle("read_file", false, JSON.stringify({ file_path: "/x/MY_SKILL.md" })),
+    ).toBe("파일 읽기 도구 실행 중");
+  });
+
+  it("read_file args 없음/불완전 → 일반 파일 읽기(추론 안 함)", () => {
+    expect(toolTitle("read_file", false)).toBe("파일 읽기 도구 실행 중");
+    expect(toolTitle("read_file", false, '{"file_pa')).toBe(
+      "파일 읽기 도구 실행 중",
+    );
+  });
+});
+
+describe("toolDisplayName — 파일시스템 도구 한글화", () => {
+  it("ls → '파일 목록'", () => {
+    expect(toolDisplayName("ls")).toBe("파일 목록");
+  });
+  it("read_file → '파일 읽기'", () => {
+    expect(toolDisplayName("read_file")).toBe("파일 읽기");
+  });
+  it("write_todos → '할 일 정리'", () => {
+    expect(toolDisplayName("write_todos")).toBe("할 일 정리");
+  });
+  it("glob → '파일 검색'", () => {
+    expect(toolDisplayName("glob")).toBe("파일 검색");
+  });
+  it("미매핑 도구는 원본명 폴백(FR-08 안전)", () => {
+    expect(toolDisplayName("future_unknown")).toBe("future_unknown");
+  });
+});
