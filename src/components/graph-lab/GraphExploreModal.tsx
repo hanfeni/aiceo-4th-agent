@@ -64,7 +64,9 @@ const SELECTED_RING = "0 0 0 3px var(--blue-300, #93c5fd)";
 
 /** 노드를 종류별 열로 배치 — owns: 기관(좌)/종목(우) 2열,
  *  position: 기관(좌)/포지션(중)/종목(우) 3열(보유 방향 직관).
- *  selectedId 는 링 강조(현재 펼친 중심 노드 표시). */
+ *  selectedId 는 링 강조 + 그와 직접 연결된 노드/엣지만 선명,
+ *  나머지는 dim(사용자 결정 2026-05-20: 연결 가능 노드만 시각
+ *  강조 — 글 안 읽어도 "이 노드가 무엇과 이어지나"를 즉시 직관). */
 function layout(
   apiNodes: ApiNode[],
   apiEdges: ApiEdge[],
@@ -73,6 +75,21 @@ function layout(
   const managers = apiNodes.filter((n) => n.kind === "manager");
   const companies = apiNodes.filter((n) => n.kind === "company");
   const positions = apiNodes.filter((n) => n.kind === "position");
+
+  // 선택 노드와 엣지로 직접 이어진 노드 id 집합(누적 그래프 기준).
+  // 선택 없으면 강조 없음(전부 선명) — null 로 표시.
+  const connected: Set<string> | null = selectedId
+    ? new Set<string>([selectedId])
+    : null;
+  if (connected && selectedId) {
+    for (const e of apiEdges) {
+      if (e.source === selectedId) connected.add(e.target);
+      if (e.target === selectedId) connected.add(e.source);
+    }
+  }
+  const dimmed = (id: string): boolean =>
+    !!connected && !connected.has(id);
+
   const place = (arr: ApiNode[], x: number, color: string): Node[] =>
     arr.map((n, i) => ({
       id: n.id,
@@ -88,6 +105,9 @@ function layout(
         padding: 6,
         cursor: "pointer",
         boxShadow: n.id === selectedId ? SELECTED_RING : undefined,
+        // 선택 노드와 비연결이면 흐리게 — 연결된 것만 눈에 들어옴
+        opacity: dimmed(n.id) ? 0.2 : 1,
+        transition: "opacity .15s",
       },
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
@@ -105,13 +125,27 @@ function layout(
         ...place(managers, 0, MGR_COLOR),
         ...place(companies, 360, CO_COLOR),
       ];
-  const edges: Edge[] = apiEdges.map((e) => ({
-    id: `${e.source}->${e.target}`,
-    source: e.source,
-    target: e.target,
-    style: { stroke: "var(--t-neutral-8, #ccc)" },
-    markerEnd: { type: MarkerType.ArrowClosed },
-  }));
+  const edges: Edge[] = apiEdges.map((e) => {
+    // 선택 노드에 닿는 엣지만 선명, 나머지 흐리게(노드와 일관).
+    const touches =
+      !!selectedId &&
+      (e.source === selectedId || e.target === selectedId);
+    const faded = !!connected && !touches;
+    return {
+      id: `${e.source}->${e.target}`,
+      source: e.source,
+      target: e.target,
+      style: {
+        stroke: touches
+          ? "var(--blue-500, #2563eb)"
+          : "var(--t-neutral-8, #ccc)",
+        strokeWidth: touches ? 2 : 1,
+        opacity: faded ? 0.12 : 1,
+        transition: "opacity .15s",
+      },
+      markerEnd: { type: MarkerType.ArrowClosed },
+    };
+  });
   return { nodes, edges };
 }
 
