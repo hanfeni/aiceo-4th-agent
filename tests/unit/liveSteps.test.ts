@@ -134,6 +134,45 @@ describe("selectLiveSteps — OUT grace(0.6s) 동안 잠시 노출 후 탈락", 
     ]);
   });
 
+  it("마지막 1개 OUT + grace 경과여도 탈락 안 함(빈 컨테이너 방지)", () => {
+    // 사용자 보고: 도구 1개만 남았을 때 0.6s 후 사라져 다음
+    // step 전까지 빈 컨테이너 깜빡. → 탈락 결과가 0개면 가장
+    // 최근 tool 1개는 유지(다음 step 이 올 때까지).
+    const steps = [tool("a", 10, "삼성전자 271,500원")];
+    const seen = new Map([[0, 1000]]);
+    const r = selectLiveSteps(steps, seen, 5000, GRACE); // 4000ms 경과
+    expect(r).toHaveLength(1); // 빈 배열 아님
+    expect(r[0].kind === "tool" && r[0].id).toBe("a");
+  });
+
+  it("여러 tool 전부 grace 경과 → 가장 최근 1개만 유지(공백 0)", () => {
+    const steps = [
+      tool("a", 10, "결과A"),
+      tool("b", 20, "결과B"),
+      tool("c", 30, "결과C"),
+    ];
+    const seen = new Map([
+      [0, 1000],
+      [1, 1000],
+      [2, 1000],
+    ]);
+    const r = selectLiveSteps(steps, seen, 5000, GRACE); // 전부 탈락 대상
+    // 빈 배열 대신 가장 최근(start 최대) c 1개 유지
+    expect(r).toHaveLength(1);
+    expect(r[0].kind === "tool" && r[0].id).toBe("c");
+  });
+
+  it("진행 중 tool 이 있으면 OUT 다수 탈락돼도 폴백 불필요(정상)", () => {
+    const steps = [
+      tool("a", 10, "결과"), // grace 경과 탈락
+      tool("b", 20), // 진행 중 — 남음
+    ];
+    const seen = new Map([[0, 1000]]);
+    const r = selectLiveSteps(steps, seen, 5000, GRACE);
+    // b 가 살아있으니 폴백(a 유지) 발동 안 함 — b 만
+    expect(r.map((s) => (s.kind === "tool" ? s.id : ""))).toEqual(["b"]);
+  });
+
   it("outSeenAt 미기록(아직 result 없던 직전) tool 은 진행중 취급", () => {
     const steps = [tool("a", 10)]; // result undefined, seen 없음
     const r = selectLiveSteps(steps, new Map(), 9999, GRACE);

@@ -71,6 +71,26 @@ export function selectLiveSteps(
   });
   const recent = ordered.slice(-LIVE_TOOL_WINDOW);
 
+  // 빈 컨테이너 방지(사용자 보고): 진행 중·grace 내 후보가 0 이면
+  // (= 마지막 도구가 OUT 후 grace 경과) visible 이 빈 배열이 돼
+  // 다음 step 도착 전까지 빈 컨테이너가 깜빡인다. 마지막 step 이
+  // tool 인 한, 가장 최근(start 최대) tool 1개는 grace 무관 유지
+  // → 다음 step 이 올 때 selectLiveSteps 가 그걸로 자연 리플레이스
+  // (그 시점엔 채울 게 있어 공백 0). steps 자체는 불변.
+  if (recent.length === 0) {
+    let latest: { step: ThinkingStep; idx: number } | null = null;
+    steps.forEach((s, idx) => {
+      if (s.kind !== "tool") return;
+      const key = s.startedAt ?? idx;
+      const curKey =
+        latest && latest.step.kind === "tool"
+          ? (latest.step.startedAt ?? latest.idx)
+          : -Infinity;
+      if (!latest || key >= curKey) latest = { step: s, idx };
+    });
+    return latest ? [(latest as { step: ThinkingStep }).step] : [];
+  }
+
   // 원본 등장 순서로 복원(idx 오름차순) — 화면 순서 안정.
   return recent
     .slice()
