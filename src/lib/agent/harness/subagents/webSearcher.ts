@@ -9,10 +9,10 @@ import { webSearchTool } from "../tools/webSearchTool";
  * 각 task 호출에 넘기는 지시(검색 각도/쿼리)로 만든다(서브에이전트는
  * 받은 지시에 충실히 검색·요약하는 범용 일꾼).
  *
- * tools: webSearchTool(OpenAI ServerTool) 만 부여 — 역할을 웹검색으로
- * 좁힌다. 메인 defaultTools 상속 대신 명시 주입(SubAgent.tools, 실측:
- * StructuredTool[] 시그니처지만 ServerTool 1급 수용 — probe §6-A 패턴,
- * 런타임 재확인 대상).
+ * tools: webSearchTool(ClientTool — OpenAI Responses 직호출 래핑,
+ * dartTool 동형) 만 부여 — 역할을 웹검색으로 좁힌다. 메인 defaultTools
+ * 상속 대신 명시 주입(SubAgent.tools StructuredTool[] — ClientTool 1급
+ * 수용, 심볼명 보존으로 배열 무변경).
  *
  * R5/FR-09: 이 서브에이전트의 검색 토큰은 langgraph_node !==
  * "model_request" 라 chunkFilter 가 본문 미혼입한다. 사용자에겐 메인

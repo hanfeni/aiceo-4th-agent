@@ -1,5 +1,13 @@
 # web_search id 포맷 + 그룹 키 실측 (R8 — 구현 전 기록)
 
+> **[OBSOLETE — 2026-05-19] web_search 가 ServerTool→ClientTool 로
+> 완전 교체됨(feat/web-search-clienttool). ServerTool 의
+> additional_kwargs.tool_outputs / web_search_call id / 그룹 키
+> 개념은 더 이상 스트림에 존재하지 않는다. 새 도구는 OpenAI
+> Responses API 를 직호출해 내부 N검색을 정제 string 1개로 반환
+> (src/lib/web-search/). 이 노트는 히스토리 보존용 — 현재 코드와
+> 무관. 신규 구조는 webSearchTool.ts / web-search/client.ts 참조.**
+
 작성: 2026-05-19 / 목적: web_search ServerTool 멀티스텝 사고패널 그룹화
 의 **그룹 키** 확정. Plan Critic C1("16자 prefix 가정 근거 0, OpenAI id
 는 opaque token") 해소.

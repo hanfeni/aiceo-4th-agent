@@ -276,9 +276,11 @@ function ToolBlock({
           <span style={ioLabel}>OUT</span>
           <span style={{ minWidth: 0 }}>
             {step.result !== undefined ? (
-              // Slice S — web_search 도 일반 FoldableValue 로 통일
-              // (사용자 요구: 기본정보만 + 폴딩). 모든 도구 동일
-              // 경로 — 요약 한 줄 + 클릭 시 원문 전체 펼침.
+              // 모든 도구 동일 경로 — 요약 한 줄 + 클릭 시 원문 전체
+              // 펼침. web_search 는 ClientTool 로 교체되어 정제 string
+              // (■ 수행한 검색 / ■ 본문 / ■ 참고 출처 섹션)이 OUT 으로
+              // 와 FoldableValue 가 그대로 표시(구조화 가시성 유지 —
+              // dartTool 동형, 특수 렌더 불요).
               <FoldableValue raw={step.result} />
             ) : (
               <span
