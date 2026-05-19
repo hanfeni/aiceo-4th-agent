@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { ComparePanels, type PanelState, emptyPanels } from "./ComparePanels";
+import { GraphExploreModal } from "./GraphExploreModal";
 
 /**
  * GraphLabView — 온톨로지 / GraphRAG 실습 (client).
@@ -100,6 +101,8 @@ export function GraphLabView(): ReactNode {
   // 그래프 삭제 확인 모달(오클릭 방지 — index-lab 동형 패턴)
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // DB 구조 보기 모달(인터랙티브 그래프 탐색 — 사용자 결정)
+  const [showExplore, setShowExplore] = useState(false);
 
   // 버튼 콜백(runBuild 후 재조회)에서도 재사용 → useCallback 유지.
   const loadStatus = useCallback(async () => {
@@ -328,6 +331,17 @@ export function GraphLabView(): ReactNode {
             {built && (
               <button
                 type="button"
+                onClick={() => setShowExplore(true)}
+                disabled={building || deleting}
+                className="cf-btn"
+                title="Neo4j 그래프 구조를 인터랙티브로 탐색"
+              >
+                DB 구조 보기
+              </button>
+            )}
+            {built && (
+              <button
+                type="button"
                 onClick={() => setConfirmDel(true)}
                 disabled={building || deleting}
                 className="cf-btn"
@@ -487,6 +501,10 @@ export function GraphLabView(): ReactNode {
             </div>
           </div>
         </div>
+      )}
+
+      {showExplore && (
+        <GraphExploreModal onClose={() => setShowExplore(false)} />
       )}
     </div>
   );
