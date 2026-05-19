@@ -5,7 +5,6 @@ import {
   webSearchToolDisplayName,
   webSearchToolDescription,
 } from "./webSearchTool";
-import { dartToolDisplayName, dartToolDescription } from "./dartTool";
 
 /**
  * H4 커스텀 도구 등록 지점 (스펙 디렉토리 원칙의 re-export
@@ -53,14 +52,5 @@ export const HARNESS_TOOL_DISPLAY_NAMES: {
     name: "web_search",
     displayName: webSearchToolDisplayName,
     description: webSearchToolDescription,
-  },
-  // dart_company_data 는 R5 격리로 HARNESS_TOOLS 배열엔 미등록(메인
-  // 직접호출 시 본문 누출 위험 — architect 확정). dartAnalyst subagent
-  // tools:[dartTool] 에만 직접 주입된다. 단 사고 패널 한글 표시는
-  // 필요하므로 이 매핑에는 등록(FR-08 — /harness introspect·thinking).
-  {
-    name: "dart_company_data",
-    displayName: dartToolDisplayName,
-    description: dartToolDescription,
   },
 ];
