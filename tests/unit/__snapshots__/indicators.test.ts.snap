@@ -1,0 +1,156 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`calculateAllIndicators — 30+ 지표 회귀 스냅샷 (TC-46.6) > 픽스처 전수 계산 결과를 정렬된 key→{value,growthRate,yoyRate} 로 스냅샷 고정 1`] = `
+{
+  "assetGrowth": {
+    "growthRate": null,
+    "value": 1.67,
+    "yoyRate": null,
+  },
+  "assetTurnover": {
+    "growthRate": null,
+    "value": 0.57,
+    "yoyRate": null,
+  },
+  "cashRatio": {
+    "growthRate": 4.07,
+    "value": 15.15,
+    "yoyRate": 4.07,
+  },
+  "currentRatio": {
+    "growthRate": -20.09,
+    "value": 258.77,
+    "yoyRate": -20.09,
+  },
+  "debtDependency": {
+    "growthRate": 0.44,
+    "value": 2.5,
+    "yoyRate": 0.44,
+  },
+  "debtRatio": {
+    "growthRate": -1.05,
+    "value": 25.36,
+    "yoyRate": -1.05,
+  },
+  "eps": {
+    "growthRate": -73.55,
+    "value": 2131,
+    "yoyRate": -73.55,
+  },
+  "equityGrowth": {
+    "growthRate": null,
+    "value": 2.52,
+    "yoyRate": null,
+  },
+  "fcf": {
+    "growthRate": -11,
+    "value": 27214610000000,
+    "yoyRate": -11,
+  },
+  "financingCF": {
+    "growthRate": 55.68,
+    "value": -8593059000000,
+    "yoyRate": 55.68,
+  },
+  "grossProfitMargin": {
+    "growthRate": -6.79,
+    "value": 30.33,
+    "yoyRate": -6.79,
+  },
+  "interestCoverage": {
+    "growthRate": null,
+    "value": 0.52,
+    "yoyRate": null,
+  },
+  "inventoryTurnover": {
+    "growthRate": null,
+    "value": 3.49,
+    "yoyRate": null,
+  },
+  "investingCF": {
+    "growthRate": 46.45,
+    "value": -16922817000000,
+    "yoyRate": 46.45,
+  },
+  "netDebtRatio": {
+    "growthRate": -4.47,
+    "value": -15.87,
+    "yoyRate": -4.47,
+  },
+  "netIncome": {
+    "growthRate": -72.17,
+    "value": 15487100000000,
+    "yoyRate": -72.17,
+  },
+  "netIncomeGrowth": {
+    "growthRate": null,
+    "value": -72.17,
+    "yoyRate": null,
+  },
+  "netProfitMargin": {
+    "growthRate": -12.43,
+    "value": 5.98,
+    "yoyRate": -12.43,
+  },
+  "operatingCF": {
+    "growthRate": -29.02,
+    "value": 44137427000000,
+    "yoyRate": -29.02,
+  },
+  "operatingIncome": {
+    "growthRate": -84.86,
+    "value": 6566976000000,
+    "yoyRate": -84.86,
+  },
+  "operatingIncomeGrowth": {
+    "growthRate": null,
+    "value": -84.86,
+    "yoyRate": null,
+  },
+  "operatingProfitMargin": {
+    "growthRate": -11.81,
+    "value": 2.54,
+    "yoyRate": -11.81,
+  },
+  "payablesTurnover": {
+    "growthRate": null,
+    "value": 15.94,
+    "yoyRate": null,
+  },
+  "quickRatio": {
+    "growthRate": -21.65,
+    "value": 190.59,
+    "yoyRate": -21.65,
+  },
+  "receivablesTurnover": {
+    "growthRate": null,
+    "value": 7.07,
+    "yoyRate": null,
+  },
+  "revenue": {
+    "growthRate": -14.33,
+    "value": 258935494000000,
+    "yoyRate": -14.33,
+  },
+  "revenueGrowth": {
+    "growthRate": null,
+    "value": -14.33,
+    "yoyRate": null,
+  },
+  "roa": {
+    "growthRate": -9.01,
+    "value": 3.4,
+    "yoyRate": -9.01,
+  },
+  "roe": {
+    "growthRate": -11.43,
+    "value": 4.26,
+    "yoyRate": -11.43,
+  },
+  "tangibleAssetTurnover": {
+    "growthRate": null,
+    "value": 1.38,
+    "yoyRate": null,
+  },
+}
+`;
