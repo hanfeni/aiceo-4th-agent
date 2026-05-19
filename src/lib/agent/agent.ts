@@ -16,6 +16,7 @@ import {
   initTaskTrack,
   trackTaskCompletion,
   drainPendingTasks,
+  extractToolEventResult,
 } from "./utils/streamNamespace";
 
 /**
@@ -57,7 +58,10 @@ type DeepAgentGraph = {
     },
     config: {
       configurable: { thread_id: string };
-      streamMode: "messages";
+      // ["messages","tools"] 다중 구독(R8 실측 — StreamMode 에 "tools"
+      // 존재). "messages"=LLM 토큰(R4), "tools"=도구 라이프사이클
+      // (on_tool_end.output = 메인 ClientTool 결과 — "messages" 미흐름 보완).
+      streamMode: ["messages", "tools"];
       // subgraphs:true — 서브에이전트(task 위임) 청크를 스트림에 노출.
       // 실측(scripts/subagent-probe.mts): 없으면 부모 노드만(model_
       // request/tools), 주면 part 가 [namespace[], [msg,meta]] 3-튜플로
@@ -160,7 +164,11 @@ export async function createStream({
       { messages: [{ role: "user", content }] },
       {
         configurable: { thread_id: conversationId },
-        streamMode: "messages",
+        // "messages"=LLM 토큰(R4) + "tools"=도구 실행 라이프사이클
+        // (on_tool_end.output = ClientTool 결과 — 메인 ClientTool
+        // ToolMessage 가 "messages" 에 안 흐르는 구조 보완. R8 실측:
+        // StreamToolsOutput {event:on_tool_start|end|error, name, output}).
+        streamMode: ["messages", "tools"],
         // 서브에이전트(task 위임) 진행을 사고 패널에 노출(실측 검증완료).
         subgraphs: true,
       },
@@ -176,9 +184,28 @@ export async function createStream({
       // subgraphs:true 로 part 형태가 2/3-튜플 양형 → 단일 형태로 정규화.
       // 기존 chunkFilter 5종 추출기는 정규화된 msg/meta 만 받으므로
       // 무수정 재사용(R5 격리 유지 — chunkFilter.ts diff 0줄).
-      const { msg, meta, namespace } = normalizePart(rawPart);
+      const { msg, meta, namespace, mode } = normalizePart(rawPart);
       const subChunk = isSubagentNamespace(namespace);
 
+      // "tools" 모드 part — 도구 실행 라이프사이클(R8 실측). 메인
+      // ClientTool(web_search 등) ToolMessage 는 "messages" 스트림에
+      // 안 흐르므로(streamMode 한계) 이 채널의 on_tool_end.output
+      // (= 우리 정제 string)을 tool_result 로 합성 → 사고 패널 OUT
+      // 채움(이전 ServerTool citations 우회 대체). task 는 trackTask
+      // Completion 별도 처리라 extractToolEventResult 가 skip(중복 0).
+      // tool_call IN 은 기존 tool_call_chunks(messages)가 이미 채움.
+      if (mode === "tools") {
+        const te = extractToolEventResult(msg);
+        if (te) {
+          yield {
+            type: "tool_result",
+            id: te.id,
+            name: te.name,
+            result: te.result,
+          };
+        }
+        continue; // tools part 는 chunkFilter 추출기 대상 아님(meta 無)
+      }
 
       // task 완료 전이 판정(서브에이전트 진입 후 루트 복귀 = 완료).
       // 완료 시 task tool_result 합성 emit → reduceToolResult 가
