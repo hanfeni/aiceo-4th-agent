@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { formatDuration } from "@/lib/agent/utils/formatDuration";
+import { ioSummary, needsFold } from "@/lib/agent/utils/ioSummary";
 import { isInProgress } from "@/lib/agent/utils/thinkingLabels";
 import { useThinkingLabelCycler } from "@/components/common/useThinkingLabelCycler";
 import type { ThinkingStep } from "@/types";
@@ -119,6 +120,81 @@ function ReasoningBlock({
   );
 }
 
+/**
+ * 접을 수 있는 I/O 값 (medigate-new IOPairPrimitives.FoldableValue
+ * 모방). 한 줄 요약(ioSummary)만 노출하고, 정보가 잘렸으면(needsFold)
+ * ▽ 토글로 원문 전체를 <pre> 펼침. 짧으면 요약만(클릭 불가).
+ * 사용자 요구: "I/O 는 간단히 표기하고 누르면 확장".
+ */
+function FoldableValue({ raw }: { raw: string }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const summary = ioSummary(raw);
+  const foldable = needsFold(raw);
+
+  if (!foldable) {
+    return (
+      <span style={{ fontSize: 12, color: "var(--neutral-600)" }}>
+        {summary}
+      </span>
+    );
+  }
+  return (
+    <span style={{ display: "block", minWidth: 0 }}>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
+        style={{
+          fontSize: 12,
+          color: "var(--neutral-600)",
+          cursor: "pointer",
+          display: "block",
+        }}
+        aria-expanded={open}
+      >
+        {summary}
+        <span
+          aria-hidden
+          style={{
+            fontSize: 10,
+            color: "var(--neutral-600)",
+            marginLeft: 4,
+            opacity: 0.7,
+          }}
+        >
+          {open ? "▲" : "▼"}
+        </span>
+      </span>
+      {open && (
+        <pre
+          style={{
+            marginTop: 6,
+            padding: 8,
+            background: "rgba(156,163,175,0.12)",
+            border: "1px solid var(--t-neutral-8)",
+            borderRadius: 4,
+            fontSize: 11,
+            fontFamily: "var(--font-mono)",
+            color: "var(--neutral-600)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 200,
+            overflow: "auto",
+          }}
+        >
+          {raw}
+        </pre>
+      )}
+    </span>
+  );
+}
+
 /** tool step IN/OUT (디자인 IOMini :168-197) + 서브타이틀. */
 function ToolBlock({
   step,
@@ -162,20 +238,15 @@ function ToolBlock({
       >
         <div style={ioCell}>
           <span style={ioLabel}>IN</span>
-          <span
-            style={{
-              fontSize: 12,
-              color: "var(--neutral-600)",
-              lineHeight: 1.5,
-            }}
-          >
-            <strong style={{ color: "var(--text-default)" }}>
+          <span style={{ minWidth: 0 }}>
+            <strong
+              style={{ color: "var(--text-default)", fontSize: 12 }}
+            >
               {step.name}
             </strong>
             {step.args && step.args !== "{}" ? (
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11 }}>
-                {" "}
-                {step.args}
+              <span style={{ display: "block", marginTop: 2 }}>
+                <FoldableValue raw={step.args} />
               </span>
             ) : null}
           </span>
@@ -183,17 +254,18 @@ function ToolBlock({
         <div style={{ borderTop: "1px solid var(--t-neutral-8)" }} />
         <div style={ioCell}>
           <span style={ioLabel}>OUT</span>
-          <span
-            style={{
-              fontSize: 12,
-              color: "var(--neutral-600)",
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-            }}
-          >
-            {step.result ?? (
-              <span style={{ fontStyle: "italic", opacity: 0.7 }}>
+          <span style={{ minWidth: 0 }}>
+            {step.result !== undefined ? (
+              <FoldableValue raw={step.result} />
+            ) : (
+              <span
+                style={{
+                  fontSize: 12,
+                  fontStyle: "italic",
+                  opacity: 0.7,
+                  color: "var(--neutral-600)",
+                }}
+              >
                 실행 중…
               </span>
             )}

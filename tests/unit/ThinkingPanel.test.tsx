@@ -1,15 +1,19 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+} from "@testing-library/react";
 import { ThinkingPanel } from "@/components/common/BaseChat/ThinkingPanel";
 import type { ThinkingStep } from "@/types";
 
 // ThinkingPanel 컴포넌트 단위 테스트 (jsdom + @testing-library/react).
-// Slice F — medigate-new ThinkingPanel StreamingView/HistoryView 모방:
-//  - reasoning step 제목이 별도 헤더로 렌더(영문도 그대로 — 백엔드가
-//    한글 제목을 안 주므로 모델의 **bold** 제목을 그대로 헤더화).
-//  - 제목이 비면(영문 bold 아직 미수신) 폴백 제목으로 "사고중" 표시.
-//  - 스트리밍 중 마지막 reasoning step(=현재 진행)은 제목 옆 진행
-//    마킹(점 애니메이션) — medigate-new lastGroup.isActive 패턴.
+// Slice F-redo + G2 — medigate-new 모방:
+//  - 제목은 reducer 가 준 한글 안내문구를 그대로 표시('질문 분석 중').
+//  - 영문 reasoning 텍스트는 제목 아닌 본문에 렌더(가공 0).
+//  - '… 중' 제목엔 스태틱 ' ...'(점 애니메이션 아님).
+//  - I/O 는 FoldableValue: 짧으면 요약만, 길면 클릭 시 전체 펼침.
 
 afterEach(() => cleanup());
 
@@ -19,10 +23,12 @@ const reasoning = (
   order: number,
 ): ThinkingStep => ({ kind: "reasoning", title, content, order });
 
+// result 인자를 명시적으로 받는다(기본값 미사용 — undefined 전달이
+// '실행 중'을 의미하므로 기본 매개변수로 덮으면 안 됨).
 const tool = (
   order: number,
-  title = "웹 검색 도구 완료",
-  result: string | undefined = "ok",
+  title: string,
+  result: string | undefined,
 ): ThinkingStep => ({
   kind: "tool",
   title,
@@ -122,5 +128,65 @@ describe("ThinkingPanel — 진행 중 스태틱 '...' (제목이 '… 중' 일 
       />,
     );
     expect(container.textContent).not.toContain("...");
+  });
+});
+
+describe("ThinkingPanel — I/O FoldableValue (간단 표기 + 클릭 확장)", () => {
+  const longResult =
+    "참고 출처:\nhttps://www.samsung.com/sec/about-us/company-info/ 기업 정보\nhttps://example.com 추가 자료";
+
+  it("긴 OUT 은 요약 한 줄만 보이고 전체는 숨겨진다(초기 접힘)", () => {
+    render(
+      <ThinkingPanel
+        steps={[tool(1, "웹 검색 도구 완료", longResult)]}
+        streaming={true}
+      />,
+    );
+    // 요약(첫 줄)은 보이고, 둘째 줄 URL 은 초기엔 안 보임.
+    expect(screen.getByText(/참고 출처:/)).toBeTruthy();
+    expect(
+      screen.queryByText(/example\.com 추가 자료/),
+    ).toBeNull();
+  });
+
+  it("요약을 클릭하면 원문 전체가 펼쳐진다", () => {
+    render(
+      <ThinkingPanel
+        steps={[tool(1, "웹 검색 도구 완료", longResult)]}
+        streaming={true}
+      />,
+    );
+    const toggles = screen.getAllByRole("button", { expanded: false });
+    // 첫 펼침 가능 토글(OUT 요약) 클릭.
+    const ioToggle = toggles.find((b) =>
+      b.textContent?.includes("참고 출처"),
+    );
+    expect(ioToggle).toBeTruthy();
+    fireEvent.click(ioToggle as HTMLElement);
+    expect(screen.getByText(/example\.com 추가 자료/)).toBeTruthy();
+  });
+
+  it("짧은 한 줄 OUT 은 펼침 토글 없이 그대로 표시", () => {
+    render(
+      <ThinkingPanel
+        steps={[tool(1, "웹 검색 도구 완료", "짧은 결과")]}
+        streaming={true}
+      />,
+    );
+    expect(screen.getByText("짧은 결과")).toBeTruthy();
+    // 짧으면 펼침 가능한(role=button aria-expanded) 요소 없음.
+    expect(
+      screen.queryByRole("button", { expanded: false }),
+    ).toBeNull();
+  });
+
+  it("실행 중(result undefined)이면 '실행 중…' 표시(FoldableValue 아님)", () => {
+    render(
+      <ThinkingPanel
+        steps={[tool(1, "웹 검색 도구 실행 중", undefined)]}
+        streaming={true}
+      />,
+    );
+    expect(screen.getByText("실행 중…")).toBeTruthy();
   });
 });
