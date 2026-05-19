@@ -34,15 +34,35 @@ export interface ThinkingPanelProps {
   steps: ThinkingStep[];
   /** 스트리밍 중이면 실시간 뷰(마지막 step 리플레이스)+진행 표시. */
   streaming: boolean;
+  /**
+   * Slice M — 답변 본문 출력 중인가(직전 SSE 이벤트가 token).
+   * true 면 **스트리밍 중 사고 패널을 노출하지 않는다**(사용자
+   * 규칙: 출력 중엔 숨김). 출력이 멈추고 사고/도구가 재개되면
+   * false 로 바뀌어 다시 표시(동적 토글). 완료 후(streaming=false)
+   * 엔 무관 — 토글 열람 모드. 미전달 시 false(기존 동작 호환).
+   */
+  outputting?: boolean;
 }
 
 function DotPulse(): ReactNode {
+  // 부모(헤더 버튼)는 flex+alignItems:center. 점 3개를 감싸는 래퍼는
+  // 텍스트 line-height 와 같은 광학 높이를 갖도록 inline-flex +
+  // alignItems:center 로 점을 세로 중앙에 고정한다(verticalAlign 은
+  // flex 컨텍스트에서 무시되므로 제거 — 텍스트와 점 어긋남의 원인).
   return (
-    <span style={{ display: "inline-flex", gap: 3, verticalAlign: "middle" }}>
+    <span
+      aria-hidden
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 3,
+        height: "1em",
+        lineHeight: 1,
+      }}
+    >
       {[0, 0.15, 0.3].map((d) => (
         <span
           key={d}
-          aria-hidden
           style={{
             width: 4,
             height: 4,
@@ -300,6 +320,7 @@ function StepView({ step }: { step: ThinkingStep }): ReactNode {
 export function ThinkingPanel({
   steps,
   streaming,
+  outputting = false,
 }: ThinkingPanelProps): ReactNode {
   const hasAny = steps.length > 0;
 
@@ -310,7 +331,14 @@ export function ThinkingPanel({
   const open = userToggled ?? autoOpen;
   const userControlled = userToggled !== null;
 
-  const handleToggle = (): void => setUserToggled(!open);
+  // 스트리밍 중에는 토글을 완전히 비활성(사용자 결정): 실시간엔 자동
+  // 펼침 고정, 완료 후에만 접기/펴기 가능. 따라서 핸들러는 streaming
+  // 일 때 no-op 이고, chevron(폴딩 마크)도 렌더하지 않는다 — 진행 중
+  // 폴딩 상태 표시가 혼란을 주므로(요구사항).
+  const handleToggle = (): void => {
+    if (streaming) return;
+    setUserToggled(!open);
+  };
 
   // 실시간 뷰: 스트리밍 중 + 사용자 미조작 → 마지막 step 만(리플레이스).
   // 히스토리 뷰: 완료 또는 사용자 토글 → 전체 step 누적.
@@ -330,6 +358,13 @@ export function ThinkingPanel({
   // (모든 훅 호출 이후에 early return — rules-of-hooks 준수.)
   if (!hasAny && !streaming) return null;
 
+  // Slice M — 출력 중 숨김(사용자 규칙: 답변 본문 토큰이 흐르는
+  // 동안엔 사고 패널을 노출하지 않음). 스트리밍 중 + outputting
+  // 일 때만 숨긴다. 출력이 멈추고 사고/도구가 재개되면 outputting
+  // 이 false 가 돼 다시 표시(동적). 완료 후(streaming=false)엔
+  // 토글 열람이라 outputting 무관 — 항상 표시.
+  if (streaming && outputting) return null;
+
   // 스트리밍 중에는 순환 레이블이 정적 문구를 대체(첫 tick 전 빈
   // 문자열이면 정적 폴백 — 깜빡임 방지). 완료 후엔 기존 문구.
   const label = streaming
@@ -344,6 +379,8 @@ export function ThinkingPanel({
         type="button"
         onClick={handleToggle}
         aria-expanded={open}
+        aria-disabled={streaming}
+        disabled={streaming}
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -353,7 +390,8 @@ export function ThinkingPanel({
           background: "transparent",
           fontSize: 12.5,
           color: "var(--text-subtle)",
-          cursor: "pointer",
+          // 스트리밍 중엔 토글 불가 → 클릭 가능 신호(pointer) 제거.
+          cursor: streaming ? "default" : "pointer",
           fontWeight: 500,
         }}
       >
@@ -361,15 +399,23 @@ export function ThinkingPanel({
         {/* 점 펄스 색을 헤더 텍스트(--text-subtle)와 통일 — DotPulse 는
             currentColor 상속이므로 별도 color 오버라이드를 두지 않는다. */}
         {streaming && <DotPulse />}
-        {open ? (
-          <ChevronUp size={13} style={{ color: "var(--neutral-600)" }} aria-hidden />
-        ) : (
-          <ChevronDown
-            size={13}
-            style={{ color: "var(--neutral-600)" }}
-            aria-hidden
-          />
-        )}
+        {/* 폴딩 마크(chevron)는 스트리밍 중 미렌더 — 실시간엔 자동
+            펼침 고정이라 폴딩 상태 표시가 혼란을 준다(요구사항).
+            완료 후에만 접기/펴기 마크 노출 → 그때부터 토글 가능. */}
+        {!streaming &&
+          (open ? (
+            <ChevronUp
+              size={13}
+              style={{ color: "var(--neutral-600)" }}
+              aria-hidden
+            />
+          ) : (
+            <ChevronDown
+              size={13}
+              style={{ color: "var(--neutral-600)" }}
+              aria-hidden
+            />
+          ))}
       </button>
       {open && hasAny && (
         <div

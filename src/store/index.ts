@@ -4,17 +4,28 @@
 
 import { createStore, useStore } from "zustand";
 import type { StoreApi } from "zustand";
-import type { ChatMessage } from "@/types";
+import type { ChatMessage, WebSource } from "@/types";
 import {
   reduceReasoning,
   reduceToolCall,
   reduceToolResult,
 } from "@/lib/agent/utils/thinkingSteps";
 
+/**
+ * 마지막으로 도착한 스트림 이벤트 종류(Slice M — 사고 패널 동적
+ * 게이트). 'token'=답변 본문 출력 중(중간·최종 무관), 'thinking'/
+ * 'tool'=사고/도구 진행 중, null=스트림 종료(done) 또는 미시작.
+ * ThinkingPanel 이 'token' 이면 실시간 표시를 숨기고, thinking/tool
+ * 로 바뀌면 다시 보여준다(출력↔사고 동적 토글).
+ */
+export type StreamEventKind = "token" | "thinking" | "tool" | null;
+
 export interface ChatState {
   messages: ChatMessage[];
   conversationId: string | null;
   isStreaming: boolean;
+  /** 직전 SSE 이벤트 종류. 사고 패널 출력/사고 동적 게이트용. */
+  lastStreamEvent: StreamEventKind;
   error: string | null;
   provider: string;
   model: string;
@@ -37,8 +48,28 @@ export interface ChatActions {
     result: string,
     id?: string,
   ) => void;
+  /**
+   * 마지막 assistant 메시지의 참고 출처(References 패널)를 교체한다.
+   * web_search citations 유래. 본문/사고와 분리된 별도 채널(FR-09).
+   * 같은 출처가 누적 청크로 여러 번 와도 멱등(전체 교체 — 최신 우선).
+   */
+  setSourcesOnLastAssistant: (sources: WebSource[]) => void;
   setConversationId: (conversationId: string) => void;
+  /**
+   * 과거 대화 복원 (Plan Critic C1). conversationId 와 messages 를 **단일
+   * set 으로 원자 커밋**한다. resetChat 의 대칭(새 thread+빈 messages ↔
+   * 기존 thread+복원 messages). 분리 액션 2개로 쪼개면 복원 직후 send 가
+   * 읽는 conversationId 가 중간 상태일 수 있어 새 thread 발급 위험.
+   */
+  loadConversation: (conversationId: string, messages: ChatMessage[]) => void;
   setStreaming: (isStreaming: boolean) => void;
+  /**
+   * 직전 SSE 이벤트 종류 기록(Slice M). useChat 이 이벤트 분기마다
+   * 호출. ThinkingPanel 이 'token'(출력 중)이면 실시간 숨김.
+   */
+  setLastStreamEvent: (kind: StreamEventKind) => void;
+  /** 런타임 선택 모델 설정(FR-16). resetChat 에도 보존됨(AD-15). */
+  setModel: (model: string) => void;
   finalizeLastAssistant: () => void;
   setError: (error: string | null) => void;
   resetChat: () => void;
@@ -50,6 +81,7 @@ const initialState: ChatState = {
   messages: [],
   conversationId: null,
   isStreaming: false,
+  lastStreamEvent: null,
   error: null,
   provider: "",
   model: "",
@@ -130,9 +162,28 @@ export function createChatStore(): StoreApi<ChatStore> {
         };
       }),
 
+    // 참고 출처 전체 교체(멱등). last 가 assistant 일 때만.
+    // 빈 배열이면 무시(검색했으나 인용 0 — 패널 미표시 유지).
+    setSourcesOnLastAssistant: (sources) =>
+      set((state) => {
+        const last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== "assistant") return state;
+        if (sources.length === 0) return state;
+        return {
+          messages: [
+            ...state.messages.slice(0, -1),
+            { ...last, sources },
+          ],
+        };
+      }),
+
     setConversationId: (conversationId) => set({ conversationId }),
 
     setStreaming: (isStreaming) => set({ isStreaming }),
+
+    setLastStreamEvent: (kind) => set({ lastStreamEvent: kind }),
+
+    setModel: (model) => set({ model }),
 
     // 스트림 종료 마커. 현재는 부수효과 없음(메시지 내용 보존, 멱등).
     // useChat 의 finally 입력-잠금-해제 회귀 가드 지점(TC-20.4).
@@ -145,6 +196,22 @@ export function createChatStore(): StoreApi<ChatStore> {
       set((state) => ({
         conversationId: crypto.randomUUID(),
         messages: [],
+        error: null,
+        isStreaming: false,
+        lastStreamEvent: null,
+        provider: state.provider,
+        model: state.model,
+      })),
+
+    // 과거 대화 복원 (C1). resetChat 과 대칭 — 단일 set 원자 커밋으로
+    // conversationId(=기존 thread_id) + messages 를 동시 교체한다. 복원
+    // 직후 useChat.send 가 이 conversationId 를 읽어 body 에 실으면
+    // 서버 checkpointer 가 같은 thread 히스토리를 이어받는다(맥락 연속).
+    // provider/model 은 보존(FR-07 — resetChat 동일 정책).
+    loadConversation: (conversationId, messages) =>
+      set((state) => ({
+        conversationId,
+        messages,
         error: null,
         isStreaming: false,
         provider: state.provider,

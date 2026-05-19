@@ -190,3 +190,86 @@ describe("ThinkingPanel — I/O FoldableValue (간단 표기 + 클릭 확장)", 
     expect(screen.getByText("실행 중…")).toBeTruthy();
   });
 });
+
+describe("ThinkingPanel — Slice M 출력 중 동적 게이트(outputting)", () => {
+  const steps = [reasoning("질문 분석 중", "사고 본문", 0)];
+
+  it("스트리밍 중 + outputting=true → 패널 미표시(출력 중 숨김)", () => {
+    const { container } = render(
+      <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("스트리밍 중 + outputting=false → 패널 표시(사고/도구 진행 중)", () => {
+    render(
+      <ThinkingPanel steps={steps} streaming={true} outputting={false} />,
+    );
+    expect(screen.getByText("질문 분석 중")).toBeTruthy();
+  });
+
+  it("outputting 미전달 시 기본 false — 기존 동작 호환(표시)", () => {
+    render(<ThinkingPanel steps={steps} streaming={true} />);
+    expect(screen.getByText("질문 분석 중")).toBeTruthy();
+  });
+
+  it("완료(streaming=false) + outputting=true 여도 표시(토글 열람 모드)", () => {
+    // 스트림 종료 후엔 outputting 무관 — 게이트는 streaming 중에만.
+    render(
+      <ThinkingPanel steps={steps} streaming={false} outputting={true} />,
+    );
+    expect(screen.getByRole("button")).toBeTruthy();
+  });
+
+  it("출력 중(true)→사고 재개(false) 전이 시 패널이 다시 나타난다", () => {
+    const { container, rerender } = render(
+      <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
+    );
+    expect(container.firstChild).toBeNull(); // 출력 중 숨김
+    rerender(
+      <ThinkingPanel steps={steps} streaming={true} outputting={false} />,
+    );
+    expect(screen.getByText("질문 분석 중")).toBeTruthy(); // 재표시
+  });
+});
+
+describe("ThinkingPanel — 스트리밍 중 폴딩 마크 숨김 + 토글 비활성", () => {
+  const steps = [reasoning("질문 분석 중", "본문", 0)];
+
+  it("streaming=true → chevron(폴딩 마크 svg) 미렌더", () => {
+    const { container } = render(
+      <ThinkingPanel steps={steps} streaming={true} />,
+    );
+    // lucide ChevronUp/Down 은 aria-hidden svg. 스트리밍 중엔 0개.
+    expect(container.querySelectorAll("svg").length).toBe(0);
+  });
+
+  it("streaming=false(완료) → chevron 노출(토글 가능 신호)", () => {
+    const { container } = render(
+      <ThinkingPanel steps={steps} streaming={false} />,
+    );
+    expect(container.querySelectorAll("svg").length).toBeGreaterThan(0);
+  });
+
+  it("streaming=true → 토글 버튼 disabled + 클릭해도 접힘 상태 불변", () => {
+    render(<ThinkingPanel steps={steps} streaming={true} />);
+    const btn = screen.getByRole("button");
+    // streaming + step 있음 → autoOpen=true (펼침).
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+    expect(btn.hasAttribute("disabled")).toBe(true);
+    expect(btn.getAttribute("aria-disabled")).toBe("true");
+    // 클릭해도 no-op — 펼침 상태 유지(실시간 토글 완전 비활성).
+    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("streaming=false → 클릭으로 정상 토글(완료 후엔 동작)", () => {
+    render(<ThinkingPanel steps={steps} streaming={false} />);
+    const btn = screen.getByRole("button");
+    // 완료 + 미조작 → 접힘.
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    expect(btn.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(btn);
+    expect(btn.getAttribute("aria-expanded")).toBe("true");
+  });
+});

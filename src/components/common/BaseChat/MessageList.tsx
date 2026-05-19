@@ -7,10 +7,12 @@ import {
   ThumbsDown,
   Copy,
   RefreshCw,
+  Paperclip,
 } from "lucide-react";
 import { useChatStore } from "@/store";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { ThinkingPanel } from "@/components/common/BaseChat/ThinkingPanel";
+import { SourcesPanel } from "@/components/common/BaseChat/SourcesPanel";
 import type { ChatMessage } from "@/types";
 
 /**
@@ -18,8 +20,8 @@ import type { ChatMessage } from "@/types";
  *
  * 기능(실 백엔드 연결): store 의 messages/isStreaming 구독. 토큰 도착·
  * 스트리밍 변화 시 하단 자동 스크롤(chat.jsx:35-39). assistant 콘텐츠는
- * <ChatMarkdown> 으로 렌더, 스트리밍 중 깜빡임 커서(chat.jsx:499).
- * messages 0 개면 EmptyState(chat.jsx:391).
+ * <ChatMarkdown> 으로 렌더(스트리밍 중 깜빡임 커서는 제거 — 사용자
+ * 요청). messages 0 개면 EmptyState(chat.jsx:391).
  *
  * 시각 전용 mock(미구현=mock): 메시지 액션 행(thumbs/copy/regenerate).
  * 복사(copy)는 trivial+useful 이라 실제 클립보드 복사 허용, like/regenerate
@@ -29,7 +31,6 @@ import type { ChatMessage } from "@/types";
  *  - 컨테이너: maxWidth 760, padding 0 28px, gap 24 (:233)
  *  - user 버블: var(--medi-gray-100), padding 10px 14px, radius 14 (:448)
  *  - assistant avatar: 28x28 radius 9 violet gradient (:484)
- *  - 커서: 6x14 var(--agent-500), animation blink 1s (:499)
  */
 
 const SUGGESTED_PROMPTS: { icon: ReactNode; text: string }[] = [
@@ -175,7 +176,14 @@ function EmptyState({
   );
 }
 
-function UserBubble({ content }: { content: string }): ReactNode {
+function UserBubble({
+  content,
+  attachments,
+}: {
+  content: string;
+  attachments?: ChatMessage["attachments"];
+}): ReactNode {
+  const hasAttachments = !!attachments && attachments.length > 0;
   return (
     <div style={{ display: "flex", justifyContent: "flex-end" }}>
       <div
@@ -187,20 +195,84 @@ function UserBubble({ content }: { content: string }): ReactNode {
           gap: 6,
         }}
       >
-        <div
-          style={{
-            background: "var(--medi-gray-100)",
-            padding: "10px 14px",
-            borderRadius: 14,
-            fontSize: 14,
-            lineHeight: 1.55,
-            color: "var(--text-default)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {content}
-        </div>
+        {/* 첨부 흔적(I1) — 이미지는 썸네일, 텍스트/PDF/DOCX 는 파일명 칩.
+            content 만으론 무엇을 보냈는지 안 보이므로 버블 위에 노출. */}
+        {hasAttachments && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              justifyContent: "flex-end",
+            }}
+          >
+            {attachments!.map((a, i) =>
+              a.kind === "image" && a.dataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${a.name}-${i}`}
+                  src={a.dataUrl}
+                  alt={a.name}
+                  title={a.name}
+                  style={{
+                    width: 80,
+                    height: 80,
+                    objectFit: "cover",
+                    borderRadius: 8,
+                    border: "1px solid var(--t-neutral-8)",
+                  }}
+                />
+              ) : (
+                <span
+                  key={`${a.name}-${i}`}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "4px 9px",
+                    borderRadius: 8,
+                    border: "1px solid var(--t-neutral-8)",
+                    background: "var(--t-neutral-4)",
+                    fontSize: 11.5,
+                    color: "var(--text-default)",
+                    maxWidth: 200,
+                  }}
+                >
+                  <Paperclip
+                    size={11}
+                    style={{ color: "var(--text-subtle)", flexShrink: 0 }}
+                    aria-hidden
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {a.name}
+                  </span>
+                </span>
+              ),
+            )}
+          </div>
+        )}
+        {content.length > 0 && (
+          <div
+            style={{
+              background: "var(--medi-gray-100)",
+              padding: "10px 14px",
+              borderRadius: 14,
+              fontSize: 14,
+              lineHeight: 1.55,
+              color: "var(--text-default)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {content}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -209,11 +281,16 @@ function UserBubble({ content }: { content: string }): ReactNode {
 function AssistantBubble({
   content,
   thinkingSteps,
+  sources,
   streaming,
+  outputting = false,
 }: {
   content: string;
   thinkingSteps?: ChatMessage["thinkingSteps"];
+  sources?: ChatMessage["sources"];
   streaming: boolean;
+  /** Slice M — 답변 본문 출력 중(직전 SSE=token). ThinkingPanel 게이트. */
+  outputting?: boolean;
 }): ReactNode {
   const onCopy = (): void => {
     // 복사는 trivial+useful — 실제 클립보드 복사 허용(스코프 예외 명시).
@@ -241,31 +318,28 @@ function AssistantBubble({
         {/* 에이전트 라벨 제거 → 사고 패널. 단일 thinkingSteps[](교차
             보존). medigate StreamingView/HistoryView 패턴. 데이터 없고
             비스트리밍이면 패널 자체 미표시. */}
-        {((thinkingSteps?.length ?? 0) > 0 || streaming) && (
-          <div style={{ marginBottom: 6 }}>
-            <ThinkingPanel
-              steps={thinkingSteps ?? []}
-              streaming={streaming}
-            />
-          </div>
-        )}
+        {/* Slice M — 출력 중(streaming && outputting)엔 사고 패널
+            컨테이너 자체를 안 그린다(여백까지 제거 — '노출 안 함'
+            요구). 출력 멈추면 다시 표시(동적). */}
+        {((thinkingSteps?.length ?? 0) > 0 || streaming) &&
+          !(streaming && outputting) && (
+            <div style={{ marginBottom: 6 }}>
+              <ThinkingPanel
+                steps={thinkingSteps ?? []}
+                streaming={streaming}
+                outputting={outputting}
+              />
+            </div>
+          )}
         <div style={{ minHeight: 22 }}>
           <ChatMarkdown content={content} />
-          {streaming && (
-            <span
-              aria-hidden
-              style={{
-                display: "inline-block",
-                width: 6,
-                height: 14,
-                background: "var(--agent-500)",
-                marginLeft: 2,
-                verticalAlign: "-2px",
-                animation: "blink 1s steps(2) infinite",
-              }}
-            />
-          )}
         </div>
+
+        {/* 참고 출처(References) — web_search citation. 스트리밍 종료
+            후 + 출처 있을 때만(디자인 chat.jsx:502 게이트). */}
+        {!streaming && (sources?.length ?? 0) > 0 && (
+          <SourcesPanel sources={sources ?? []} />
+        )}
 
         {/* 메시지 액션 행 — 시각 전용 mock(미구현). copy 만 실제 동작. */}
         {!streaming && content.length > 0 && (
@@ -329,6 +403,11 @@ export interface MessageListProps {
 export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
   const messages = useChatStore((s) => s.messages);
   const isStreaming = useChatStore((s) => s.isStreaming);
+  // Slice M — 직전 SSE 이벤트가 token 이면 답변 본문 출력 중 →
+  // 마지막(스트리밍) 메시지 사고 패널 숨김(동적). thinking/tool
+  // 로 바뀌면 재표시. 과거 메시지엔 영향 없음(마지막만 적용).
+  const lastStreamEvent = useChatStore((s) => s.lastStreamEvent);
+  const outputting = lastStreamEvent === "token";
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 스트리밍 append 시 마지막 메시지 길이 변화로도 스크롤 트리거.
@@ -367,13 +446,21 @@ export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
         >
           {messages.map((m, i) =>
             m.role === "user" ? (
-              <UserBubble key={i} content={m.content} />
+              <UserBubble
+                key={i}
+                content={m.content}
+                attachments={m.attachments}
+              />
             ) : (
               <AssistantBubble
                 key={i}
                 content={m.content}
                 thinkingSteps={m.thinkingSteps}
+                sources={m.sources}
                 streaming={isStreaming && i === messages.length - 1}
+                outputting={
+                  outputting && i === messages.length - 1
+                }
               />
             ),
           )}

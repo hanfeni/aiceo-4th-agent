@@ -159,4 +159,134 @@ describe("chat store", () => {
     expect(a.getState().messages).toHaveLength(1);
     expect(b.getState().messages).toHaveLength(0);
   });
+
+  // --- 런타임 모델 선택: setModel (FR-16 / AD-15) ---
+  it("setModel: 선택 모델을 store.model 에 설정한다", () => {
+    store.getState().setModel("gpt-5.5");
+    expect(store.getState().model).toBe("gpt-5.5");
+  });
+
+  it("setModel 후 resetChat: model 은 보존된다(AD-15 — 새 대화에도 선택 유지)", () => {
+    store.getState().setModel("gpt-5.4");
+    store.getState().resetChat();
+    expect(store.getState().model).toBe("gpt-5.4");
+    // resetChat 의 다른 효과는 무회귀(messages 0).
+    expect(store.getState().messages).toHaveLength(0);
+  });
+
+  it("setModel: provider 등 다른 상태는 건드리지 않는다", () => {
+    store.setState({ provider: "openai", model: "gpt-5.4-mini" });
+    store.getState().setModel("gpt-5.5");
+    expect(store.getState().model).toBe("gpt-5.5");
+    expect(store.getState().provider).toBe("openai");
+  });
+
+  // Slice 4 / Plan Critic C1 — loadConversation: 과거 대화 복원.
+  // resetChat 의 대칭(새 thread + 빈 messages ↔ 기존 thread + 복원 messages).
+  // 핵심 불변식: conversationId 와 messages 를 **단일 set 으로 원자 커밋**.
+  // 그래야 복원 직후 useChat.send 가 chatStore.getState().conversationId 를
+  // 읽을 때 반드시 복원한 thread_id 가 서버로 가서 checkpointer 가 맥락을
+  // 이어받는다(분리 액션 2개면 중간 상태/순서 의존으로 새 thread 발급 위험).
+  describe("loadConversation (C1 — 복원 원자성)", () => {
+    it("conversationId + messages 를 동시 커밋, error/streaming 리셋", () => {
+      store.getState().setError("이전 에러");
+      store.setState({ isStreaming: true });
+      const restored = [
+        { role: "user" as const, content: "과거 질문" },
+        { role: "assistant" as const, content: "과거 답변" },
+      ];
+      store.getState().loadConversation("past-thread-id", restored);
+
+      const s = store.getState();
+      expect(s.conversationId).toBe("past-thread-id");
+      expect(s.messages).toEqual(restored);
+      expect(s.error).toBeNull();
+      expect(s.isStreaming).toBe(false);
+    });
+
+    it("provider/model 은 보존(FR-07 — resetChat 과 동일 정책)", () => {
+      store.setState({ provider: "openai", model: "gpt-5.4-mini" });
+      store.getState().loadConversation("tid", [
+        { role: "user", content: "q" },
+      ]);
+      expect(store.getState().provider).toBe("openai");
+      expect(store.getState().model).toBe("gpt-5.4-mini");
+    });
+
+    it("복원 후 conversationId 가 그대로 유지되어 send 가 같은 thread 로 이어진다", () => {
+      // useChat.send 는 chatStore.getState().conversationId 를 읽어 body 에 실음.
+      store.getState().loadConversation("thread-XYZ", [
+        { role: "user", content: "이전" },
+        { role: "assistant", content: "응답" },
+      ]);
+      // 복원 직후 conversationId 가 truthy 여야 send 가 새 UUID 발급을 안 함.
+      expect(store.getState().conversationId).toBe("thread-XYZ");
+      // 이어서 addMessage(send 흐름) 해도 conversationId 불변.
+      store.getState().addMessage({ role: "user", content: "추가 질문" });
+      expect(store.getState().conversationId).toBe("thread-XYZ");
+      expect(store.getState().messages).toHaveLength(3);
+    });
+
+    it("thinkingSteps 포함 메시지도 그대로 복원(전체 복원 C5)", () => {
+      const withThinking = [
+        {
+          role: "assistant" as const,
+          content: "답변",
+          thinkingSteps: [
+            { kind: "reasoning" as const, title: "분석", content: "사고", order: 0 },
+          ],
+        },
+      ];
+      store.getState().loadConversation("t", withThinking);
+      expect(store.getState().messages[0].thinkingSteps).toHaveLength(1);
+    });
+
+    it("빈 messages 복원도 안전(대화는 있으나 메시지 0 — graceful)", () => {
+      store.getState().loadConversation("empty-thread", []);
+      expect(store.getState().conversationId).toBe("empty-thread");
+      expect(store.getState().messages).toEqual([]);
+    });
+  });
+
+  // Slice M — 사고 패널 동적 게이트용 lastStreamEvent.
+  // SSE 이벤트 순서 신호: 마지막 이벤트가 'token'(답변 출력 중)이면
+  // ThinkingPanel 이 실시간 표시를 숨긴다. 출력 멈추고 thinking/tool
+  // 이 다시 오면 재표시. done/reset 은 null(스트림 종료/새 대화).
+  describe("lastStreamEvent — 출력/사고 동적 게이트 신호", () => {
+    it("초기값은 null", () => {
+      expect(store.getState().lastStreamEvent).toBeNull();
+    });
+
+    it("setLastStreamEvent 로 'token'/'thinking'/'tool'/null 설정", () => {
+      store.getState().setLastStreamEvent("token");
+      expect(store.getState().lastStreamEvent).toBe("token");
+      store.getState().setLastStreamEvent("thinking");
+      expect(store.getState().lastStreamEvent).toBe("thinking");
+      store.getState().setLastStreamEvent("tool");
+      expect(store.getState().lastStreamEvent).toBe("tool");
+      store.getState().setLastStreamEvent(null);
+      expect(store.getState().lastStreamEvent).toBeNull();
+    });
+
+    it("setStreaming(true) 는 lastStreamEvent 를 건드리지 않는다(독립)", () => {
+      store.getState().setLastStreamEvent("thinking");
+      store.getState().setStreaming(true);
+      expect(store.getState().lastStreamEvent).toBe("thinking");
+    });
+
+    it("resetChat 은 lastStreamEvent 를 null 로 초기화(새 대화)", () => {
+      store.getState().setLastStreamEvent("token");
+      store.getState().resetChat();
+      expect(store.getState().lastStreamEvent).toBeNull();
+    });
+
+    it("출력 중(token)→사고 재개(tool) 동적 전이가 그대로 반영", () => {
+      const g = store.getState;
+      g().setLastStreamEvent("thinking"); // 사고 중
+      g().setLastStreamEvent("token"); // 출력 시작
+      expect(g().lastStreamEvent).toBe("token");
+      g().setLastStreamEvent("tool"); // 출력 멈추고 도구 재개
+      expect(g().lastStreamEvent).toBe("tool");
+    });
+  });
 });
