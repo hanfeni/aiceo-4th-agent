@@ -108,16 +108,17 @@ export type SseEvent =
   | { type: "tool_call"; id: string; name: string; args: string }
   // 도구 실행 결과 OUT(tools 노드의 tool 메시지).
   | { type: "tool_result"; id: string; name: string; result: string }
-  // DART 전용 라우트(/api/dart/analyze) 고정 파이프라인 5단계 진행
-  // (교육용 노드-엣지 시각화 데이터원 — D14). 챗 라우트는 이 타입을
-  // emit 하지 않으며, 챗 store asSseEvent 는 switch default:null 로
-  // 자동 폐기(case "stage" 추가 금지 — 챗 회귀 0 구조 불변식).
-  // R5: input 은 우리 코드 산출물(corpCode/압축컨텍스트/system+human
-  // 프롬프트)만 — LLM reasoning 절대 미포함. LLM 출력은 token 이벤트
-  // (chunkText 통과분)로 별도 흐름.
+  // DART 전용 라우트(/api/dart/analyze) 고정 파이프라인 6단계 진행
+  // (교육용 노드-엣지 시각화 데이터원 — D14 + 웹검색 정성 단계 삽입).
+  // 챗 라우트는 이 타입을 emit 하지 않으며, 챗 store asSseEvent 는
+  // switch default:null 로 자동 폐기(case "stage" 추가 금지 — 챗 회귀
+  // 0 구조 불변식. union 확장 1..5→1..6 도 default 분기라 영향 0).
+  // R5: input 은 우리 코드 산출물(corpCode/압축컨텍스트/검색질의/
+  // system+human 프롬프트)만 — LLM reasoning 절대 미포함. LLM 출력은
+  // token 이벤트(chunkText 통과분)로 별도 흐름.
   | {
       type: "stage";
-      stage: 1 | 2 | 3 | 4 | 5;
+      stage: 1 | 2 | 3 | 4 | 5 | 6;
       status: "start" | "done" | "error";
       label: string;
       input?: string;

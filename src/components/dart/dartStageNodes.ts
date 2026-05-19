@@ -28,10 +28,10 @@ export interface StageIO {
   output?: string;
 }
 
-/** 5단계 노드 정적 메타 */
+/** 6단계 노드 정적 메타 (웹검색 정성 단계 삽입 — 4 웹검색 / 5 LLM) */
 export interface DartStageNodeMeta {
-  /** SseEvent stage 번호(1..5) — 노드 식별자 겸용 */
-  stage: 1 | 2 | 3 | 4 | 5;
+  /** SseEvent stage 번호(1..6) — 노드 식별자 겸용 */
+  stage: 1 | 2 | 3 | 4 | 5 | 6;
   /** 노드 표시 라벨(라우트 stage.label 과 일치) */
   label: string;
   /** 한 줄 교육 설명(노드 부제) */
