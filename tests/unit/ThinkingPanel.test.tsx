@@ -296,3 +296,52 @@ describe("ThinkingPanel — '(진행 중)' 깜빡임 제거(폴백 라벨)", () 
     expect(container.textContent).not.toContain("(진행");
   });
 });
+
+// Slice T — liveMode 단일 컨테이너 리플레이스 회귀 가드.
+// 사용자 보고: "개별 컨테이너가 리얼타임에서 기존엔 리플레이스
+// 됐는데 지금은 쭉 보임". 원인 = C 가 visibleSteps 를
+// LIVE_WINDOW=3+pending 으로 바꿈. Slice E/H 원본은 스트리밍
+// 중 **마지막 1개 step 만** 표시(순차 리플레이스). 완료 후엔
+// 전체 누적(HistoryView). 이 계약을 명문화해 재발 차단.
+describe("ThinkingPanel — liveMode 마지막 1개 리플레이스 (Slice T)", () => {
+  const five: ThinkingStep[] = [
+    reasoning("질문 분석 중", "사고1", 0),
+    tool(1, "웹 검색 도구 완료", "결과1"),
+    tool(2, "웹 검색 도구 완료", "결과2"),
+    tool(3, "웹 검색 도구 완료", "결과3"),
+    reasoning("결과 분석 중", "마지막사고", 4),
+  ];
+
+  it("스트리밍 중(미조작) → 마지막 step 1개만 렌더(이전 step 안 보임)", () => {
+    render(<ThinkingPanel steps={five} streaming={true} />);
+    // 마지막 step(결과 분석 중 + 마지막사고)만 보임.
+    expect(screen.getByText("결과 분석 중")).toBeTruthy();
+    expect(screen.getByText("마지막사고")).toBeTruthy();
+    // 이전 step 들은 화면에 없음(리플레이스 — 쭉 안 보임).
+    expect(screen.queryByText("사고1")).toBeNull();
+    expect(screen.queryByText("결과1")).toBeNull();
+    expect(screen.queryByText("결과2")).toBeNull();
+  });
+
+  it("미완료 도구가 중간에 있어도 마지막 step 1개만(윈도우 누적 X)", () => {
+    const withPending: ThinkingStep[] = [
+      tool(1, "웹 검색 도구 실행 중", undefined), // pending
+      tool(2, "웹 검색 도구 실행 중", undefined), // pending
+      reasoning("결과 분석 중", "현재 사고", 2),
+    ];
+    render(<ThinkingPanel steps={withPending} streaming={true} />);
+    expect(screen.getByText("현재 사고")).toBeTruthy();
+    // pending 도구들이 '쭉' 보이면 안 됨(C 의 pending 누적 폐기).
+    expect(screen.queryAllByText("웹 검색 도구 실행 중")).toHaveLength(0);
+  });
+
+  it("완료(streaming=false) → 전체 step 누적 표시(HistoryView)", () => {
+    render(<ThinkingPanel steps={five} streaming={false} />);
+    const btn = screen.getByRole("button");
+    fireEvent.click(btn); // 완료 후 토글로 펼침
+    // 전체 step 이 다 보임(누적).
+    expect(screen.getByText("사고1")).toBeTruthy();
+    expect(screen.getByText("결과1")).toBeTruthy();
+    expect(screen.getByText("마지막사고")).toBeTruthy();
+  });
+});

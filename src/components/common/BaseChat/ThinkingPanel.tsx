@@ -5,7 +5,6 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { formatDuration } from "@/lib/agent/utils/formatDuration";
 import { ioSummary, needsFold } from "@/lib/agent/utils/ioSummary";
-import { collectWebSearchRefs } from "@/lib/agent/utils/webSearchRefs";
 import { isInProgress } from "@/lib/agent/utils/thinkingLabels";
 import { useThinkingLabelCycler } from "@/components/common/useThinkingLabelCycler";
 import type { ThinkingStep } from "@/types";
@@ -142,83 +141,6 @@ function ReasoningBlock({
 }
 
 /**
- * web_search 그룹 step 의 IN 전용 렌더 (S3 / Plan Critic 항목5).
- *
- * web_search 는 S2 에서 1 그룹 step 으로 합쳐지고 args 는
- * `{actions:[{type, ...raw필드}]}` 형태다. FoldableValue 에 그대로
- * 넘기면 raw JSON 이 노출돼 못 읽는다. action.type 별로 사람이 읽는
- * 한 줄로 표시. graceful: 비-JSON·미지 type 도 크래시 0(passthrough).
- *
- * R5 경계: find_in_page.pattern 은 모델 추론 산물에 가까우나 사용자
- * 결정(투명성 우선 — docs/notes/ws-id-format-probe.md)으로 표시한다.
- */
-function WebSearchActions({ args }: { args: string }): ReactNode {
-  let actions: Record<string, unknown>[] = [];
-  try {
-    const p = JSON.parse(args) as { actions?: unknown };
-    if (Array.isArray(p.actions)) {
-      actions = p.actions.filter(
-        (a): a is Record<string, unknown> =>
-          typeof a === "object" && a !== null,
-      );
-    }
-  } catch {
-    /* 비-JSON(빈 args 등) — actions 빈 배열 유지 */
-  }
-  if (actions.length === 0) {
-    return (
-      <span style={{ fontSize: 12, color: "var(--neutral-600)" }}>
-        검색 준비 중…
-      </span>
-    );
-  }
-  // action.type → 한 줄 요약. 미지 type 은 type 만(passthrough).
-  const describe = (a: Record<string, unknown>): string => {
-    const type = typeof a.type === "string" ? a.type : "(unknown)";
-    if (type === "search") {
-      const qs = Array.isArray(a.queries)
-        ? a.queries.filter((q): q is string => typeof q === "string")
-        : [];
-      return qs.length > 0 ? `🔍 검색: ${qs.join(" / ")}` : "🔍 검색";
-    }
-    if (type === "open_page") {
-      return `📄 페이지 열기: ${typeof a.url === "string" ? a.url : "(url)"}`;
-    }
-    if (type === "find_in_page") {
-      const pat = typeof a.pattern === "string" ? a.pattern : "";
-      const u = typeof a.url === "string" ? a.url : "(url)";
-      return pat
-        ? `🔎 페이지 내 검색: "${pat}" @ ${u}`
-        : `🔎 페이지 내 검색 @ ${u}`;
-    }
-    return `• ${type}`; // 미지 action — passthrough(크래시 0)
-  };
-  return (
-    <span style={{ display: "block", marginTop: 2 }}>
-      <span
-        style={{ fontSize: 11, color: "var(--neutral-600)", fontWeight: 600 }}
-      >
-        {actions.length}개 동작
-      </span>
-      {actions.map((a, i) => (
-        <span
-          key={i}
-          style={{
-            display: "block",
-            fontSize: 12,
-            color: "var(--neutral-600)",
-            marginTop: 2,
-            wordBreak: "break-all",
-          }}
-        >
-          {describe(a)}
-        </span>
-      ))}
-    </span>
-  );
-}
-
-/**
  * 접을 수 있는 I/O 값 (medigate-new IOPairPrimitives.FoldableValue
  * 모방). 한 줄 요약(ioSummary)만 노출하고, 정보가 잘렸으면(needsFold)
  * ▽ 토글로 원문 전체를 <pre> 펼침. 짧으면 요약만(클릭 불가).
@@ -293,69 +215,6 @@ function FoldableValue({ raw }: { raw: string }): ReactNode {
   );
 }
 
-/**
- * web_search OUT 전용 — 시도한 URL 전부 + 인용 건 [인용] 라벨
- * (사용자 요구: "검색한 URL 모두 출력 + 인용한 것만 별도 라벨").
- * collectWebSearchRefs(순수)로 args(open_page/find URL)+result
- * (url_citation)를 통합. cited 면 강조+[인용], 아니면 [참조].
- * 참조 0(검색만 하고 연 페이지·인용 없음)이면 원문 그대로
- * (FoldableValue) — graceful 폴백.
- */
-function WebSearchRefs({
-  args,
-  result,
-}: {
-  args: string;
-  result: string;
-}): ReactNode {
-  const refs = collectWebSearchRefs(args, result);
-  if (refs.length === 0) {
-    // 연 페이지·인용 0 — 원문(상태/메시지) 그대로.
-    return <FoldableValue raw={result} />;
-  }
-  const cited = refs.filter((r) => r.cited).length;
-  return (
-    <span style={{ display: "block", minWidth: 0 }}>
-      <span
-        style={{
-          fontSize: 11,
-          color: "var(--neutral-600)",
-          fontWeight: 600,
-        }}
-      >
-        참조 {refs.length}건 (인용 {cited}건)
-      </span>
-      {refs.map((r, i) => (
-        <span
-          key={i}
-          style={{
-            display: "block",
-            fontSize: 12,
-            color: "var(--neutral-600)",
-            marginTop: 2,
-            wordBreak: "break-all",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              marginRight: 4,
-              color: r.cited
-                ? "var(--agent-600, #4f46e5)"
-                : "var(--neutral-500, #9ca3af)",
-            }}
-          >
-            {r.cited ? "[인용]" : "[참조]"}
-          </span>
-          {r.title.length > 0 ? `${r.title} — ` : ""}
-          {r.url}
-        </span>
-      ))}
-    </span>
-  );
-}
-
 /** tool step IN/OUT (디자인 IOMini :168-197) + 서브타이틀. */
 function ToolBlock({
   step,
@@ -405,9 +264,7 @@ function ToolBlock({
             >
               {step.name}
             </strong>
-            {step.name === "web_search" ? (
-              <WebSearchActions args={step.args} />
-            ) : step.args && step.args !== "{}" ? (
+            {step.args && step.args !== "{}" ? (
               <span style={{ display: "block", marginTop: 2 }}>
                 <FoldableValue raw={step.args} />
               </span>
@@ -419,13 +276,10 @@ function ToolBlock({
           <span style={ioLabel}>OUT</span>
           <span style={{ minWidth: 0 }}>
             {step.result !== undefined ? (
-              step.name === "web_search" ? (
-                // web_search: 시도 URL 전부 + 인용 [인용]/[참조]
-                // 구분(사용자 요구). 비-web_search 는 기존 그대로.
-                <WebSearchRefs args={step.args} result={step.result} />
-              ) : (
-                <FoldableValue raw={step.result} />
-              )
+              // Slice S — web_search 도 일반 FoldableValue 로 통일
+              // (사용자 요구: 기본정보만 + 폴딩). 모든 도구 동일
+              // 경로 — 요약 한 줄 + 클릭 시 원문 전체 펼침.
+              <FoldableValue raw={step.result} />
             ) : (
               <span
                 style={{
@@ -489,35 +343,16 @@ export function ThinkingPanel({
     setUserToggled(!open);
   };
 
-  // 실시간 뷰: 스트리밍 중 + 사용자 미조작 → **최근 N개 윈도우**
-  // (medigate-manager ThinkingPanel PAGE=3 벤치마킹 — 이전 '마지막
-  // 1개 리플레이스'는 web_search 가 O 대기 중 task 가 끼면 사라지는
-  // 버그. 사용자 요구: 도구 2개+ 연달아 보여도 됨, 진행 중 도구는
-  // O 올 때까지 유지). 히스토리 뷰(완료/사용자토글)는 전체 누적.
-  //
-  // 보존 규칙: (1) 진행 중(result===undefined) tool step 은 윈도우
-  // 밖이어도 항상 포함(O 기다리는 web_search 가 안 사라짐 — medigate
-  // '진행 중 도구 안 사라지기'). (2) 그 외 최근 LIVE_WINDOW 개.
-  // 원래 순서(order) 유지. web_search 는 S2 에서 1 그룹이라 보통
-  // 윈도우 안이지만 (1)이 이중 안전망.
-  const LIVE_WINDOW = 3;
+  // Slice T — 실시간 뷰: 스트리밍 중 + 사용자 미조작 →
+  // **마지막 step 1개만**(단일 컨테이너 순차 리플레이스). 사용자
+  // 보고: "개별 컨테이너가 리얼타임에서 기존엔 리플레이스됐는데
+  // 지금은 쭉 보임" — 이전 에이전트가 LIVE_WINDOW=3+pending 으로
+  // 바꿔 여러 개가 누적 표시되던 회귀를 Slice E/H 원본으로 복원.
+  // step 이 진행될 때마다 화면이 마지막 것으로 교체된다.
+  // 히스토리 뷰(완료/사용자토글)는 전체 누적(else: steps).
   const liveMode = streaming && !userControlled;
   const visibleSteps =
-    liveMode && hasAny
-      ? (() => {
-          const pending = new Set(
-            steps
-              .map((s, i) =>
-                s.kind === "tool" && s.result === undefined ? i : -1,
-              )
-              .filter((i) => i >= 0),
-          );
-          const windowStart = Math.max(0, steps.length - LIVE_WINDOW);
-          return steps.filter(
-            (_, i) => i >= windowStart || pending.has(i),
-          );
-        })()
-      : steps;
+    liveMode && hasAny ? [steps[steps.length - 1]] : steps;
 
   // 상단 토글 라벨을 스트리밍 중 타이핑 순환 문구로 대체(medigate
   // StreamingView 타이틀 위치 모방). 패널이 접혀 있어도 보이는 위치라
