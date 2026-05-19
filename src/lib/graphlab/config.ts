@@ -41,12 +41,41 @@ export function subsetUrl(file: keyof typeof SUBSET_FILES): string {
   return `${GRAPH_RAW_BASE}/${SUBSET_FILES[file]}`;
 }
 
-/** Neo4j 그래프 노드/엣지 라벨 (Cypher·UI 일관) */
+/**
+ * Neo4j 그래프 노드/엣지 라벨 SSOT (Cypher·UI·LLM 프롬프트 일관).
+ *
+ * 스키마 진화(2026-05-20, 웹 사례 기반 — Neo4j 공식 mutual-fund
+ * 패턴 + 13F crowding 실무):
+ *  - Company 에 crowding 속성(holder_count·total_value) 부여
+ *    → "허브 종목" 류 질의를 매번 count 재계산 않고 속성 직조회
+ *  - (:Position) 중간 노드 — Neo4j 공식 Holdings 패턴.
+ *    (Manager)-[HOLDS]->(Position {value_usd,shares,put_call})
+ *    -[OF]->(Company). 포지션 자체에 대한 질의(옵션 보유 등) 가능.
+ *    기존 (Manager)-[OWNS]->(Company) 는 호환 위해 유지(병존).
+ */
 export const GRAPH_SCHEMA = {
   managerLabel: "Manager",
   companyLabel: "Company",
   ownsRel: "OWNS",
+  positionLabel: "Position",
+  holdsRel: "HOLDS",
+  ofRel: "OF",
 } as const;
+
+/**
+ * Position 노드는 holder_count(인기) 상위 N개 종목에 대해서만
+ * 적재 (사용자 결정 2026-05-20: "데이터량 줄이되 노드 종류 유지").
+ *
+ * 왜 상위 N: Slice1 의 holder_count 가 곧 종목 인기도 →
+ * 인기 종목끼리는 공동보유·교집합 멀티홉이 조밀해 데모 질의가
+ * 가장 잘 동작. 임의 샘플보다 교육 효과 큼. 실측(2026-05-20):
+ * 상위 300종목 → Position ~10,266개(holder_count 32+ 종목만,
+ * 유명기관 64개 중 절반+ 보유). 강의 단순성 유지 + 경로 풍부.
+ * 전체 노드 ≈ 12,000(기관·종목) + 10,000(Position) ≈ 22,000.
+ */
+export const POSITION_TOP_N = Number(
+  process.env.GRAPH_POSITION_TOP_N ?? 300,
+);
 
 /**
  * 강의 데모용 질의 프리셋. 3방식(RAG/SQL/GraphRAG)으로 돌렸을 때

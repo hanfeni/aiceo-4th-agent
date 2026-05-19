@@ -182,7 +182,9 @@ async function* runSqlPanel(
   // 설득력을 가진다(SQL 이 멍청해서 진 게 아님을 보이는 것).
   const sys =
     "당신은 숙련된 Text-to-SQL 어시스턴트입니다. 테이블은 holdings" +
-    "(accession, cusip, issuer, value_usd_k, shares) 하나뿐입니다.\n" +
+    "(accession, cusip, issuer, value_usd, shares, put_call) " +
+    "하나뿐입니다. value_usd=보유가치(USD). put_call: ''=현물 / " +
+    "'Call' / 'Put'.\n" +
     "규칙:\n" +
     "- 기관은 accession 으로 식별합니다(1 accession = 1 기관 신고).\n" +
     "- '기관'을 물으면 issuer(종목)가 아니라 accession 기준으로 집계하세요.\n" +
@@ -232,11 +234,27 @@ async function* runGraphRagPanel(
   query: string,
 ): AsyncGenerator<CompareEvent> {
   yield { type: "method_start", method: "graphrag" };
+  // 스키마 설명은 LLM 이 새 노드/속성을 알아야 활용함(누락 시
+  // 죽은 스키마). Slice1·2 진화 반영: Company crowding 속성 +
+  // Position 중간 노드(Neo4j 공식 패턴). 두 경로 병존을 명시해
+  // LLM 이 질문 성격에 맞게 고르게 한다.
   const sys =
     "당신은 Cypher 생성 어시스턴트입니다. Neo4j 그래프 스키마:\n" +
     "(:Manager {accession, cik, name, city, state})\n" +
-    "(:Company {cusip, name})\n" +
-    "(:Manager)-[:OWNS {value_usd_k, shares}]->(:Company)\n" +
+    "(:Company {cusip, name, holder_count, total_value_usd})\n" +
+    "  └ holder_count = 이 종목을 보유한 13F 기관 수(인기/crowding " +
+    "지표 — '허브 종목·인기 종목'은 count() 대신 이 속성 직조회).\n" +
+    "  └ total_value_usd = 전체 보유가치 합계(USD).\n" +
+    "(:Position {accession, cusip, value_usd, shares, put_call})\n" +
+    "  └ value_usd = 보유가치(USD). put_call: ''=현물 / 'Call' / " +
+    "'Put' (옵션 포지션 질의용).\n" +
+    "관계(두 경로 병존 — 질문에 맞게 선택):\n" +
+    "(:Manager)-[:OWNS {value_usd, shares}]->(:Company)\n" +
+    "  └ 단순 보유 관계. 공동보유·교집합 멀티홉에 적합.\n" +
+    "(:Manager)-[:HOLDS]->(:Position)-[:OF]->(:Company)\n" +
+    "  └ 포지션 매개. 옵션/현물 구분, 포지션 단위 질의에 적합.\n" +
+    "  (Position 은 인기 상위 종목만 적재 — 옵션 질문이 아니면 " +
+    "OWNS 경로를 우선 쓰세요.)\n" +
     "질문을 푸는 읽기 전용 Cypher 를 ```cypher``` 코드펜스로만 " +
     "출력하세요. 멀티홉 경로를 적극 활용하고 LIMIT 25 이하로 " +
     "제한하세요. 설명 금지.";

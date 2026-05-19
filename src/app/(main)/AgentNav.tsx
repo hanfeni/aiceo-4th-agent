@@ -23,7 +23,7 @@ import type { CSSProperties, ReactNode } from "react";
  *
  * 2그룹 구조(사용자 결정 2026-05-19):
  *  - "AI 에이전트": 챗·하네스·DART (기존 보라 accent, --agent-500)
- *  - "검색·라벨링 실습": 검색 실습·메타 라벨링 실습 (고유색 푸른색,
+ *  - "검색·라벨링 실습": 메타 라벨링 실습·검색 실습 (고유색 푸른색,
  *    --blue-500 — 4메뉴 medigate Control Atoms 와 동일 색계 정합)
  *
  * 그룹 헤더를 layout.tsx 가 아니라 여기서 렌더한다(layout 은 DART
@@ -86,14 +86,14 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/data-load",
       },
       {
-        icon: <Search size={14} aria-hidden />,
-        label: "검색 실습",
-        href: "/search-lab",
-      },
-      {
         icon: <Tags size={14} aria-hidden />,
         label: "메타 라벨링 실습",
         href: "/meta-lab",
+      },
+      {
+        icon: <Search size={14} aria-hidden />,
+        label: "검색 실습",
+        href: "/search-lab",
       },
       {
         icon: <Network size={14} aria-hidden />,

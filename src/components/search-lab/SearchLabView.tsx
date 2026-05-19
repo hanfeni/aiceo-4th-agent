@@ -25,6 +25,11 @@ import {
 import { ChartView } from "./ChartView";
 import type { ChartSpec } from "@/lib/sqllab/text2sqlChart";
 import { RagStageModal } from "./RagStageModal";
+import {
+  recommendationsFor,
+  sourceKindOf,
+} from "@/lib/searchlab/recommendations";
+import type { SearchDomain } from "@/lib/searchlab/domains";
 
 /**
  * SearchLabView — 검색 실습 화면 (client).
@@ -57,6 +62,15 @@ const HYBRID_METHODS = [
   { id: "rrf", label: "RRF (순위 결합)" },
 ] as const;
 
+// 렉시컬 BM25 필드 가중치 프리셋 (search.ts LEXICAL_PRESETS 와 1:1).
+// 같은 질의라도 타이틀/본문 가중을 바꾸면 검색 순위가 뒤집힌다 —
+// 학생이 칩을 눌러 직접 체감(하이브리드 결합방식 칩과 동일 메커니즘).
+const LEXICAL_PRESETS = [
+  { id: "balanced", label: "균형 (타이틀 ×3)", hint: "타이틀 ×3 · 본문 ×1 — 기본값" },
+  { id: "title", label: "타이틀 중심 (×6)", hint: "타이틀 ×6 · 본문 ×1 — 제목 키워드 강조" },
+  { id: "body", label: "본문 중심 (×3)", hint: "타이틀 ×1 · 본문 ×3 — 본문 다빈도 강조" },
+] as const;
+
 // 검색어 옆 동작 선택 (다른 섹션과 동일 chip 패턴)
 const TASK_MODES = [
   { id: "search", label: "검색", hint: "top-N 결과만 (즉시)" },
@@ -79,6 +93,9 @@ const TOP_RANKS = [5, 10, 20, 50] as const;
 
 interface Hit {
   doc_id: string;
+  /** 청크 순번(doc 내). 청킹 OFF 면 0/undefined. API SearchHit 와 정합
+   *  — 청크 분할 문서의 React key 중복 방지에 사용. */
+  chunk_id?: number;
   title: string;
   snippet: string;
   score: number;
@@ -135,6 +152,8 @@ export function SearchLabView(): ReactNode {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<string>("hybrid");
   const [hybridMethod, setHybridMethod] = useState<string>("default");
+  // 렉시컬 BM25 필드 가중치 프리셋(교육용 — 칩으로 바꿔 순위 변화 체감).
+  const [lexicalPreset, setLexicalPreset] = useState<string>("balanced");
   const [topK, setTopK] = useState<number>(10);
   // 인덱스 보기 모달 (색인된 문서 ◀ N/M ▶ 열람)
   const [showDocs, setShowDocs] = useState(false);
@@ -165,19 +184,67 @@ export function SearchLabView(): ReactNode {
   // 색인 자체는 별도 /index-lab 메뉴 — 여기선 chip 에 상태만 표기.
   // (2026-05-19 사용자 결정). 미색인 검색 시 API 가 503 안내.
   const [status, setStatus] = useState<Record<string, number | null>>({});
+  // DB(Text-to-SQL) 적재 상태 — 도메인별 행수(0=미적재).
+  // 인덱스(status)와 별개 소스(사용자 지적: 모드가 소스를 결정).
+  // /api/sql-lab/tables 가 [{domain,loaded,rowCount}] 반환.
+  const [dbStatus, setDbStatus] = useState<Record<string, number>>({});
 
   useEffect(() => {
     let alive = true;
+    // 인덱스·DB 상태를 마운트 시 1회씩 캐싱. 모드 전환 재판정은
+    // domainAvailable 이 taskMode 변화에 반응(렌더 재계산)하므로
+    // 추가 fetch 불요 — 두 상태가 이미 메모리에 있음.
     fetch("/api/search-lab/status")
       .then((r) => r.json())
       .then((d) => {
         if (alive && d.status) setStatus(d.status);
       })
       .catch(() => {});
+    fetch("/api/sql-lab/tables")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive || !Array.isArray(d.tables)) return;
+        const m: Record<string, number> = {};
+        for (const t of d.tables as {
+          domain: string;
+          loaded: boolean;
+          rowCount: number;
+        }[]) {
+          m[t.domain] = t.loaded ? t.rowCount : 0;
+        }
+        setDbStatus(m);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
   }, []);
+
+  // 모드 전환 시 현재 도메인이 새 소스에서 불가용이면 가용한
+  // 첫 도메인으로 자동 보정(사용자 "즉시 재판정" 요구 완결 —
+  // disable UI 만으론 선택된 domain state 가 비가용으로 남아
+  // 실행 시 에러. 가용 도메인 없으면 그대로 둠: chip 전부
+  // disabled + 실행 버튼이 막음). status/dbStatus/taskMode 가
+  // deps — 상태 로드 완료·모드 전환 양쪽에서 재평가.
+  useEffect(() => {
+    const k = sourceKindOf(taskMode);
+    const ok = (id: string): boolean =>
+      k === "db"
+        ? (dbStatus[id] ?? 0) > 0
+        : typeof status[id] === "number";
+    if (ok(domain)) return;
+    const firstOk = DOMAINS.find((d) => ok(d.id));
+    if (!firstOk) return;
+    // effect 본문 동기 setState 금지(코드베이스 컨벤션 —
+    // cascading render). 마이크로태스크 경계 뒤로 미룬다.
+    let alive = true;
+    queueMicrotask(() => {
+      if (alive) setDomain(firstOk.id);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [taskMode, status, dbStatus, domain]);
 
   async function runSearch(): Promise<void> {
     const q = query.trim();
@@ -194,6 +261,7 @@ export function SearchLabView(): ReactNode {
           mode,
           topK,
           ...(mode === "hybrid" ? { hybridMethod } : {}),
+          ...(mode === "lexical" ? { lexicalPreset } : {}),
         }),
       });
       const data = await res.json();
@@ -237,6 +305,7 @@ export function SearchLabView(): ReactNode {
           // 검색 자체는 topK 만큼 — 근거 리스트엔 topK 건 표시.
           ragTopK: Math.min(topK, 10),
           ...(mode === "hybrid" ? { hybridMethod } : {}),
+          ...(mode === "lexical" ? { lexicalPreset } : {}),
         }),
         signal: ac.signal,
       });
@@ -505,6 +574,19 @@ export function SearchLabView(): ReactNode {
   const isRag = taskMode === "rag";
   const isT2s = taskMode === "text2sql";
   const isT2sc = taskMode === "text2sql-chart";
+
+  // 사용자 지적의 핵심: 도메인 가용성은 ①도메인이 아니라
+  // 검색어 모드(taskMode)가 결정하는 데이터 소스에 종속.
+  // index 계열(검색·RAG)=인덱스 색인 여부, db 계열(Text-to-SQL
+  // ·Chart)=테이블 적재 여부. taskMode 가 바뀌면 이 파생값들이
+  // 렌더 시 재계산 → "모드 선택 시 즉시 재판정"(추가 fetch 0).
+  const kind = sourceKindOf(taskMode);
+  const domainAvailable = (id: string): boolean =>
+    kind === "db"
+      ? (dbStatus[id] ?? 0) > 0
+      : typeof status[id] === "number";
+  // 현재 도메인·모드에 실제 가능한 추천 질의(소스종류×도메인).
+  const recs = recommendationsFor(taskMode, domain as SearchDomain);
   // RAG 그래프 노드 상태(stage→status). ragIO 에서 파생.
   const ragStates: Record<number, StageStatus> = {};
   for (const n of RAG_STAGE_NODES) {
@@ -553,24 +635,60 @@ export function SearchLabView(): ReactNode {
       </p>
 
       <div style={card}>
-        <div style={sectionTitle}>① 인덱스 (도메인) 선택</div>
+        <div style={sectionTitle}>① 도메인 선택</div>
+        <div
+          style={{
+            fontSize: 11.5,
+            color: "var(--text-subtle)",
+            marginBottom: 10,
+          }}
+        >
+          현재 모드는{" "}
+          <strong>
+            {kind === "db"
+              ? "Text-to-SQL — 적재된 DB 테이블"
+              : "검색·RAG — 색인된 인덱스"}
+          </strong>
+          을 사용합니다. 그 소스에 데이터가 없는 도메인은 선택할
+          수 없습니다(모드를 바꾸면 가용 도메인이 달라집니다).
+        </div>
         <div style={chipRow}>
           {DOMAINS.map((d) => {
-            // status[d.id]: 숫자=색인됨 N건 / null·undefined=미색인
-            const cnt = status[d.id];
-            const indexed = typeof cnt === "number";
+            // 가용성은 taskMode 가 결정한 소스종류 기준(사용자
+            // 지적). db 계열=테이블 적재행수, index 계열=색인 건수.
+            const avail = domainAvailable(d.id);
+            const amount =
+              kind === "db" ? dbStatus[d.id] ?? 0 : status[d.id];
+            const badge = avail
+              ? kind === "db"
+                ? `${(amount as number).toLocaleString()}행`
+                : `${amount}건`
+              : kind === "db"
+                ? "DB 미적재"
+                : "미색인";
             return (
               <button
                 key={d.id}
                 type="button"
                 className="cf-pill"
                 aria-pressed={domain === d.id}
-                onClick={() => setDomain(d.id)}
+                disabled={!avail}
+                onClick={() => avail && setDomain(d.id)}
                 title={
-                  indexed
-                    ? `${d.audience} · 색인됨 ${cnt}건`
-                    : `${d.audience} · 미색인 (도메인 색인 메뉴에서 먼저)`
+                  avail
+                    ? `${d.audience} · ${
+                        kind === "db" ? "DB 적재됨" : "색인됨"
+                      } ${badge}`
+                    : `${d.audience} · ${
+                        kind === "db"
+                          ? "이 도메인은 DB 미적재 — SQL 적재 메뉴에서 먼저"
+                          : "이 도메인은 미색인 — 도메인 색인 메뉴에서 먼저"
+                      }`
                 }
+                style={{
+                  opacity: avail ? 1 : 0.45,
+                  cursor: avail ? "pointer" : "not-allowed",
+                }}
               >
                 {d.label}
                 <span
@@ -578,13 +696,13 @@ export function SearchLabView(): ReactNode {
                     marginLeft: 6,
                     fontSize: 10,
                     fontWeight: 600,
-                    color: indexed
+                    color: avail
                       ? "var(--cf-soft-text)"
                       : "var(--text-subtle)",
                     opacity: 0.85,
                   }}
                 >
-                  {indexed ? `${cnt}건` : "미색인"}
+                  {badge}
                 </span>
               </button>
             );
@@ -687,6 +805,34 @@ export function SearchLabView(): ReactNode {
             </div>
           </div>
         )}
+        {mode === "lexical" && (
+          <div style={{ marginTop: 14 }}>
+            <div
+              style={{
+                fontSize: 11.5,
+                color: "var(--text-subtle)",
+                marginBottom: 8,
+              }}
+            >
+              BM25 필드 가중치 — 같은 질의라도 타이틀/본문 가중을 바꾸면
+              순위가 달라집니다
+            </div>
+            <div style={chipRow}>
+              {LEXICAL_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="cf-pill"
+                  aria-pressed={lexicalPreset === p.id}
+                  onClick={() => setLexicalPreset(p.id)}
+                  title={p.hint}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ marginTop: 14 }}>
           <div
             style={{
@@ -730,6 +876,39 @@ export function SearchLabView(): ReactNode {
             </button>
           ))}
         </div>
+        {/* 추천 질의 — 모드(소스종류)×도메인 에 실제 가능한 것만
+            (사용자 지적: 도메인 아닌 데이터 소스에 종속). 도메인
+            가용 + 플레이스홀더 아닌 경우에만 노출. */}
+        {domainAvailable(domain) &&
+          recs.length > 0 &&
+          !recs[0].startsWith("(") && (
+            <div style={{ marginBottom: 12 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-subtle)",
+                  marginBottom: 6,
+                }}
+              >
+                추천 질의 ({kind === "db" ? "테이블 집계" : "문서 검색"}{" "}
+                — 클릭하면 입력됩니다)
+              </div>
+              <div style={chipRow}>
+                {recs.map((q) => (
+                  <button
+                    key={q}
+                    type="button"
+                    className="cf-pill"
+                    onClick={() => setQuery(q)}
+                    title="클릭해 검색어로 사용"
+                    style={{ fontSize: 11.5 }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         <div style={{ display: "flex", gap: 8 }}>
           <input
             value={query}
@@ -1230,11 +1409,15 @@ export function SearchLabView(): ReactNode {
           <div style={sectionTitle}>
             결과 ({hits.length}건) — {mode}
             {mode === "hybrid" ? ` · ${hybridMethod}` : ""}
+            {mode === "lexical" ? ` · ${lexicalPreset}` : ""}
           </div>
-          <ol style={{ margin: 0, paddingLeft: 22 }}>
-            {hits.map((h) => (
+          {/* RANK 명시 표기 — RAG 근거 리스트(예 [1] 제목)와 동일
+              패턴. <ol> 기본 마커는 굵은 제목 옆에서 묻혀 안 보임
+              → 순위 배지를 제목 앞에 직접 렌더(사용자 요청). */}
+          <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {hits.map((h, i) => (
               <li
-                key={h.doc_id}
+                key={`${h.doc_id}#${h.chunk_id ?? 0}`}
                 style={{
                   marginBottom: 14,
                   fontSize: 12.5,
@@ -1242,6 +1425,17 @@ export function SearchLabView(): ReactNode {
                 }}
               >
                 <div style={{ fontWeight: 700, marginBottom: 3 }}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      minWidth: 26,
+                      marginRight: 6,
+                      color: "var(--text-subtle)",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {i + 1}.
+                  </span>
                   {h.title}
                   <span
                     style={{
@@ -1256,7 +1450,11 @@ export function SearchLabView(): ReactNode {
                   </span>
                 </div>
                 <div
-                  style={{ color: "var(--text-subtle)", lineHeight: 1.5 }}
+                  style={{
+                    color: "var(--text-subtle)",
+                    lineHeight: 1.5,
+                    paddingLeft: 32,
+                  }}
                 >
                   {h.snippet}…
                 </div>

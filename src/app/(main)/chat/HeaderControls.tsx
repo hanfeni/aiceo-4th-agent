@@ -133,9 +133,56 @@ export function HeaderControls({
     setPickerOpen(false);
   };
 
+  // 데이터 존재 현황 — 색인된 인덱스 도메인 / 적재된 SQL 도메인.
+  // null = 아직 미조회(드롭다운 첫 오픈 전). Set = 조회 완료(가용
+  // 도메인만 enable, 나머지 disable). 색인·적재는 다른 메뉴에서
+  // 수시로 바뀌므로 드롭다운 열 때마다 재조회(사용자 결정).
+  const [idxAvail, setIdxAvail] = useState<Set<string> | null>(null);
+  const [sqlAvail, setSqlAvail] = useState<Set<string> | null>(null);
+
   // 인덱스검색 드롭다운 — 로컬 open 상태(모델 픽커와 동형).
   const [idxOpen, setIdxOpen] = useState(false);
   const storeIdxDomain = useChatStore((s) => s.idxDomain);
+
+  // 드롭다운 오픈 시 현황 fetch (열 때마다 — 항상 최신). 실패해도
+  // 막지 않고 "전부 미가용"로 안전 폴백(색인 안내 툴팁이 뜸).
+  const loadIdxAvail = async (): Promise<void> => {
+    try {
+      const r = await fetch("/api/search-lab/indices");
+      const d = (await r.json()) as {
+        indices?: { index: string }[];
+      };
+      // 인덱스명(searchlab-<domain>) → domain 역매핑.
+      const avail = new Set<string>();
+      for (const it of d.indices ?? []) {
+        const dom = SEARCH_DOMAINS.find(
+          (sd) => DOMAIN_SPEC[sd].index === it.index,
+        );
+        if (dom) avail.add(dom);
+      }
+      setIdxAvail(avail);
+    } catch {
+      setIdxAvail(new Set()); // 안전 폴백 — 전부 disable
+    }
+  };
+
+  const loadSqlAvail = async (): Promise<void> => {
+    try {
+      const r = await fetch("/api/sql-lab/tables");
+      const d = (await r.json()) as {
+        tables?: { domain: string; loaded: boolean }[];
+      };
+      setSqlAvail(
+        new Set(
+          (d.tables ?? [])
+            .filter((t) => t.loaded)
+            .map((t) => t.domain),
+        ),
+      );
+    } catch {
+      setSqlAvail(new Set());
+    }
+  };
   const idxLabel =
     IDX_OPTIONS.find((o) => o.value === storeIdxDomain)?.label ??
     "인덱스검색 안함";
@@ -348,7 +395,11 @@ export function HeaderControls({
           type="button"
           onClick={() => {
             if (isStreaming) return;
-            setIdxOpen((v) => !v);
+            setIdxOpen((v) => {
+              const next = !v;
+              if (next) void loadIdxAvail(); // 열 때마다 최신 현황
+              return next;
+            });
           }}
           disabled={isStreaming}
           title={
@@ -410,12 +461,28 @@ export function HeaderControls({
           >
             {IDX_OPTIONS.map((o) => {
               const active = o.value === storeIdxDomain;
+              // "안함"(value=null)은 항상 가용. 도메인은 색인된 것만
+              // enable. 미조회(idxAvail=null) 중엔 disable 안 함
+              // (낙관적 — fetch 수백ms, 깜빡임 방지).
+              const disabled =
+                o.value !== null &&
+                idxAvail !== null &&
+                !idxAvail.has(o.value);
               return (
                 <button
                   key={o.value ?? "__none__"}
                   type="button"
                   role="menuitem"
-                  onClick={() => handleSelectIdx(o.value)}
+                  disabled={disabled}
+                  onClick={() => {
+                    if (disabled) return;
+                    handleSelectIdx(o.value);
+                  }}
+                  title={
+                    disabled
+                      ? "이 도메인은 아직 색인되지 않았습니다 — 도메인 색인 메뉴에서 먼저 색인하세요"
+                      : undefined
+                  }
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -430,7 +497,8 @@ export function HeaderControls({
                     color: "var(--text-default)",
                     fontSize: 12,
                     fontWeight: active ? 600 : 500,
-                    cursor: "pointer",
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    opacity: disabled ? 0.4 : 1,
                     textAlign: "left",
                     width: "100%",
                   }}
@@ -456,7 +524,11 @@ export function HeaderControls({
           type="button"
           onClick={() => {
             if (isStreaming || sqlLoading) return;
-            setSqlOpen((v) => !v);
+            setSqlOpen((v) => {
+              const next = !v;
+              if (next) void loadSqlAvail(); // 열 때마다 최신 현황
+              return next;
+            });
           }}
           disabled={isStreaming || sqlLoading}
           title={
@@ -521,12 +593,27 @@ export function HeaderControls({
           >
             {SQL_OPTIONS.map((o) => {
               const active = o.value === storeSqlDomain;
+              // "안함"(value=null)은 항상 가용. 도메인은 적재된 것만
+              // enable. 미조회(sqlAvail=null) 중엔 disable 안 함.
+              const disabled =
+                o.value !== null &&
+                sqlAvail !== null &&
+                !sqlAvail.has(o.value);
               return (
                 <button
                   key={o.value ?? "__none__"}
                   type="button"
                   role="menuitem"
-                  onClick={() => void handleSelectSql(o.value)}
+                  disabled={disabled}
+                  onClick={() => {
+                    if (disabled) return;
+                    void handleSelectSql(o.value);
+                  }}
+                  title={
+                    disabled
+                      ? "이 도메인은 아직 적재되지 않았습니다 — 데이터 적재 메뉴에서 먼저 적재하세요"
+                      : undefined
+                  }
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -541,7 +628,8 @@ export function HeaderControls({
                     color: "var(--text-default)",
                     fontSize: 12,
                     fontWeight: active ? 600 : 500,
-                    cursor: "pointer",
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    opacity: disabled ? 0.4 : 1,
                     textAlign: "left",
                     width: "100%",
                   }}

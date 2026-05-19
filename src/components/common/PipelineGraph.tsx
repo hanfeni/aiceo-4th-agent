@@ -135,6 +135,12 @@ export function PipelineGraph({
       }}
     >
       <ReactFlow
+        // 노드 수가 바뀌면(meta-lab 올인원 4 ↔ 올인원 색인 5) fitView
+        // 는 초기 1회성이라 재적합이 안 돼 5번째 노드가 우측으로 잘려
+        // 보인다. length 를 key 로 줘 노드 수 변경 시에만 재마운트 →
+        // fitView 재실행(노드 수 고정인 DART·search-lab 사용처는 key
+        // 불변 → 재마운트 0, 영향 없음).
+        key={stageNodes.length}
         nodes={nodes}
         edges={edges}
         onNodeClick={(_e, n) => onStageClick?.(Number(n.id))}
