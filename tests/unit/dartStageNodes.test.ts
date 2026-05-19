@@ -10,32 +10,34 @@ import {
 // 단언 가능. DartPipelineGraph 가 이 상수 + 런타임 stage 상태로 노드 구동.
 //
 // 매핑:
-//   - D14b 노드-엣지 시각화 정적 정의 (5단계 = SseEvent stage 1..5 1:1)
-//   - stage 4(OpenAI 8관점) emphasis:true — 교육 강조(사용자 HITL)
+//   - 노드-엣지 시각화 정적 정의 (6단계 = SseEvent stage 1..6 1:1 —
+//     웹검색 정성 단계 삽입: 4 웹검색 / 5 OpenAI 취합 / 6 완료)
+//   - emphasis:true = AI 작동 단계(교육 강조 — 사용자 HITL):
+//     stage 4(웹검색 — runWebSearch 내부 OpenAI 요약) + stage 5(메인 LLM)
 //   - stageColor: 상태(error/done/running/idle) → 색. 상태가 emphasis 지배.
 
 const STATUSES: StageStatus[] = ["idle", "running", "done", "error"];
 
 // ---------------------------------------------------------------------------
-// 1. DART_STAGE_NODES 구조 (5단계, 순서, emphasis)
+// 1. DART_STAGE_NODES 구조 (6단계, 순서, emphasis)
 // ---------------------------------------------------------------------------
-describe("DART_STAGE_NODES — 5단계 정적 메타 구조", () => {
-  it("정확히 5개 노드를 가진다", () => {
-    expect(DART_STAGE_NODES).toHaveLength(5);
+describe("DART_STAGE_NODES — 6단계 정적 메타 구조", () => {
+  it("정확히 6개 노드를 가진다", () => {
+    expect(DART_STAGE_NODES).toHaveLength(6);
   });
 
-  it("stage 번호가 1..5 순서대로다 (라우트 emit 순서 1:1)", () => {
-    expect(DART_STAGE_NODES.map((n) => n.stage)).toEqual([1, 2, 3, 4, 5]);
+  it("stage 번호가 1..6 순서대로다 (라우트 emit 순서 1:1)", () => {
+    expect(DART_STAGE_NODES.map((n) => n.stage)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
-  it("stage 4(OpenAI 8관점)만 emphasis:true, 나머지는 false", () => {
+  it("stage 4(웹검색)·5(OpenAI)만 emphasis:true, 나머지는 false", () => {
     for (const n of DART_STAGE_NODES) {
-      expect(n.emphasis).toBe(n.stage === 4);
+      expect(n.emphasis).toBe(n.stage === 4 || n.stage === 5);
     }
-    // 명시적 단언: emphasis=true 인 노드는 정확히 1개(stage 4)
+    // 명시적 단언: emphasis=true 인 노드는 정확히 2개(stage 4·5 — AI 단계).
     const emphasized = DART_STAGE_NODES.filter((n) => n.emphasis);
-    expect(emphasized).toHaveLength(1);
-    expect(emphasized[0].stage).toBe(4);
+    expect(emphasized).toHaveLength(2);
+    expect(emphasized.map((n) => n.stage)).toEqual([4, 5]);
   });
 
   it("모든 노드가 비어있지 않은 label 과 hint 를 가진다", () => {
@@ -135,6 +137,6 @@ describe("stageColor() — 결정성 (순수 함수)", () => {
   it("DART_STAGE_NODES 는 호출 간 동일 참조다 (모듈 상수 불변)", () => {
     // 두 번째 import 도 동일 참조 — 재생성 없음(순수 상수 보증)
     expect(DART_STAGE_NODES).toBe(DART_STAGE_NODES);
-    expect(DART_STAGE_NODES).toHaveLength(5);
+    expect(DART_STAGE_NODES).toHaveLength(6);
   });
 });

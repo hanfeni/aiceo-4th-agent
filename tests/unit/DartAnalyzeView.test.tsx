@@ -215,24 +215,26 @@ describe("DartAnalyzeView — 정상 SSE 흐름 (UC-41 / TC-41.1)", () => {
     });
   });
 
-  it("노드-엣지 파이프라인 그래프는 분석 전에도 5단계 항상 렌더된다", () => {
-    // D14b: progress 텍스트 배너 폐지 → DartPipelineGraph 상시 렌더
-    // (교육생이 분석 전 5단계 구조를 idle 노드로 미리 인지). 모킹된
-    // ReactFlow 가 data-node-count 로 전달 노드 수를 노출.
+  it("노드-엣지 파이프라인 그래프는 분석 전에도 6단계 항상 렌더된다", () => {
+    // progress 텍스트 배너 폐지 → DartPipelineGraph 상시 렌더(교육생이
+    // 분석 전 6단계 구조를 idle 노드로 미리 인지 — 웹검색 단계 삽입).
+    // 모킹된 ReactFlow 가 data-node-count 로 전달 노드 수를 노출.
     render(<DartAnalyzeView />);
-    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("6");
   });
 
   it("stage 이벤트 → 해당 노드가 진행/완료 상태로 전이된다", async () => {
-    // D14b: tool_call/tool_result(D12) 는 무시, stage 이벤트가
-    // 시각화 데이터원. stage 시작→running, done→done. 모킹 ReactFlow
-    // 가 노드를 rf-node-<id> 버튼으로 렌더하므로 노드 존재만 확인하고,
-    // 상태 색은 DartPipelineGraph 단위 테스트(dartPipelineGraph)에서 검증.
+    // tool_call/tool_result(D12) 는 무시, stage 이벤트가 시각화
+    // 데이터원. stage 시작→running, done→done. 모킹 ReactFlow 가
+    // 노드를 rf-node-<id> 버튼으로 렌더하므로 노드 존재만 확인하고,
+    // 상태 색은 DartPipelineGraph 단위 테스트에서 검증. stage 5 =
+    // OpenAI 8관점 분석(웹검색 stage4 삽입으로 재번호).
     mockFetchOk([
       { type: "thread", conversationId: "c-2" },
       { type: "stage", stage: 1, status: "start", label: "기업 식별" },
       { type: "stage", stage: 1, status: "done", label: "기업 식별" },
-      { type: "stage", stage: 4, status: "start", label: "OpenAI 8관점 분석" },
+      { type: "stage", stage: 4, status: "start", label: "웹검색 (정성)" },
+      { type: "stage", stage: 5, status: "start", label: "OpenAI 8관점 분석" },
     ]);
     render(<DartAnalyzeView />);
     fireEvent.change(screen.getByLabelText("분석 대상 기업명"), {
@@ -241,11 +243,11 @@ describe("DartAnalyzeView — 정상 SSE 흐름 (UC-41 / TC-41.1)", () => {
     fireEvent.click(screen.getByRole("button", { name: "분석" }));
 
     await waitFor(() => {
-      // stage 이벤트 소비 후에도 5노드 캔버스 유지(상시 렌더 불변).
+      // stage 이벤트 소비 후에도 6노드 캔버스 유지(상시 렌더 불변).
       expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe(
-        "5",
+        "6",
       );
-      expect(screen.getByTestId("rf-node-4")).toBeTruthy();
+      expect(screen.getByTestId("rf-node-5")).toBeTruthy();
     });
   });
 

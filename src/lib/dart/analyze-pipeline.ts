@@ -180,9 +180,27 @@ export async function collectDartContext(
 }
 
 /**
+ * 웹검색 정성 단계 질의 빌드 (검색→취합 분리 복원 — 순수).
+ *
+ * 라우트가 LLM 자율 도구 루프 없이 결정론적으로 runWebSearch(query)
+ * 를 호출(고정흐름 불변). 질의는 기업명 + 관점 한글라벨 + 정성 의도어
+ * (최근 뉴스·이슈·리스크) 고정 템플릿 — DART 정량과 상보적인 정성
+ * 컨텍스트를 끌어오는 게 목적(PERSPECTIVE_LABELS 재사용, 단일 SSOT).
+ * LLM/IO 0(순수) → 8관점 fixture 단위 테스트 가능.
+ */
+export function buildWebSearchQuery(
+  corpName: string,
+  perspective: AnalysisPerspective,
+): string {
+  const perspectiveLabel = PERSPECTIVE_LABELS[perspective] || perspective;
+  return `${corpName.trim()} ${perspectiveLabel} 관련 최근 뉴스·이슈·리스크`;
+}
+
+/**
  * DART 분석 LLM 쿼리 빌드 (medigate route.ts 1529행 — 순수).
  * contextItems/annualYears/quarterlyCount 인자 폐기(고정흐름).
- * dartContext = collectDartContext 압축 텍스트, taskInstruction =
+ * dartContext = collectDartContext 압축 텍스트(+ S2: 웹검색 정성
+ * 펜스 합성분 — 라우트에서 결합, 시그니처 불변), taskInstruction =
  * dartPrompts.getTaskInstruction(perspective).
  */
 export function buildDartAnalysisQuery(

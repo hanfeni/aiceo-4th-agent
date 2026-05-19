@@ -9,11 +9,11 @@ import type { ReactNode } from "react";
 // 최소 모킹(ReactFlow → nodes 개수 div + onNodeClick 트리거 버튼,
 // Background → null, Position/MarkerType → 객체 stub)하여 컴포넌트
 // 계약만 검증한다:
-//   (a) stageStates 무관 항상 DART_STAGE_NODES 5개 노드를 ReactFlow 에 전달
+//   (a) stageStates 무관 항상 DART_STAGE_NODES 6개 노드를 ReactFlow 에 전달
 //   (b) 노드 클릭 → onStageClick(숫자 stage id) 호출
 //
 // 매핑:
-//   - D14b 노드-엣지 시각화 (5단계 = SseEvent stage 1..5 1:1)
+//   - 노드-엣지 시각화 (6단계 = SseEvent stage 1..6 1:1, 웹검색 삽입)
 //   - 노드 클릭 → onStageClick(stage) (D14c 입출력 패널 연동)
 // SSE 통합(DartAnalyzeView)은 D14d 범위 — 여기서 미검증.
 
@@ -68,41 +68,42 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. 항상 5개 노드 전달 (stageStates 무관)
+// 1. 항상 6개 노드 전달 (stageStates 무관 — 웹검색 단계 삽입)
 // ---------------------------------------------------------------------------
-describe("DartPipelineGraph — DART_STAGE_NODES 5개 노드 렌더", () => {
-  it("stageStates={} (전부 idle) 일 때 ReactFlow 에 노드 5개 전달", () => {
+describe("DartPipelineGraph — DART_STAGE_NODES 6개 노드 렌더", () => {
+  it("stageStates={} (전부 idle) 일 때 ReactFlow 에 노드 6개 전달", () => {
     render(<DartPipelineGraph stageStates={{}} />);
     const rf = screen.getByTestId("rf");
-    expect(rf.getAttribute("data-node-count")).toBe("5");
+    expect(rf.getAttribute("data-node-count")).toBe("6");
     expect(rf.getAttribute("data-node-count")).toBe(
       String(DART_STAGE_NODES.length),
     );
   });
 
-  it("일부 stage 상태가 주어져도 노드는 항상 5개 (상태는 색만 구동)", () => {
+  it("일부 stage 상태가 주어져도 노드는 항상 6개 (상태는 색만 구동)", () => {
     const states: Record<number, StageStatus> = {
       1: "done",
       2: "running",
       4: "error",
     };
     render(<DartPipelineGraph stageStates={states} />);
-    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("6");
   });
 
-  it("전 단계 done 이어도 노드는 5개 유지", () => {
+  it("전 단계 done 이어도 노드는 6개 유지", () => {
     const allDone: Record<number, StageStatus> = {
       1: "done",
       2: "done",
       3: "done",
       4: "done",
       5: "done",
+      6: "done",
     };
     render(<DartPipelineGraph stageStates={allDone} />);
-    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("6");
   });
 
-  it("노드 id 가 DART_STAGE_NODES stage 와 1:1 (1..5 문자열 id)", () => {
+  it("노드 id 가 DART_STAGE_NODES stage 와 1:1 (1..6 문자열 id)", () => {
     render(<DartPipelineGraph stageStates={{}} />);
     for (const meta of DART_STAGE_NODES) {
       expect(
@@ -129,7 +130,7 @@ describe("DartPipelineGraph — 노드 클릭 → onStageClick(stage:number)", (
     expect(typeof onStageClick.mock.calls[0][0]).toBe("number");
   });
 
-  it("각 노드 클릭이 해당 숫자 stage 로 콜백한다 (1..5 전수)", () => {
+  it("각 노드 클릭이 해당 숫자 stage 로 콜백한다 (1..6 전수)", () => {
     const onStageClick = vi.fn();
     render(
       <DartPipelineGraph stageStates={{}} onStageClick={onStageClick} />,
@@ -138,7 +139,7 @@ describe("DartPipelineGraph — 노드 클릭 → onStageClick(stage:number)", (
       fireEvent.click(screen.getByTestId(`rf-node-${meta.stage}`));
     }
     expect(onStageClick.mock.calls.map((c) => c[0])).toEqual([
-      1, 2, 3, 4, 5,
+      1, 2, 3, 4, 5, 6,
     ]);
   });
 

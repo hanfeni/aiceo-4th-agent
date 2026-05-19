@@ -1,13 +1,16 @@
 /**
- * DART 고정 파이프라인 5단계 노드 메타 (순수 상수 — D14b).
+ * DART 고정 파이프라인 6단계 노드 메타 (순수 상수 — D14b + 웹검색).
  *
  * 교육용 노드-엣지 시각화의 정적 정의. React Flow 의존 0(순수
  * 데이터 — 단위 테스트 가능, LLM/IO 0). DartPipelineGraph 가 이
  * 상수 + 런타임 stage 상태(SseEvent stage 이벤트)로 노드를 구동.
  *
- * stage 번호는 SseEvent {type:"stage", stage:1..5} 와 1:1(D14a).
- * stage 4(OpenAI 8관점 분석)는 emphasis:true — 교육생이 "AI가
- * 여기서 일한다"를 인지하도록 시각 강조(사용자 HITL).
+ * stage 번호는 SseEvent {type:"stage", stage:1..6} 와 1:1.
+ * emphasis:true 단계 = AI 작동 단계(교육 시각 강조 — 사용자 HITL):
+ *  - stage 4(웹검색 정성): runWebSearch 내부가 OpenAI web_search 로
+ *    N검색·요약(answer=마크다운). 결정론적 호출이나 LLM 산출이라 강조.
+ *  - stage 5(OpenAI 8관점 분석): 메인 합성 LLM.
+ * 둘 다 출력이 LLM 요약 마크다운 → DartStagePanel 이 ChatMarkdown 렌더.
  */
 
 /** 단계 진행 상태 (SseEvent stage.status + 미시작 'idle') */
@@ -40,7 +43,7 @@ export interface DartStageNodeMeta {
   emphasis: boolean;
 }
 
-/** 고정 파이프라인 5단계 (라우트 emit 순서와 동일) */
+/** 고정 파이프라인 6단계 (라우트 emit 순서와 동일 — 4 웹검색 삽입) */
 export const DART_STAGE_NODES: readonly DartStageNodeMeta[] = [
   {
     stage: 1,
@@ -61,13 +64,25 @@ export const DART_STAGE_NODES: readonly DartStageNodeMeta[] = [
     emphasis: false,
   },
   {
+    // 웹검색 정성 단계 — DART 정량과 상보(검색→취합 분리 복원).
+    // emphasis:true — runWebSearch 내부가 OpenAI(web_search)로 N검색을
+    // 요약(answer=output_text 마크다운). 교육생 관점 "AI 작동 단계"라
+    // 하이라이팅(사용자 HITL). 출력도 LLM 요약 마크다운 → ChatMarkdown.
     stage: 4,
-    label: "OpenAI 8관점 분석",
-    hint: "AI 단계 — system+분석쿼리 프롬프트로 리포트 생성",
+    label: "웹검색 (정성)",
+    hint: "AI 단계 — 최근 뉴스·이슈·리스크 웹검색·요약(실패 시 graceful)",
     emphasis: true,
   },
   {
+    // 기존 stage 4 → 5 재번호. emphasis 유지(유일한 메인 LLM 단계).
     stage: 5,
+    label: "OpenAI 8관점 분석",
+    hint: "AI 단계 — DART 정량 + 웹 정성 종합 리포트 생성",
+    emphasis: true,
+  },
+  {
+    // 기존 stage 5 → 6 재번호.
+    stage: 6,
     label: "완료",
     hint: "분석 리포트 스트리밍 종료",
     emphasis: false,
