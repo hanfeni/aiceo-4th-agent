@@ -74,3 +74,27 @@ corp_cls corp_code corp_name flr_nm rcept_dt rcept_no report_nm rm stock_code
 
 subagent 사고채널 메타(`langgraph_node`/subagent_type 런타임 라벨)는
 D6 에서 실측해 이 파일에 append.
+
+---
+
+## D11 R8 실측 — R5 책임 이전 (고정흐름 재설계, 2026-05-19)
+
+> probe: scripts/dart-route-r5-probe.mts / 로그: /tmp/dart-route-r5-probe.jsonl
+> 실 OpenAI + 실 DART API (D8 과금 승인 범위). 삼성전자/financial_health.
+
+OPEN-3(subagent 사고채널 메타)는 고정흐름 재설계로 **무효화**(subagent
+경로 폐기 — D9). R5 책임이 "전용 라우트 chunkText 가 model.stream()
+AIMessageChunk 에서 reasoning 보간 0"으로 이전. 실측 결과:
+
+- collectDartContext 실동작: 삼성전자 corp_code=00126380 식별,
+  DART OpenAPI 2021~2025 재무 수집(매출 279.6조 등) → 압축 텍스트.
+  OPEN-3 의 "subagent 위임 안 됨" 문제가 고정 라우트로 완전 해소.
+- **R5 실측 PASS**: 실제 OpenAI 스트림 chunks=3532, blockTypes=
+  ["reasoning","text"], **reasoning 블록 1085개** 흘림(gpt-5 Responses
+  API). 그러나 chunkText 결과 body(4111자)엔 분석 본문만 — reasoning
+  텍스트 0건. chunkText 가 1085 reasoning 블록 전수 차단. R5/FR-26
+  무손상(architect "라우트 인코더 reasoning 분리" 설계 입증).
+- model.ts 주석 검증: contentShapes=["array"] — gpt-5 Responses API
+  는 content 항상 블록배열(string 아님). 초기 빈 배열 청크 정상
+  (text/reasoning 은 이후 청크). chunkText 의 array 분기가 실경로.
+- 결론: 고정흐름(전용 라우트) = medigate 동형 동작 + R5 무손상 확정.
