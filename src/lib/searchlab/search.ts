@@ -17,6 +17,39 @@ import { DOMAIN_SPEC, type SearchDomain } from "./domains";
 export type SearchMode = "lexical" | "vector" | "hybrid";
 export type HybridMethod = "default" | "rrf";
 
+/**
+ * 렉시컬(BM25) 필드 가중치 프리셋 — 교육용.
+ *
+ * BM25 multi_match 는 필드별 boost(^N)로 "어느 필드 매칭을 더
+ * 중요하게 볼지"를 조절한다. 같은 질의·같은 인덱스라도 타이틀
+ * 가중을 키우면 제목에 키워드가 박힌 문서가, 본문 가중을 키우면
+ * 본문에서 풍부히 언급된 문서가 상위로 온다 — 학생이 칩을 바꿔
+ * 검색 순위가 뒤집히는 걸 직접 본다(하이브리드 default/rrf 칩과
+ * 동일한 교육 메커니즘). ngram 필드는 부분일치 보조 가중.
+ */
+export type LexicalPreset = "balanced" | "title" | "body";
+
+export const LEXICAL_PRESETS: Record<
+  LexicalPreset,
+  { label: string; desc: string; fields: string[] }
+> = {
+  balanced: {
+    label: "균형 (타이틀 ×3)",
+    desc: "타이틀 ×3 · 본문 ×1 — 기본값",
+    fields: ["title^3", "title.ngram^1.5", "body", "body.ngram^0.5"],
+  },
+  title: {
+    label: "타이틀 중심 (×6)",
+    desc: "타이틀 ×6 · 본문 ×1 — 제목 키워드 강조",
+    fields: ["title^6", "title.ngram^3", "body", "body.ngram^0.5"],
+  },
+  body: {
+    label: "본문 중심 (×3)",
+    desc: "타이틀 ×1 · 본문 ×3 — 본문 다빈도 강조",
+    fields: ["title", "title.ngram^0.5", "body^3", "body.ngram^1.5"],
+  },
+};
+
 export interface SearchHit {
   doc_id: string;
   /** 청크 순번(doc 내). 청킹 OFF 면 0. UI 가 "문서#청크" 표기. */
@@ -35,6 +68,8 @@ export interface SearchParams {
   mode: SearchMode;
   /** mode==="hybrid" 일 때만 */
   hybridMethod?: HybridMethod;
+  /** mode==="lexical" 일 때만. 미지정 시 balanced(기존 기본값). */
+  lexicalPreset?: LexicalPreset;
   topK?: number;
 }
 
@@ -45,15 +80,20 @@ function snippet(body: string): string {
   return body.replace(/\s+/g, " ").slice(0, SNIPPET_LEN).trim();
 }
 
-/** 렉시컬: Nori + ngram multi_match */
-function lexicalQuery(query: string, size: number) {
+/** 렉시컬: Nori + ngram multi_match. preset 으로 필드 가중치 결정
+ *  (미지정 = balanced = 기존 기본값, 하위호환). */
+function lexicalQuery(
+  query: string,
+  size: number,
+  preset: LexicalPreset = "balanced",
+) {
   return {
     size,
     _source: ["doc_id", "chunk_id", "title", "body"],
     query: {
       multi_match: {
         query,
-        fields: ["title^3", "title.ngram^1.5", "body", "body.ngram^0.5"],
+        fields: LEXICAL_PRESETS[preset].fields,
         type: "best_fields",
         tie_breaker: 0.3,
       },
@@ -145,7 +185,10 @@ export async function search(params: SearchParams): Promise<SearchHit[]> {
   const index = DOMAIN_SPEC[domain].index;
 
   if (mode === "lexical") {
-    const hits = await runOs(index, lexicalQuery(query, topK));
+    const hits = await runOs(
+      index,
+      lexicalQuery(query, topK, params.lexicalPreset),
+    );
     return hits.map((h) => toHit(h, ["lexical"]));
   }
 

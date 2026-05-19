@@ -46,11 +46,13 @@ const DOC_COUNTS = [100, 300, 500, 1000] as const;
 // 2026-05-19: 청크 자체를 안 하는 게 기본). >0 면 토큰 단위 분할.
 const CHUNK_SIZES = [
   { v: 0, label: "안 함 (문서=1벡터)" },
-  { v: 256, label: "256토큰" },
-  { v: 512, label: "512토큰" },
+  { v: 200, label: "200토큰" },
+  { v: 500, label: "500토큰" },
   { v: 1000, label: "1000토큰" },
+  { v: 2000, label: "2000토큰" },
+  { v: 5000, label: "5000토큰" },
 ] as const;
-const CHUNK_OVERLAPS = [0, 50, 100, 200] as const;
+const CHUNK_OVERLAPS = [100, 200, 500, 1000] as const;
 
 interface IndexInfo {
   index: string;

@@ -22,8 +22,9 @@ const bodySchema = z.object({
     .enum(Object.keys(EMBED_MODELS) as [string, ...string[]])
     .optional(),
   // 청크 옵션(토큰, cl100k). 0 = 청킹 OFF(디폴트 — 문서=1벡터).
-  // 상한 4000: text-embedding 입력 한계(8191) 대비 안전 여유.
-  chunkSize: z.number().int().min(0).max(4000).optional(),
+  // 상한 5000: UI 최대 청크(5000토큰) 허용. text-embedding 입력
+  // 한계(8191) 내라 임베딩 안전(여유 3191).
+  chunkSize: z.number().int().min(0).max(5000).optional(),
   chunkOverlap: z.number().int().min(0).max(1000).optional(),
 });
 

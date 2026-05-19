@@ -2,6 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { AccessDiagram } from "./AccessDiagram";
+import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 
 /**
  * ComparePanels — RAG / Text-to-SQL / GraphRAG 결과를 3열로.
@@ -180,16 +181,14 @@ function Panel({
       )}
 
       {st.answer && (
-        <div
-          style={{
-            fontSize: 12,
-            lineHeight: 1.6,
-            color: "var(--text-default)",
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {st.answer}
-        </div>
+        // 챗·DART 와 동일한 공통 마크다운 모듈(ChatMarkdown) 재사용.
+        // raw pre-wrap 출력 시 **굵게**·-목록 등이 리터럴로 노출되던
+        // 문제 해결 + rehypeRaw→rehypeSanitize 보안 체인 공통 적용.
+        // className 으로 패널 톤(12px)만 오버라이드(사용자 결정).
+        <ChatMarkdown
+          content={st.answer}
+          className="text-xs leading-relaxed [&]:text-[var(--text-default)]"
+        />
       )}
 
       {st.status === "error" && st.error && (

@@ -18,6 +18,7 @@ const bodySchema = z.object({
   query: z.string().min(1).max(500),
   mode: z.enum(["lexical", "vector", "hybrid"]),
   hybridMethod: z.enum(["default", "rrf"]).optional(),
+  lexicalPreset: z.enum(["balanced", "title", "body"]).optional(),
   topK: z.number().int().min(1).max(50).optional(),
   ragTopK: z.number().int().min(1).max(10).optional(),
 });
