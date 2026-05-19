@@ -365,13 +365,12 @@ export function ThinkingPanel({
   // 토글 열람이라 outputting 무관 — 항상 표시.
   if (streaming && outputting) return null;
 
-  // 스트리밍 중에는 순환 레이블이 정적 문구를 대체(첫 tick 전 빈
-  // 문자열이면 정적 폴백 — 깜빡임 방지). 완료 후엔 기존 문구.
-  const label = streaming
-    ? cyclingLabel || (open ? "답변 과정 (진행 중)" : "답변 과정 보는 중")
-    : open
-      ? "답변 과정"
-      : "답변 과정 보기";
+  // 스트리밍 중에는 순환 레이블이 라벨을 대체. 첫 tick 전(훅이
+  // 아직 값 없음)엔 '(진행 중)' 같은 표현이 깜빡이지 않도록
+  // 정적 폴백을 완료 후와 동일 톤 '답변 과정'으로 통일(사용자
+  // 보고 — '(진행 중)' 깜빡임 제거). 훅은 빈 문자열을 절대
+  // 반환 안 하므로(useThinkingLabelCycler) 폴백은 첫 80ms 만.
+  const label = streaming ? cyclingLabel || "답변 과정" : "답변 과정";
 
   return (
     <div style={{ width: "100%" }}>
