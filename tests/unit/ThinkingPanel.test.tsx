@@ -191,24 +191,47 @@ describe("ThinkingPanel — I/O FoldableValue (간단 표기 + 클릭 확장)", 
   });
 });
 
-describe("ThinkingPanel — Slice M 출력 중 동적 게이트(outputting)", () => {
+describe("ThinkingPanel — 출력 중 접힘 고정(outputting, return null 폐기)", () => {
+  // 명세 변경(사용자 보고): 옛 동작은 outputting 중 'return null'로
+  // 패널 제거 → outputting 토큰 흐름 중 true↔false 왕복해 패널
+  // 깜빡·답변 텍스트 레이아웃 시프트. 새 동작: 사라지지 않고 접힌
+  // 헤더만 자리 유지 + 토글 비활성("폴딩 상태에서 열기 불가").
   const steps = [reasoning("질문 분석 중", "사고 본문", 0)];
 
-  it("스트리밍 중 + outputting=true → 패널 미표시(출력 중 숨김)", () => {
+  it("스트리밍 중 + outputting=true → 패널 사라지지 않음(헤더 존재)", () => {
     const { container } = render(
       <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
     );
-    expect(container.firstChild).toBeNull();
+    // return null 폐기 — 컨테이너·토글 버튼 존재(레이아웃 자리 유지).
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.getByRole("button")).toBeTruthy();
   });
 
-  it("스트리밍 중 + outputting=false → 패널 표시(사고/도구 진행 중)", () => {
+  it("outputting=true → 접힌 상태(사고 본문 미노출 — open=false 강제)", () => {
+    render(
+      <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
+    );
+    // 접힘이라 step 본문/제목은 안 보임(헤더만). autoOpen 무시.
+    expect(screen.queryByText("사고 본문")).toBeNull();
+  });
+
+  it("outputting=true → 토글 버튼 비활성(열기 불가)", () => {
+    render(
+      <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
+    );
+    // jest-dom 미사용 프로젝트 — 표준 DOM 속성으로 검증.
+    const btn = screen.getByRole("button") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("스트리밍 중 + outputting=false → 펼침 표시(사고/도구 진행 중)", () => {
     render(
       <ThinkingPanel steps={steps} streaming={true} outputting={false} />,
     );
     expect(screen.getByText("질문 분석 중")).toBeTruthy();
   });
 
-  it("outputting 미전달 시 기본 false — 기존 동작 호환(표시)", () => {
+  it("outputting 미전달 시 기본 false — 펼침(기존 동작 호환)", () => {
     render(<ThinkingPanel steps={steps} streaming={true} />);
     expect(screen.getByText("질문 분석 중")).toBeTruthy();
   });
@@ -221,15 +244,18 @@ describe("ThinkingPanel — Slice M 출력 중 동적 게이트(outputting)", ()
     expect(screen.getByRole("button")).toBeTruthy();
   });
 
-  it("출력 중(true)→사고 재개(false) 전이 시 패널이 다시 나타난다", () => {
+  it("출력 중(true)→사고 재개(false) 전이: 깜빡 없이 접힘→펼침", () => {
     const { container, rerender } = render(
       <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
     );
-    expect(container.firstChild).toBeNull(); // 출력 중 숨김
+    // 출력 중에도 컨테이너 유지(사라지지 않음 — 레이아웃 시프트 0).
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.queryByText("사고 본문")).toBeNull(); // 접힘
     rerender(
       <ThinkingPanel steps={steps} streaming={true} outputting={false} />,
     );
-    expect(screen.getByText("질문 분석 중")).toBeTruthy(); // 재표시
+    // 사고 재개 → 펼침(제거→재생성 아닌 접힘→펼침 전이).
+    expect(screen.getByText("질문 분석 중")).toBeTruthy();
   });
 });
 

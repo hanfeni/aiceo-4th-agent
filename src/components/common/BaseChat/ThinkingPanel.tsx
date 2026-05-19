@@ -385,8 +385,13 @@ export function ThinkingPanel({
   // userToggled === null → 자동(스트리밍 중 펼침, 완료 접힘).
   // userToggled === bool → 사용자 의도 우선(medigate manualExpand).
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
-  const autoOpen = streaming && hasAny;
-  const open = userToggled ?? autoOpen;
+  // 답변 토큰 출력 중(outputting)엔 강제 접힘 — 패널을 제거하지
+  // 않고(레이아웃 시프트 0) 접힌 헤더만 자리 유지, 토글 비활성
+  // (사용자 요구: '사라지는 게 아니라 폴딩 상태에서 열기 불가').
+  // 사고/도구 재개되면 outputting=false → 다시 자동 펼침(동적).
+  const streamOutputting = streaming && outputting;
+  const autoOpen = streaming && hasAny && !streamOutputting;
+  const open = streamOutputting ? false : (userToggled ?? autoOpen);
   const userControlled = userToggled !== null;
 
   // 스트리밍 중에는 토글을 완전히 비활성(사용자 결정): 실시간엔 자동
@@ -447,12 +452,12 @@ export function ThinkingPanel({
   // (모든 훅 호출 이후에 early return — rules-of-hooks 준수.)
   if (!hasAny && !streaming) return null;
 
-  // Slice M — 출력 중 숨김(사용자 규칙: 답변 본문 토큰이 흐르는
-  // 동안엔 사고 패널을 노출하지 않음). 스트리밍 중 + outputting
-  // 일 때만 숨긴다. 출력이 멈추고 사고/도구가 재개되면 outputting
-  // 이 false 가 돼 다시 표시(동적). 완료 후(streaming=false)엔
-  // 토글 열람이라 outputting 무관 — 항상 표시.
-  if (streaming && outputting) return null;
+  // (이전 Slice M "출력 중 return null 숨김" 폐기 — 사용자 보고:
+  //  outputting 이 토큰 흐름 중 true↔false 왕복해 패널이 깜빡이고
+  //  답변 텍스트가 위아래 점프(레이아웃 시프트). 이제 제거 대신
+  //  open=false 강제(streamOutputting)로 접힌 헤더만 자리 유지 +
+  //  토글 비활성 → 레이아웃 안정. 사용자 요구: '사라지는 게 아니라
+  //  폴딩 상태에서 열기 불가'.)
 
   // 스트리밍 중에는 순환 레이블이 라벨을 대체. 첫 tick 전(훅이
   // 아직 값 없음)엔 '(진행 중)' 같은 표현이 깜빡이지 않도록
