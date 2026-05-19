@@ -248,23 +248,26 @@ export function ThinkingPanel({
 
   // 실시간 뷰: 스트리밍 중 + 사용자 미조작 → 마지막 step 만(리플레이스).
   // 히스토리 뷰: 완료 또는 사용자 토글 → 전체 step 누적.
+  // 라이브 중에는 마지막 step 만 노출(교차 보존은 히스토리 뷰에서).
   const liveMode = streaming && !userControlled;
   const visibleSteps =
     liveMode && hasAny ? [steps[steps.length - 1]] : steps;
 
-  // 진행 중 정적 "진행 중…" 대신 타이핑 순환 레이블(medigate 모방).
-  // 훅은 조건부 호출 불가 → early return 보다 위에서 호출(rules-of-hooks).
-  // liveMode 를 isActive 로 넘겨 비활성 시 타이머만 끈다(Slice B 설계).
-  const cyclingLabel = useThinkingLabelCycler(liveMode);
+  // 상단 토글 라벨을 스트리밍 중 타이핑 순환 문구로 대체(medigate
+  // StreamingView 타이틀 위치 모방). 패널이 접혀 있어도 보이는 위치라
+  // "작동 중" 신호 전달이 하단보다 효과적. 훅은 조건부 호출 불가 →
+  // early return 보다 위에서 호출(rules-of-hooks). streaming 자체를
+  // isActive 로 — 사용자가 수동 토글해도 순환 유지(liveMode 아님).
+  const cyclingLabel = useThinkingLabelCycler(streaming);
 
   // 토글 영속: step 이 한 번이라도 생기면 streaming 무관 표시.
   // (모든 훅 호출 이후에 early return — rules-of-hooks 준수.)
   if (!hasAny && !streaming) return null;
 
+  // 스트리밍 중에는 순환 레이블이 정적 문구를 대체(첫 tick 전 빈
+  // 문자열이면 정적 폴백 — 깜빡임 방지). 완료 후엔 기존 문구.
   const label = streaming
-    ? open
-      ? "답변 과정 (진행 중)"
-      : "답변 과정 보는 중"
+    ? cyclingLabel || (open ? "답변 과정 (진행 중)" : "답변 과정 보는 중")
     : open
       ? "답변 과정"
       : "답변 과정 보기";
@@ -330,20 +333,6 @@ export function ThinkingPanel({
               <StepView step={s} />
             </div>
           ))}
-          {liveMode && (
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--agent-500)",
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <DotPulse />
-              <span>{cyclingLabel || "진행 중…"}</span>
-            </div>
-          )}
         </div>
       )}
     </div>
