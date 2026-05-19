@@ -27,6 +27,7 @@ interface GraphStats {
   managers: number;
   companies: number;
   owns: number;
+  positions: number;
 }
 
 // 추천 질의 — 라벨 끝 표식으로 "어느 방식이 유리한가"를 암시해
@@ -184,13 +185,17 @@ export function GraphLabView(): ReactNode {
           ]);
         else if (t === "load_done") {
           const enr = ev.enriched as number | undefined;
+          const pos = ev.positions as number | undefined;
           setBuildLog((l) => [
             ...l,
             `✓ 완료: 기관 ${ev.managers} · 종목 ${ev.companies} · 보유엣지 ${(
               ev.owns as number
             ).toLocaleString()}` +
               (enr !== undefined
-                ? ` · crowding 속성 ${enr.toLocaleString()}종목`
+                ? ` · crowding ${enr.toLocaleString()}종목`
+                : "") +
+              (pos !== undefined
+                ? ` · Position ${pos.toLocaleString()}`
                 : ""),
           ]);
         }
@@ -320,6 +325,13 @@ export function GraphLabView(): ReactNode {
                 <strong>{stats.companies.toLocaleString()}</strong> ·
                 보유엣지{" "}
                 <strong>{stats.owns.toLocaleString()}</strong>
+                {stats.positions > 0 && (
+                  <>
+                    {" "}
+                    · 포지션노드{" "}
+                    <strong>{stats.positions.toLocaleString()}</strong>
+                  </>
+                )}
               </span>
             ) : (
               <span>아직 그래프가 없습니다. 버튼을 눌러 구축하세요.</span>

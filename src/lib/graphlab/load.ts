@@ -11,7 +11,7 @@
  */
 
 import { runCypher, getNeo4jDriver } from "./client";
-import { subsetUrl, GRAPH_SCHEMA } from "./config";
+import { subsetUrl, GRAPH_SCHEMA, POSITION_TOP_N } from "./config";
 
 export type LoadEvent =
   | { type: "load"; phase: string; text: string }
@@ -23,6 +23,8 @@ export type LoadEvent =
       owns: number;
       /** crowding 속성이 부여된 Company 수(top_issuers 매칭분) */
       enriched?: number;
+      /** 적재된 Position 중간 노드 수(인기 상위 N종목 한정) */
+      positions?: number;
     }
   | { type: "load_error"; message: string };
 
@@ -33,6 +35,9 @@ export interface HoldingRow {
   issuer: string;
   valueUsdK: number;
   shares: number;
+  /** 옵션 포지션 구분: ""=현물(SH) / "Call" / "Put"
+   *  (웹 사례: 옵션 보유만 따로 질의 — Position 노드 속성). */
+  putCall: string;
 }
 /** managers 1행 (노드 속성) */
 export interface ManagerRow {
@@ -158,6 +163,7 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
     issuer: r[2],
     valueUsdK: Number(r[3]) || 0,
     shares: Number(r[4]) || 0,
+    putCall: (r[6] ?? "").trim(),
   }));
   yield {
     type: "load",
@@ -232,6 +238,48 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
            c.total_value_k = r.totalValueK`,
       { rows: topIssuers },
     );
+
+    // ── #2c Position 중간 노드 (인기 상위 N종목 한정) ────
+    // Neo4j 공식 mutual-fund 패턴: (Manager)-[HOLDS]->
+    // (Position {value,shares,put_call})-[OF]->(Company).
+    // 포지션 자체 질의(옵션만 보유 등) 가능. 사용자 결정:
+    // holder_count 상위 N종목만(데이터량↓, 노드 종류 유지).
+    // crowding 속성이 그래프 진실원 → Neo4j 에서 상위 cusip
+    // 집합을 구해 JS 필터(배치 UNWIND 와 정합).
+    yield { type: "load", phase: "positions", text: `Position 중간 노드 적재(인기 상위 ${POSITION_TOP_N}종목)…` };
+    const topCusipRows = (await runCypher(
+      `MATCH (c:${GRAPH_SCHEMA.companyLabel})
+       WHERE c.holder_count IS NOT NULL
+       RETURN c.cusip AS cusip
+       ORDER BY c.holder_count DESC LIMIT $n`,
+      { n: POSITION_TOP_N },
+    )) as { cusip: string }[];
+    const topSet = new Set(topCusipRows.map((r) => r.cusip));
+    const posRows = holdings.filter((h) => topSet.has(h.cusip));
+    const PBATCH = 5000;
+    for (let i = 0; i < posRows.length; i += PBATCH) {
+      const chunk = posRows.slice(i, i + PBATCH);
+      // (accession,cusip) MERGE — 같은 기관·종목 여러 로트는
+      // Position 1개로 합치되 value/shares 는 합산(로트 손실 X).
+      await runCypher(
+        `UNWIND $rows AS r
+         MATCH (m:${GRAPH_SCHEMA.managerLabel} {accession: r.accession})
+         MATCH (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
+         MERGE (m)-[:${GRAPH_SCHEMA.holdsRel}]->
+               (p:${GRAPH_SCHEMA.positionLabel} {accession: r.accession, cusip: r.cusip})
+         MERGE (p)-[:${GRAPH_SCHEMA.ofRel}]->(c)
+         ON CREATE SET p.value_usd_k = r.valueUsdK, p.shares = r.shares,
+                       p.put_call = r.putCall
+         ON MATCH SET p.value_usd_k = p.value_usd_k + r.valueUsdK,
+                      p.shares = p.shares + r.shares`,
+        { rows: chunk },
+      );
+      yield {
+        type: "load_progress",
+        done: Math.min(i + PBATCH, posRows.length),
+        total: posRows.length,
+      };
+    }
   } catch (e) {
     yield { type: "load_error", message: e instanceof Error ? e.message : String(e) };
     return;
@@ -249,12 +297,17 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
      WHERE c.holder_count IS NOT NULL
      RETURN count(c) AS enriched`,
   )) as { enriched?: number }[];
+  // 적재된 Position 노드 수(UI 보고용)
+  const [{ positions = 0 } = {}] = (await runCypher(
+    `MATCH (p:${GRAPH_SCHEMA.positionLabel}) RETURN count(p) AS positions`,
+  )) as { positions?: number }[];
 
   yield {
     type: "load_done",
     managers: managers.length,
     companies,
     enriched,
+    positions,
     owns: holdings.length,
   };
 }
@@ -264,19 +317,26 @@ export async function graphStats(): Promise<{
   managers: number;
   companies: number;
   owns: number;
+  positions: number;
 } | null> {
   try {
     const driver = getNeo4jDriver();
     await driver.verifyConnectivity();
-    // 3개 패턴을 한 MATCH 로 묶으면 카테시안 곱(64×11961×…)이
+    // 패턴을 한 MATCH 로 묶으면 카테시안 곱(64×11961×…)이
     // 되어 count 가 폭발한다(실측 7,985만). CALL 서브쿼리로 각
     // count 를 독립 산출 — 정확한 값.
     const [row] = (await runCypher(
       `CALL { MATCH (m:${GRAPH_SCHEMA.managerLabel}) RETURN count(m) AS managers }
        CALL { MATCH (c:${GRAPH_SCHEMA.companyLabel}) RETURN count(c) AS companies }
        CALL { MATCH ()-[o:${GRAPH_SCHEMA.ownsRel}]->() RETURN count(o) AS owns }
-       RETURN managers, companies, owns`,
-    )) as { managers: number; companies: number; owns: number }[];
+       CALL { MATCH (p:${GRAPH_SCHEMA.positionLabel}) RETURN count(p) AS positions }
+       RETURN managers, companies, owns, positions`,
+    )) as {
+      managers: number;
+      companies: number;
+      owns: number;
+      positions: number;
+    }[];
     if (!row || row.managers === 0) return null;
     return row;
   } catch {

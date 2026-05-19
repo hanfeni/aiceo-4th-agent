@@ -40,10 +40,11 @@ import "@xyflow/react/dist/style.css";
  * @xyflow 스택(라이브러리 0 추가).
  */
 
+type NodeKind = "manager" | "company" | "position";
 interface ApiNode {
   id: string;
   label: string;
-  kind: "manager" | "company";
+  kind: NodeKind;
 }
 interface ApiEdge {
   source: string;
@@ -54,12 +55,15 @@ interface Crumb {
   id: string;
   label: string;
 }
+type ViewMode = "owns" | "position";
 
 const MGR_COLOR = "var(--blue-500, #2563eb)";
 const CO_COLOR = "var(--t-warning-9, #d4a017)";
+const POS_COLOR = "var(--t-success-9, #2f9e44)";
 const SELECTED_RING = "0 0 0 3px var(--blue-300, #93c5fd)";
 
-/** 노드 배열을 2열 배치 (기관=왼쪽, 종목=오른쪽 — 보유 방향 직관).
+/** 노드를 종류별 열로 배치 — owns: 기관(좌)/종목(우) 2열,
+ *  position: 기관(좌)/포지션(중)/종목(우) 3열(보유 방향 직관).
  *  selectedId 는 링 강조(현재 펼친 중심 노드 표시). */
 function layout(
   apiNodes: ApiNode[],
@@ -68,6 +72,7 @@ function layout(
 ): { nodes: Node[]; edges: Edge[] } {
   const managers = apiNodes.filter((n) => n.kind === "manager");
   const companies = apiNodes.filter((n) => n.kind === "company");
+  const positions = apiNodes.filter((n) => n.kind === "position");
   const place = (arr: ApiNode[], x: number, color: string): Node[] =>
     arr.map((n, i) => ({
       id: n.id,
@@ -87,10 +92,19 @@ function layout(
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
     }));
-  const nodes = [
-    ...place(managers, 0, MGR_COLOR),
-    ...place(companies, 360, CO_COLOR),
-  ];
+  // position 노드가 있으면 3열(기관 0 / 포지션 320 / 종목 640),
+  // 없으면 기존 2열(기관 0 / 종목 360).
+  const hasPos = positions.length > 0;
+  const nodes = hasPos
+    ? [
+        ...place(managers, 0, MGR_COLOR),
+        ...place(positions, 320, POS_COLOR),
+        ...place(companies, 640, CO_COLOR),
+      ]
+    : [
+        ...place(managers, 0, MGR_COLOR),
+        ...place(companies, 360, CO_COLOR),
+      ];
   const edges: Edge[] = apiEdges.map((e) => ({
     id: `${e.source}->${e.target}`,
     source: e.source,
@@ -123,6 +137,8 @@ export function GraphExploreModal({
   const [path, setPath] = useState<Crumb[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // 토글: owns(2-노드) ↔ position(3-노드, Position 매개 구조).
+  const [mode, setMode] = useState<ViewMode>("owns");
 
   // 누적 그래프 → reactflow 노드/엣지 (selectedId 변할 때만 재배치).
   const { nodes, edges } = useMemo(
@@ -169,14 +185,13 @@ export function GraphExploreModal({
   );
 
   const fetchGraph = useCallback(
-    async (seed?: string) => {
+    async (seed: string | undefined, m: ViewMode) => {
       setLoading(true);
       setErr(null);
       try {
-        const url = seed
-          ? `/api/graph-lab/sample?seed=${encodeURIComponent(seed)}`
-          : "/api/graph-lab/sample";
-        const r = await fetch(url);
+        const qs = new URLSearchParams({ mode: m });
+        if (seed) qs.set("seed", seed);
+        const r = await fetch(`/api/graph-lab/sample?${qs.toString()}`);
         const d = await r.json();
         if (!r.ok) {
           setErr(d.error ?? `조회 실패 (HTTP ${r.status})`);
@@ -226,9 +241,9 @@ export function GraphExploreModal({
     (id: string, label: string) => {
       setSelectedId(id);
       setPath(advancePath(id, label));
-      void fetchGraph(id);
+      void fetchGraph(id, mode);
     },
-    [advancePath, fetchGraph],
+    [advancePath, fetchGraph, mode],
   );
 
   /** 브레드크럼 칸 클릭 → 그 노드 중심으로 되돌아가 다시 펼침. */
@@ -239,16 +254,29 @@ export function GraphExploreModal({
         const idx = p.findIndex((x) => x.id === c.id);
         return idx >= 0 ? p.slice(0, idx + 1) : p;
       });
-      void fetchGraph(c.id);
+      void fetchGraph(c.id, mode);
     },
-    [fetchGraph],
+    [fetchGraph, mode],
   );
 
   const resetToInitial = useCallback(() => {
     setSelectedId(null);
     setPath([]);
-    void fetchGraph();
-  }, [fetchGraph]);
+    void fetchGraph(undefined, mode);
+  }, [fetchGraph, mode]);
+
+  /** 토글 전환 — 다른 스키마를 섞으면 혼란 → 누적 그래프 리셋
+   *  후 새 모드 초기 구조 재로드(경로·선택도 초기화). */
+  const switchMode = useCallback(
+    (m: ViewMode) => {
+      if (m === mode) return;
+      setMode(m);
+      setSelectedId(null);
+      setPath([]);
+      void fetchGraph(undefined, m);
+    },
+    [mode, fetchGraph],
+  );
 
   // 마운트 시 1회 초기 그래프 로드. setState 는 await 경계(IIFE)
   // 뒤에서만 — effect 본문 동기 setState 금지(GraphLabView 동형).
@@ -257,7 +285,8 @@ export function GraphExploreModal({
     let alive = true;
     void (async () => {
       try {
-        const r = await fetch("/api/graph-lab/sample");
+        // 초기 로드는 owns 모드 고정(서버 기본값과 동일, 명시).
+        const r = await fetch("/api/graph-lab/sample?mode=owns");
         const d = await r.json();
         if (!alive) return;
         if (!r.ok) {
@@ -318,11 +347,55 @@ export function GraphExploreModal({
             <strong style={{ fontSize: 15, color: "var(--text-default)" }}>
               그래프 DB 구조 — SEC EDGAR 지식그래프
             </strong>
-            <button type="button" className="cf-btn" onClick={onClose}>
-              닫기
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {/* 스키마 토글 (owns ↔ position) */}
+              <div
+                role="tablist"
+                aria-label="그래프 스키마 보기 전환"
+                style={{
+                  display: "inline-flex",
+                  border: "1px solid var(--t-neutral-8, #ccc)",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  fontSize: 11.5,
+                }}
+              >
+                {(
+                  [
+                    ["owns", "2-노드 (OWNS)"],
+                    ["position", "3-노드 (Position)"],
+                  ] as [ViewMode, string][]
+                ).map(([m, lbl]) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="tab"
+                    aria-selected={mode === m}
+                    onClick={() => switchMode(m)}
+                    disabled={loading}
+                    style={{
+                      padding: "5px 12px",
+                      border: "none",
+                      cursor: loading ? "default" : "pointer",
+                      background:
+                        mode === m
+                          ? "var(--blue-500, #2563eb)"
+                          : "transparent",
+                      color:
+                        mode === m ? "white" : "var(--text-subtle)",
+                      fontWeight: mode === m ? 700 : 400,
+                    }}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="cf-btn" onClick={onClose}>
+                닫기
+              </button>
+            </div>
           </div>
-          {/* 스키마 한 줄 도해 */}
+          {/* 스키마 한 줄 도해 (mode 따라 동적) */}
           <div
             style={{
               marginTop: 12,
@@ -344,9 +417,31 @@ export function GraphExploreModal({
             >
               (:Manager) 기관
             </span>
-            <span style={{ color: "var(--text-subtle)" }}>
-              ──[:OWNS value·shares]──▶
-            </span>
+            {mode === "position" ? (
+              <>
+                <span style={{ color: "var(--text-subtle)" }}>
+                  ──[:HOLDS]──▶
+                </span>
+                <span
+                  style={{
+                    background: POS_COLOR,
+                    color: "white",
+                    padding: "5px 12px",
+                    borderRadius: 8,
+                    fontWeight: 600,
+                  }}
+                >
+                  (:Position) 포지션
+                </span>
+                <span style={{ color: "var(--text-subtle)" }}>
+                  ──[:OF]──▶
+                </span>
+              </>
+            ) : (
+              <span style={{ color: "var(--text-subtle)" }}>
+                ──[:OWNS value·shares]──▶
+              </span>
+            )}
             <span
               style={{
                 background: CO_COLOR,
@@ -365,8 +460,9 @@ export function GraphExploreModal({
                 color: "var(--text-subtle)",
               }}
             >
-              ← 기관 클릭=보유 종목 펼침 · 종목 클릭=보유 기관 펼침.
-              이 경로 탐색이 <strong>GraphRAG 멀티홉</strong>의 실체
+              {mode === "position"
+                ? "← 포지션 노드가 보유 1건을 매개(옵션/현물·가치). Neo4j 공식 패턴"
+                : "← 기관 클릭=보유 종목 펼침 · 종목 클릭=보유 기관 펼침. GraphRAG 멀티홉의 실체"}
             </span>
           </div>
 

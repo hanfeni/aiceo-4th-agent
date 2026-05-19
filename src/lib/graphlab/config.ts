@@ -63,6 +63,21 @@ export const GRAPH_SCHEMA = {
 } as const;
 
 /**
+ * Position 노드는 holder_count(인기) 상위 N개 종목에 대해서만
+ * 적재 (사용자 결정 2026-05-20: "데이터량 줄이되 노드 종류 유지").
+ *
+ * 왜 상위 N: Slice1 의 holder_count 가 곧 종목 인기도 →
+ * 인기 종목끼리는 공동보유·교집합 멀티홉이 조밀해 데모 질의가
+ * 가장 잘 동작. 임의 샘플보다 교육 효과 큼. 실측(2026-05-20):
+ * 상위 300종목 → Position ~10,266개(holder_count 32+ 종목만,
+ * 유명기관 64개 중 절반+ 보유). 강의 단순성 유지 + 경로 풍부.
+ * 전체 노드 ≈ 12,000(기관·종목) + 10,000(Position) ≈ 22,000.
+ */
+export const POSITION_TOP_N = Number(
+  process.env.GRAPH_POSITION_TOP_N ?? 300,
+);
+
+/**
  * 강의 데모용 질의 프리셋. 3방식(RAG/SQL/GraphRAG)으로 돌렸을 때
  * 결과가 극명히 갈리도록 멀티홉 의도를 담음(사용자 핵심 요구:
  * "GraphRAG 우월성 설명하기 좋은 케이스"). UI 가 칩으로 제시.
