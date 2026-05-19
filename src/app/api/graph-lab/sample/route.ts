@@ -39,6 +39,21 @@ interface GEdge {
 
 type Mode = "owns" | "position";
 
+/** 보유가치(USD) → 사람이 읽는 규모 ($1.2B / $340M).
+ *  Position 라벨에서 보유 규모를 한눈에 보이게(엔티티 식별용).
+ *
+ * 실측 확정(2026-05-20): SEC 원본 컬럼명은 value_usd_thousands
+ * 지만 실제 단위는 그냥 USD다. value/shares = 종목 주당가격이
+ * 현실값($517≈MS주가)으로 일정 → 천 단위면 주가가 ×1000 폭발.
+ * 따라서 ×1000 하지 않는다(이전 버전 표시 버그 정정 — 데이터·
+ * 적재·MERGE 는 정상이고 표시 변환만 틀렸었음). */
+function fmtUsd(usd: number): string {
+  if (usd >= 1e9) return `$${(usd / 1e9).toFixed(1)}B`;
+  if (usd >= 1e6) return `$${(usd / 1e6).toFixed(0)}M`;
+  if (usd >= 1e3) return `$${(usd / 1e3).toFixed(0)}K`;
+  return `$${usd.toFixed(0)}`;
+}
+
 /** OWNS 모드 행 → {mid,mname,cid,cname} 평면 행 */
 async function ownsRows(seed: string | null): Promise<Record<string, unknown>[]> {
   if (!seed) {
@@ -82,6 +97,7 @@ async function positionRows(
 ): Promise<Record<string, unknown>[]> {
   const ret = `RETURN m.accession AS mid, m.name AS mname,
               p.accession AS pa, p.cusip AS pc, p.put_call AS pput,
+              p.value_usd_k AS pval, p.shares AS psh,
               c.cusip AS cid, c.name AS cname`;
   if (!seed) {
     // 초기 뷰: Position 보유 최다 종목 6개 + 그 Position·기관
@@ -183,10 +199,18 @@ export async function GET(req: Request): Promise<Response> {
             kind: "manager",
           });
         if (!nodeMap.has(pid)) {
+          // Position 은 "어느 종목을 얼마나(어떤 성격으로) 보유"
+          // 가 곧 정체성 → 라벨에 종목명·규모·옵션구분을 담아
+          // 식별 가능한 엔티티로(Manager=기관명, Company=종목명
+          // 과 대칭). put_call 빈값=현물, 'Call'/'Put'=옵션.
           const pc = (r.pput as string) || "";
+          const cname = (r.cname as string) ?? (r.cid as string);
+          const kind = pc || "현물";
           nodeMap.set(pid, {
             id: pid,
-            label: pc ? `포지션 (${pc})` : "포지션",
+            label: `${cname} · ${kind} · ${fmtUsd(
+              Number(r.pval) || 0,
+            )}`,
             kind: "position",
           });
         }
