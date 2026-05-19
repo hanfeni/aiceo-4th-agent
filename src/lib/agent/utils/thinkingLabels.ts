@@ -1,5 +1,6 @@
 import { currentTimeToolDisplayName } from "@/lib/agent/harness/tools/exampleTool";
 import { webSearchToolDisplayName } from "@/lib/agent/harness/tools/webSearchTool";
+import { webSearcherSubagentDisplayName } from "@/lib/agent/harness/subagents/webSearcher";
 
 /**
  * 사고 패널 한글 안내문구 생성 — 순수 함수(LLM/React 무관, NFR-11).
@@ -36,6 +37,37 @@ export function toolDisplayName(name: string): string {
 }
 
 /**
+ * subagent_type → 한글 표시명(Slice J). deepagents 는 subagent 를
+ * `task` 도구의 args.subagent_type 으로 흘린다(실측 index.js:2304).
+ * 새 subagent 는 그 파일에 *DisplayName 추가 + 여기 1줄 등록
+ * (FR-08, 도구 패턴과 동일). 미매핑은 subagent_type 원본 폴백.
+ */
+const SUBAGENT_DISPLAY_NAMES: Record<string, string> = {
+  "web-searcher": webSearcherSubagentDisplayName,
+};
+
+/** task args(JSON 문자열)에서 subagent_type 한글 라벨 추출. 실패 시 null. */
+function subagentLabelFromArgs(args: string | undefined): string | null {
+  if (!args) return null;
+  try {
+    const parsed: unknown = JSON.parse(args);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "subagent_type" in parsed
+    ) {
+      const t = (parsed as { subagent_type?: unknown }).subagent_type;
+      if (typeof t === "string" && t.length > 0) {
+        return SUBAGENT_DISPLAY_NAMES[t] ?? t;
+      }
+    }
+  } catch {
+    // 스트리밍 중 불완전 JSON — 이름 없이 폴백(호출부에서 처리).
+  }
+  return null;
+}
+
+/**
  * reasoning step 제목. order 0 은 '질문 분석', 이후는 '결과 분석'.
  * 진행 중이면 '… 중' 접미사(완료 시 제거 — medigate-new 규칙).
  */
@@ -45,9 +77,25 @@ export function reasoningTitle(order: number, done: boolean): string {
 }
 
 /**
- * tool step 제목. '{한글라벨} 도구 실행 중' → 완료 '{한글라벨} 도구 완료'.
+ * tool step 제목.
+ *  - name="task"(deepagents subagent 위임): args.subagent_type 으로
+ *    '{한글라벨} 에이전트 실행 중' → 완료 '… 에이전트 완료'
+ *    (medigate-new agentName 동형). args 불완전·미전달이면 이름 없이
+ *    '에이전트 실행 중/완료'.
+ *  - 그 외 일반 도구: '{한글라벨} 도구 실행 중' → 완료 '… 도구 완료'.
+ *
+ * args 는 옵셔널 — task 표현에만 쓰인다(일반 도구는 무시).
  */
-export function toolTitle(name: string, done: boolean): string {
+export function toolTitle(
+  name: string,
+  done: boolean,
+  args?: string,
+): string {
+  if (name === "task") {
+    const label = subagentLabelFromArgs(args);
+    const head = label !== null ? `${label} 에이전트` : "에이전트";
+    return done ? `${head} 완료` : `${head} 실행 중`;
+  }
   const label = toolDisplayName(name);
   return done ? `${label} 도구 완료` : `${label} 도구 실행 중`;
 }

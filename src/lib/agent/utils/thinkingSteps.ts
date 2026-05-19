@@ -132,21 +132,24 @@ export function reduceToolCall(
       const s = steps[idx];
       if (s.kind !== "tool") return steps;
       const nextName = delta.name || s.name;
+      const nextArgs = s.args + delta.args;
       const updated: ThinkingStep = {
         ...s,
         name: nextName,
         // 진행 중 제목 갱신(완료 전 — toolResult 가 '완료'로 바꿈).
-        title: toolTitle(nextName, false),
-        args: s.args + delta.args,
+        // args 누적분 전달 → task 는 subagent_type 완성되면 제목 수렴.
+        title: toolTitle(nextName, false, nextArgs),
+        args: nextArgs,
       };
       return steps.slice(0, idx).concat(updated, steps.slice(idx + 1));
     }
     // Slice E — 새 id 는 무조건 새 step(동일 도구 그룹화 폐기).
     // 검색마다 독립 step → 각자 IN/OUT/elapsed 를 가진다.
     // 제목은 한글 안내문구('{한글라벨} 도구 실행 중' — medigate-new).
+    // task 면 args.subagent_type 으로 '… 에이전트 실행 중'(Slice J).
     return steps.concat({
       kind: "tool",
-      title: toolTitle(delta.name, false),
+      title: toolTitle(delta.name, false, delta.args),
       id: delta.id,
       name: delta.name,
       args: delta.args,
@@ -194,12 +197,13 @@ export function reduceToolResult(
   if (s.kind !== "tool") return steps;
   const elapsedMs =
     s.startedAt !== undefined ? Math.max(0, now - s.startedAt) : undefined;
-  // 완료 → 제목을 '{한글라벨} 도구 완료'로 전환(medigate-new 규칙).
+  // 완료 → 제목을 '… 도구 완료'(task 면 '… 에이전트 완료')로 전환.
+  // s.args(완성된 args) 전달 → task subagent_type 라벨 보존(Slice J).
   const updated: ThinkingStep = {
     ...s,
     result,
     elapsedMs,
-    title: toolTitle(s.name, true),
+    title: toolTitle(s.name, true, s.args),
   };
   return steps.slice(0, idx).concat(updated, steps.slice(idx + 1));
 }
