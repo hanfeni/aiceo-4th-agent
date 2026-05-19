@@ -249,3 +249,164 @@ describe("교차 통합 — 회귀 가드 (사고→도구→사고→도구 순
     ]);
   });
 });
+
+// ── Slice A: elapsed 측정 (clock 주입) ──────────────────────────────
+// deepagents/LangGraph 는 서버 elapsed 를 안 줌 → reducer 가 주입된
+// now(ms)로 startedAt 기록 / tool_result 매칭 시 elapsedMs 계산.
+// now 인자 미전달 시 Date.now() 기본값(기존 호출부 호환).
+describe("reduceToolCall — startedAt 기록(clock 주입)", () => {
+  it("새 tool step 생성 시 주입된 now 가 startedAt 에 기록된다", () => {
+    const steps = reduceToolCall(
+      [],
+      { id: "t1", name: "web_search", args: "{}" },
+      0,
+      1_000,
+    );
+    expect(asTool(steps[0])).toMatchObject({ id: "t1", startedAt: 1_000 });
+  });
+
+  it("같은 id 후속 args 조각은 startedAt 을 덮어쓰지 않는다(최초 시각 보존)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "t1", name: "ws", args: '{"q":' },
+      0,
+      1_000,
+    );
+    steps = reduceToolCall(
+      steps,
+      { id: "t1", name: "ws", args: '"x"}' },
+      0,
+      9_999,
+    );
+    expect(asTool(steps[0])).toMatchObject({ startedAt: 1_000 });
+  });
+
+  it("now 미전달 시에도 startedAt 은 number 로 채워진다(Date.now 기본값)", () => {
+    const steps = reduceToolCall([], { id: "t1", name: "ws", args: "{}" }, 0);
+    expect(typeof asTool(steps[0]).startedAt).toBe("number");
+  });
+});
+
+describe("reduceToolResult — elapsedMs 계산(now - startedAt)", () => {
+  it("startedAt=1000 인 tool step + result(now=2500) → elapsedMs=1500", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "t1", name: "web_search", args: "{}" },
+      0,
+      1_000,
+    );
+    steps = reduceToolResult(steps, "web_search", "r1", "t1", 2_500);
+    expect(asTool(steps[0])).toMatchObject({
+      result: "r1",
+      elapsedMs: 1_500,
+    });
+  });
+
+  it("startedAt 이 없는 tool step → elapsedMs 미설정(undefined)", () => {
+    // startedAt 없이 강제 구성된 레거시 step.
+    const legacy: ThinkingStep[] = [
+      { kind: "tool", title: "ws", id: "t1", name: "ws", args: "{}", order: 0 },
+    ];
+    const steps = reduceToolResult(legacy, "ws", "r1", "t1", 5_000);
+    expect(asTool(steps[0]).elapsedMs).toBeUndefined();
+  });
+
+  it("now 미전달 시 elapsedMs 는 음수가 아니다(Date.now 기본값, startedAt 과거)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "t1", name: "ws", args: "{}" },
+      0,
+      Date.now() - 50,
+    );
+    steps = reduceToolResult(steps, "ws", "r1", "t1");
+    const e = asTool(steps[0]).elapsedMs;
+    expect(e).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ── Slice A: count — 연속 동일 도구 그룹화 ─────────────────────────
+// medigate toolKey 모방: "직전 step 이 같은 name 인 tool" 일 때만
+// 새 step 을 만들지 않고 그 step 의 count 를 +1. reasoning 이 끼면
+// 새 그룹(교차 보존이 우선 — count 보다 순서가 먼저).
+describe("reduceToolCall — 연속 동일 도구 count 증가", () => {
+  it("같은 name 도구가 연속(직전 step) → 새 step 없이 count 증가, order 보존", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "a1", name: "web_search", args: "{}" },
+      0,
+      1_000,
+    );
+    steps = reduceToolResult(steps, "web_search", "r1", "a1", 1_500);
+    steps = reduceToolCall(
+      steps,
+      { id: "a2", name: "web_search", args: "{}" },
+      1,
+      2_000,
+    );
+    expect(steps).toHaveLength(1);
+    expect(asTool(steps[0])).toMatchObject({
+      name: "web_search",
+      count: 2,
+      id: "a2",
+      result: undefined,
+      startedAt: 2_000,
+    });
+  });
+
+  it("중간에 reasoning 이 끼면 새 tool step(교차 보존 우선, count 안 묶임)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "a1", name: "ws", args: "{}" },
+      0,
+      1_000,
+    );
+    steps = reduceToolResult(steps, "ws", "r1", "a1", 1_200);
+    steps = reduceReasoning(steps, "**분석**\n\n중간 사고", 1);
+    steps = reduceToolCall(
+      steps,
+      { id: "a2", name: "ws", args: "{}" },
+      2,
+      2_000,
+    );
+    expect(steps.map((s) => s.kind)).toEqual(["tool", "reasoning", "tool"]);
+    expect(asTool(steps[0]).count ?? 1).toBe(1);
+    expect(asTool(steps[2]).count ?? 1).toBe(1);
+  });
+
+  it("다른 name 도구가 연속 → 새 step(count 안 묶임)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "a1", name: "web_search", args: "{}" },
+      0,
+      1_000,
+    );
+    steps = reduceToolResult(steps, "web_search", "r1", "a1", 1_100);
+    steps = reduceToolCall(
+      steps,
+      { id: "b1", name: "current_time", args: "{}" },
+      1,
+      1_200,
+    );
+    expect(steps).toHaveLength(2);
+    expect(asTool(steps[1])).toMatchObject({ name: "current_time" });
+  });
+
+  it("직전 도구가 아직 result 미수신(실행 중)이면 count 안 묶고 새 step(동시 호출 분리)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "a1", name: "ws", args: "{}" },
+      0,
+      1_000,
+    );
+    // result 없이 곧바로 같은 name 다른 id 호출.
+    steps = reduceToolCall(
+      steps,
+      { id: "a2", name: "ws", args: "{}" },
+      1,
+      1_050,
+    );
+    expect(steps).toHaveLength(2);
+    expect(asTool(steps[0]).id).toBe("a1");
+    expect(asTool(steps[1]).id).toBe("a2");
+  });
+});

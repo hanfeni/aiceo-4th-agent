@@ -3,6 +3,8 @@
 import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
+import { formatDuration } from "@/lib/agent/utils/formatDuration";
+import { useThinkingLabelCycler } from "@/components/common/useThinkingLabelCycler";
 import type { ThinkingStep } from "@/types";
 
 /**
@@ -135,9 +137,27 @@ function ToolBlock({
           fontWeight: 600,
           color: "var(--text-default)",
           marginBottom: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
         }}
       >
-        {step.title || step.name}
+        <span>{step.title || step.name}</span>
+        {(step.count ?? 1) > 1 && (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--neutral-600)",
+              background: "rgba(156,163,175,0.18)",
+              borderRadius: 4,
+              padding: "1px 5px",
+            }}
+            aria-label={`${step.count}회 호출`}
+          >
+            ×{step.count}
+          </span>
+        )}
       </div>
       <div
         style={{
@@ -183,6 +203,19 @@ function ToolBlock({
                 실행 중…
               </span>
             )}
+            {step.result !== undefined &&
+              step.elapsedMs !== undefined && (
+                <span
+                  style={{
+                    marginLeft: 6,
+                    fontSize: 11,
+                    color: "var(--neutral-600)",
+                    opacity: 0.75,
+                  }}
+                >
+                  ({formatDuration(step.elapsedMs)})
+                </span>
+              )}
           </span>
         </div>
       </div>
@@ -213,14 +246,20 @@ export function ThinkingPanel({
 
   const handleToggle = (): void => setUserToggled(!open);
 
-  // 토글 영속: step 이 한 번이라도 생기면 streaming 무관 표시.
-  if (!hasAny && !streaming) return null;
-
   // 실시간 뷰: 스트리밍 중 + 사용자 미조작 → 마지막 step 만(리플레이스).
   // 히스토리 뷰: 완료 또는 사용자 토글 → 전체 step 누적.
   const liveMode = streaming && !userControlled;
   const visibleSteps =
     liveMode && hasAny ? [steps[steps.length - 1]] : steps;
+
+  // 진행 중 정적 "진행 중…" 대신 타이핑 순환 레이블(medigate 모방).
+  // 훅은 조건부 호출 불가 → early return 보다 위에서 호출(rules-of-hooks).
+  // liveMode 를 isActive 로 넘겨 비활성 시 타이머만 끈다(Slice B 설계).
+  const cyclingLabel = useThinkingLabelCycler(liveMode);
+
+  // 토글 영속: step 이 한 번이라도 생기면 streaming 무관 표시.
+  // (모든 훅 호출 이후에 early return — rules-of-hooks 준수.)
+  if (!hasAny && !streaming) return null;
 
   const label = streaming
     ? open
@@ -302,7 +341,7 @@ export function ThinkingPanel({
               }}
             >
               <DotPulse />
-              <span>진행 중…</span>
+              <span>{cyclingLabel || "진행 중…"}</span>
             </div>
           )}
         </div>

@@ -93,11 +93,23 @@ export function reduceReasoning(
   });
 }
 
-/** tool_call 델타를 step 배열에 머지. id 매칭 step 갱신 또는 새 push. */
+/**
+ * tool_call 델타를 step 배열에 머지. id 매칭 step 갱신 또는 새 push.
+ *
+ * clock 주입(`now`): deepagents/LangGraph 는 서버 elapsed 를 안 주므로
+ * tool_call 수신 시각을 클라이언트가 startedAt 에 기록한다. 인자로
+ * 받아 reducer 의 순수성을 유지(테스트는 고정값 주입 — NFR-11).
+ *
+ * count 그룹화(medigate toolKey 모방): 직전 step 이 **같은 name 의 완료된
+ * tool**(result 수신 끝)이면 새 step 을 만들지 않고 그 step 의 count 를
+ * +1 하고 id/args/startedAt 을 새 호출로 갱신(result 는 비워 재실행 표시).
+ * reasoning 이 끼거나 직전 도구가 실행 중이면 교차/병렬 보존 우선 → 새 step.
+ */
 export function reduceToolCall(
   steps: ThinkingStep[],
   delta: { id: string; name: string; args: string },
   nextOrder: number,
+  now: number = Date.now(),
 ): ThinkingStep[] {
   if (delta.id) {
     const idx = steps.findIndex(
@@ -114,12 +126,33 @@ export function reduceToolCall(
       };
       return steps.slice(0, idx).concat(updated, steps.slice(idx + 1));
     }
+    // 연속 동일 도구 그룹화: 직전 step 이 같은 name + 완료(result 있음).
+    const last = steps[steps.length - 1];
+    if (
+      last &&
+      last.kind === "tool" &&
+      last.name === delta.name &&
+      last.name.length > 0 &&
+      last.result !== undefined
+    ) {
+      const merged: ThinkingStep = {
+        ...last,
+        id: delta.id,
+        args: delta.args,
+        result: undefined,
+        startedAt: now,
+        elapsedMs: undefined,
+        count: (last.count ?? 1) + 1,
+      };
+      return steps.slice(0, -1).concat(merged);
+    }
     return steps.concat({
       kind: "tool",
       title: delta.name || "tool",
       id: delta.id,
       name: delta.name,
       args: delta.args,
+      startedAt: now,
       order: nextOrder,
     });
   }
@@ -134,12 +167,20 @@ export function reduceToolCall(
   return steps; // 매칭 tool step 없음 — 무시
 }
 
-/** tool_result 를 name(또는 id) 매칭 tool step 의 result 에 채움. */
+/**
+ * tool_result 를 name(또는 id) 매칭 tool step 의 result 에 채운다.
+ *
+ * elapsedMs: 매칭 step 에 startedAt 이 있으면 `now - startedAt` 로 IN→OUT
+ * 소요시간을 계산(medigate IOPair elapsed 모방). startedAt 이 없는
+ * 레거시 step 은 elapsedMs 미설정. now 는 주입(reducer 순수성 — NFR-11),
+ * 미전달 시 Date.now() 기본값. 음수 방지(clock skew 가드).
+ */
 export function reduceToolResult(
   steps: ThinkingStep[],
   name: string,
   result: string,
   id?: string,
+  now: number = Date.now(),
 ): ThinkingStep[] {
   let idx = -1;
   if (id) {
@@ -153,6 +194,8 @@ export function reduceToolResult(
   if (idx < 0) return steps;
   const s = steps[idx];
   if (s.kind !== "tool") return steps;
-  const updated: ThinkingStep = { ...s, result };
+  const elapsedMs =
+    s.startedAt !== undefined ? Math.max(0, now - s.startedAt) : undefined;
+  const updated: ThinkingStep = { ...s, result, elapsedMs };
   return steps.slice(0, idx).concat(updated, steps.slice(idx + 1));
 }
