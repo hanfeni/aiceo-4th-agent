@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>제약 인사이트 · 챗 에이전트 — Sidebar & Chat 디자인 탐색</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; }
+    #root { width: 100%; height: 100vh; overflow: hidden; }
+    body { font-family: 'Pretendard', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    .dc-shell input, .dc-shell button, .dc-shell textarea { font-family: inherit; }
+  </style>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="shell-shared.jsx"></script>
+  <script type="text/babel" src="shells.jsx"></script>
+  <script type="text/babel" src="chat-data.jsx"></script>
+  <script type="text/babel" src="chat-variations-1.jsx"></script>
+  <script type="text/babel" src="chat-variations-2.jsx"></script>
+  <script type="text/babel" src="chat.jsx"></script>
+  <script type="text/babel" src="thinking-panel-variations.jsx"></script>
+
+  <script type="text/babel" data-presets="react">
+    function App() {
+      return (
+        <DesignCanvas>
+          {/* ========== 01 · 사이드바 베리에이션 ========== */}
+          <DCSection
+            id="sidebars"
+            title="01 · 사이드바 베리에이션"
+            subtitle="동일한 에이전트 챗 메뉴 활성 상태에서 사이드바·헤더 아키텍처만 비교합니다. 보수 → 균형 → 실험 순으로 5종."
+          >
+            <DCArtboard id="shell-a" label="A · Indented Tree (보수)" width={1280} height={760}><ShellA /></DCArtboard>
+            <DCArtboard id="shell-b" label="B · Card Group" width={1280} height={760}><ShellB /></DCArtboard>
+            <DCArtboard id="shell-c" label="C · Compact Pill" width={1280} height={760}><ShellC /></DCArtboard>
+            <DCArtboard id="shell-d" label="D · Rail + Drawer (실험)" width={1280} height={760}><ShellD /></DCArtboard>
+            <DCArtboard id="shell-e" label="E · Command Workspace (실험)" width={1280} height={760}><ShellE /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 02 · 대화 리스트 ========== */}
+          <DCSection
+            id="conv-list"
+            title="02 · 대화 리스트"
+            subtitle="좌측 채팅 사이드 패널. 정보 밀도와 미리보기 유무, 카테고리 구분 방식이 다릅니다."
+          >
+            <DCArtboard id="conv-a" label="A · 기본 (그룹 + 미리보기)" width={280} height={620}><ConvList_A /></DCArtboard>
+            <DCArtboard id="conv-b" label="B · 미니멀 (제목만)"          width={280} height={620}><ConvList_B /></DCArtboard>
+            <DCArtboard id="conv-c" label="C · 카드형 (메타 포함)"        width={280} height={620}><ConvList_C /></DCArtboard>
+            <DCArtboard id="conv-d" label="D · 탭형 (전체/별표/공유)"     width={280} height={620}><ConvList_D /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 03 · 빈 상태 ========== */}
+          <DCSection
+            id="empty"
+            title="03 · 빈 상태 (새 대화 시작)"
+            subtitle="대화가 비어있을 때 보이는 시작 화면. 입력바 위치와 프롬프트 노출 방식이 다릅니다."
+          >
+            <DCArtboard id="empty-a" label="A · 중앙 정렬 + 2×2 프롬프트"           width={760} height={540}><Empty_A /></DCArtboard>
+            <DCArtboard id="empty-b" label="B · 큰 중앙 입력바 + 카테고리 칩"        width={760} height={540}><Empty_B /></DCArtboard>
+            <DCArtboard id="empty-c" label="C · 카테고리별 예시 분류"               width={760} height={540}><Empty_C /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 04 · 챗 헤더 ========== */}
+          <DCSection
+            id="header"
+            title="04 · 챗 헤더"
+            subtitle="메인 챗 영역 상단의 제목 / 모델 셀렉터 / 액션 바. 메타 정보 노출량이 다릅니다."
+          >
+            <DCArtboard id="header-a" label="A · 미니멀"           width={760} height={88}><Header_A /></DCArtboard>
+            <DCArtboard id="header-b" label="B · 메타 강조 (모델/토큰/시간)" width={760} height={88}><Header_B /></DCArtboard>
+            <DCArtboard id="header-c" label="C · Breadcrumb + 큰 아바타"     width={760} height={88}><Header_C /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 05 · 사용자 메시지 ========== */}
+          <DCSection
+            id="user-msg"
+            title="05 · 사용자 메시지 버블"
+            subtitle="사용자가 보낸 메시지의 표현 방식. 정렬과 첨부 파일 표시법이 다릅니다."
+          >
+            <DCArtboard id="user-a" label="A · 우측 회색 버블 (ChatGPT)"  width={580} height={240}><UserMsg_A /></DCArtboard>
+            <DCArtboard id="user-b" label="B · 좌측 아바타 (Slack)"        width={580} height={240}><UserMsg_B /></DCArtboard>
+            <DCArtboard id="user-c" label="C · 보더만 / 트랜스크립트"      width={580} height={240}><UserMsg_C /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 06 · 에이전트 응답 ========== */}
+          <DCSection
+            id="assist-msg"
+            title="06 · 에이전트 응답"
+            subtitle="AI 응답의 컨테이너 스타일. 인용 칩이 본문에 포함되어 있습니다."
+          >
+            <DCArtboard id="assist-a" label="A · 인라인 + 아바타 (현재)"      width={660} height={500}><AssistMsg_A /></DCArtboard>
+            <DCArtboard id="assist-b" label="B · 카드 박스로 감싸기"          width={660} height={500}><AssistMsg_B /></DCArtboard>
+            <DCArtboard id="assist-c" label="C · 좌측 그라데이션 액센트 바"   width={660} height={500}><AssistMsg_C /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 07 · 출처 인용 ========== */}
+          <DCSection
+            id="citation"
+            title="07 · 출처 · 인용 표현"
+            subtitle="의료 데이터 근거 표시 방식. 책임 추적성을 강조하는 방향과 가벼운 풋노트 방향."
+          >
+            <DCArtboard id="cit-a" label="A · 하단 카드 패널 (현재)"      width={660} height={340}><Citation_A /></DCArtboard>
+            <DCArtboard id="cit-b" label="B · 인라인 가로 카드 슬라이더" width={660} height={340}><Citation_B /></DCArtboard>
+            <DCArtboard id="cit-c" label="C · 풋노트 / 학술 스타일"      width={660} height={340}><Citation_C /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 08 · 입력 바 ========== */}
+          <DCSection
+            id="input"
+            title="08 · 입력 바"
+            subtitle="메시지 입력 영역. 도구 노출 정도와 시각적 무게가 다릅니다."
+          >
+            <DCArtboard id="input-a" label="A · 평평 borderless (현재)" width={760} height={200}><Input_A /></DCArtboard>
+            <DCArtboard id="input-b" label="B · 떠있는 그림자 + 도구 칩" width={760} height={200}><Input_B /></DCArtboard>
+            <DCArtboard id="input-c" label="C · 도구 메뉴 + 듀얼 액션 (Perplexity)" width={760} height={200}><Input_C /></DCArtboard>
+          </DCSection>
+
+          {/* ========== 09 · 인터랙티브 풀시안 ========== */}
+          <DCSection
+            id="thinking"
+            title="10 · 답변 과정 패널 (Thinking Panel)"
+            subtitle="에이전트 추론 + 도구 호출 IN/OUT 을 이석 위에 노출하는 패널의 5가지 변형. 공통 사이용: 일반 질문 → 웹검색 ×3 → 서브에이전트 → 결과 정리."
+          >
+            <DCArtboard id="tp-a" label="A · 인라인 미니멀 (본문 흐름 유지)" width={680} height={620}>
+              <ThinkingFrame><ThinkingPanel_A defaultOpen={true} /></ThinkingFrame>
+            </DCArtboard>
+            <DCArtboard id="tp-b" label="B · 카드 스택 (좌측 엑센트 바)" width={680} height={720}>
+              <ThinkingFrame><ThinkingPanel_B defaultOpen={true} /></ThinkingFrame>
+            </DCArtboard>
+            <DCArtboard id="tp-c" label="C · 타임라인 레일 (흐름 강조 · 스트리밍)" width={680} height={680}>
+              <ThinkingFrame><ThinkingPanel_C defaultOpen={true} isStreaming={true} /></ThinkingFrame>
+            </DCArtboard>
+            <DCArtboard id="tp-d" label="D · 단계 칩 (컴팩트 · 클릭 확장)" width={680} height={360}>
+              <ThinkingFrame><ThinkingPanel_D /></ThinkingFrame>
+            </DCArtboard>
+            <DCArtboard id="tp-e" label="E · 사이드 드로어 (긴 사고용)" width={780} height={620}>
+              <ThinkingFrame><ThinkingPanel_E defaultOpen={true} /></ThinkingFrame>
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="interactive"
+            title="09 · 인터랙티브 풀시안"
+            subtitle="실제 동작 가능한 통합 챗 UI. 입력, 전송, 스트리밍, 출처 클릭 등 모든 인터랙션이 작동합니다."
+          >
+            <DCArtboard id="chat-ui" label="Chat Agent — 인터랙티브 (B 사이드바 + B 입력 + C 풋노트)" width={1520} height={900}>
+              <ChatAgentUI />
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+
+    function ThinkingFrame({ children }) {
+      return (
+        <div className="dc-shell" style={{
+          width: '100%', height: '100%', background: 'var(--surface-default)',
+          padding: '24px 28px', overflow: 'auto', boxSizing: 'border-box',
+        }}>
+          <div style={{ maxWidth: 660, margin: '0 auto', display: 'flex', gap: 12 }}>
+            <div style={{
+              width: 28, height: 28, borderRadius: 9, flexShrink: 0,
+              background: 'linear-gradient(135deg, var(--agent-400), var(--agent-600))',
+              color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon name="sparkles" size={14} strokeWidth={2.1} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-default)' }}>에이전트</span>
+                <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>· 14:32</span>
+              </div>
+              {children}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function mount() {
+      if (!window.ShellA || !window.ChatAgentUI || !window.ConvList_A || !window.UserMsg_A || !window.ThinkingPanel_A) {
+        return setTimeout(mount, 30);
+      }
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    }
+    mount();
+  </script>
+</body>
+</html>

@@ -7,10 +7,13 @@ import {
   ThumbsDown,
   Copy,
   RefreshCw,
+  Paperclip,
 } from "lucide-react";
 import { useChatStore } from "@/store";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { ThinkingPanel } from "@/components/common/BaseChat/ThinkingPanel";
+import { SourcesPanel } from "@/components/common/BaseChat/SourcesPanel";
+import { splitRecQueries } from "@/lib/agent/utils/recQueries";
 import type { ChatMessage } from "@/types";
 
 /**
@@ -18,8 +21,8 @@ import type { ChatMessage } from "@/types";
  *
  * 기능(실 백엔드 연결): store 의 messages/isStreaming 구독. 토큰 도착·
  * 스트리밍 변화 시 하단 자동 스크롤(chat.jsx:35-39). assistant 콘텐츠는
- * <ChatMarkdown> 으로 렌더, 스트리밍 중 깜빡임 커서(chat.jsx:499).
- * messages 0 개면 EmptyState(chat.jsx:391).
+ * <ChatMarkdown> 으로 렌더(스트리밍 중 깜빡임 커서는 제거 — 사용자
+ * 요청). messages 0 개면 EmptyState(chat.jsx:391).
  *
  * 시각 전용 mock(미구현=mock): 메시지 액션 행(thumbs/copy/regenerate).
  * 복사(copy)는 trivial+useful 이라 실제 클립보드 복사 허용, like/regenerate
@@ -29,7 +32,6 @@ import type { ChatMessage } from "@/types";
  *  - 컨테이너: maxWidth 760, padding 0 28px, gap 24 (:233)
  *  - user 버블: var(--medi-gray-100), padding 10px 14px, radius 14 (:448)
  *  - assistant avatar: 28x28 radius 9 violet gradient (:484)
- *  - 커서: 6x14 var(--agent-500), animation blink 1s (:499)
  */
 
 const SUGGESTED_PROMPTS: { icon: ReactNode; text: string }[] = [
@@ -175,7 +177,14 @@ function EmptyState({
   );
 }
 
-function UserBubble({ content }: { content: string }): ReactNode {
+function UserBubble({
+  content,
+  attachments,
+}: {
+  content: string;
+  attachments?: ChatMessage["attachments"];
+}): ReactNode {
+  const hasAttachments = !!attachments && attachments.length > 0;
   return (
     <div style={{ display: "flex", justifyContent: "flex-end" }}>
       <div
@@ -187,20 +196,84 @@ function UserBubble({ content }: { content: string }): ReactNode {
           gap: 6,
         }}
       >
-        <div
-          style={{
-            background: "var(--medi-gray-100)",
-            padding: "10px 14px",
-            borderRadius: 14,
-            fontSize: 14,
-            lineHeight: 1.55,
-            color: "var(--text-default)",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {content}
-        </div>
+        {/* 첨부 흔적(I1) — 이미지는 썸네일, 텍스트/PDF/DOCX 는 파일명 칩.
+            content 만으론 무엇을 보냈는지 안 보이므로 버블 위에 노출. */}
+        {hasAttachments && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              justifyContent: "flex-end",
+            }}
+          >
+            {attachments!.map((a, i) =>
+              a.kind === "image" && a.dataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${a.name}-${i}`}
+                  src={a.dataUrl}
+                  alt={a.name}
+                  title={a.name}
+                  style={{
+                    width: 80,
+                    height: 80,
+                    objectFit: "cover",
+                    borderRadius: 8,
+                    border: "1px solid var(--t-neutral-8)",
+                  }}
+                />
+              ) : (
+                <span
+                  key={`${a.name}-${i}`}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "4px 9px",
+                    borderRadius: 8,
+                    border: "1px solid var(--t-neutral-8)",
+                    background: "var(--t-neutral-4)",
+                    fontSize: 11.5,
+                    color: "var(--text-default)",
+                    maxWidth: 200,
+                  }}
+                >
+                  <Paperclip
+                    size={11}
+                    style={{ color: "var(--text-subtle)", flexShrink: 0 }}
+                    aria-hidden
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {a.name}
+                  </span>
+                </span>
+              ),
+            )}
+          </div>
+        )}
+        {content.length > 0 && (
+          <div
+            style={{
+              background: "var(--medi-gray-100)",
+              padding: "10px 14px",
+              borderRadius: 14,
+              fontSize: 14,
+              lineHeight: 1.55,
+              color: "var(--text-default)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {content}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -209,15 +282,29 @@ function UserBubble({ content }: { content: string }): ReactNode {
 function AssistantBubble({
   content,
   thinkingSteps,
+  sources,
   streaming,
+  outputting = false,
+  onRecQuery,
 }: {
   content: string;
   thinkingSteps?: ChatMessage["thinkingSteps"];
+  sources?: ChatMessage["sources"];
   streaming: boolean;
+  /** Slice M — 답변 본문 출력 중(직전 SSE=token). ThinkingPanel 게이트. */
+  outputting?: boolean;
+  /** 추천 질문 칩 클릭 → 즉시 전송. */
+  onRecQuery: (text: string) => void;
 }): ReactNode {
+  // 누적 content 에서 [REC_QUERY] 마커 분리(렌더 시점 — store 무변경).
+  // 스트리밍 중에도 splitRecQueries 가 여는 태그/부분 prefix 부터
+  // 본문에서 즉시 절단해 사용자에게 마커가 노출되지 않는다(누출 0).
+  // 닫는 태그가 와야 recQueries 가 채워진다 → 칩은 답변 완료 후 등장.
+  const { body, recQueries } = splitRecQueries(content);
   const onCopy = (): void => {
     // 복사는 trivial+useful — 실제 클립보드 복사 허용(스코프 예외 명시).
-    void navigator.clipboard?.writeText(content);
+    // 마커 제외 본문만 복사(사용자가 보는 것과 일치).
+    void navigator.clipboard?.writeText(body);
   };
   return (
     <div style={{ display: "flex", gap: 12 }}>
@@ -241,34 +328,106 @@ function AssistantBubble({
         {/* 에이전트 라벨 제거 → 사고 패널. 단일 thinkingSteps[](교차
             보존). medigate StreamingView/HistoryView 패턴. 데이터 없고
             비스트리밍이면 패널 자체 미표시. */}
+        {/* 사고 패널 — 출력 중에도 컨테이너를 제거하지 않는다(사용자
+            보고: 출력 단계에 패널이 사라졌다 생겼다 반복 → 답변
+            텍스트 레이아웃 시프트). 이전 '!(streaming && outputting)'
+            게이트(컨테이너 통째 제거) 폐기. 출력 중 접힘 고정·토글
+            비활성은 ThinkingPanel 내부가 outputting prop 으로 처리
+            (return null 아님 — 헤더 자리 유지로 시프트 0). */}
         {((thinkingSteps?.length ?? 0) > 0 || streaming) && (
           <div style={{ marginBottom: 6 }}>
             <ThinkingPanel
               steps={thinkingSteps ?? []}
               streaming={streaming}
+              outputting={outputting}
             />
           </div>
         )}
         <div style={{ minHeight: 22 }}>
-          <ChatMarkdown content={content} />
-          {streaming && (
-            <span
-              aria-hidden
-              style={{
-                display: "inline-block",
-                width: 6,
-                height: 14,
-                background: "var(--agent-500)",
-                marginLeft: 2,
-                verticalAlign: "-2px",
-                animation: "blink 1s steps(2) infinite",
-              }}
-            />
-          )}
+          <ChatMarkdown content={body} />
         </div>
 
+        {/* 참고 출처(References) — web_search citation. 스트리밍 종료
+            후 + 출처 있을 때만(디자인 chat.jsx:502 게이트). */}
+        {!streaming && (sources?.length ?? 0) > 0 && (
+          <SourcesPanel sources={sources ?? []} />
+        )}
+
+        {/* 추천 질문 — LLM [REC_QUERY] 유래. 스트리밍 종료 후 +
+            recQueries 있을 때만(닫는 태그 도착해야 채워짐 → 답변
+            완료 후 등장). 디자인: 답변 본문과 명확히 구분(사용자
+            요청) — 큰 상단 여백(28) + 상단 구분선 + "관련 질문"
+            라벨 + agent 틴트 칩. medigate AgentSuggestedMenu 의
+            pill·클릭형 본질 + 우리 디자인 토큰(보라 아이덴티티).
+            클릭 = 즉시 전송(systemPrompt 인스트럭션과 일관). */}
+        {!streaming && recQueries.length > 0 && (
+          <div
+            style={{
+              marginTop: 28,
+              paddingTop: 18,
+              borderTop: "1px solid var(--t-neutral-12)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text-subtle)",
+                marginBottom: 10,
+                letterSpacing: "0.01em",
+              }}
+            >
+              관련 질문
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              {recQueries.map((q, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onRecQuery(q)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    maxWidth: "100%",
+                    padding: "8px 15px",
+                    borderRadius: 9999,
+                    // 그레이 계열 + 아웃라인 제거(사용자 요청). 테두리
+                    // 없이도 칩이 면으로 보이게 배경을 한 단계 진한
+                    // t-neutral-8 솔리드로(surface-subtle 은 흰 본문과
+                    // 거의 안 구분 — 직전 실수 방지). 구분선·라벨·여백
+                    // 유지로 답변과의 구분은 그대로.
+                    border: "none",
+                    background: "var(--t-neutral-8)",
+                    color: "var(--text-default)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    lineHeight: 1.4,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "background 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--t-neutral-12)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--t-neutral-8)";
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 메시지 액션 행 — 시각 전용 mock(미구현). copy 만 실제 동작. */}
-        {!streaming && content.length > 0 && (
+        {!streaming && body.length > 0 && (
           <div
             style={{
               display: "flex",
@@ -324,11 +483,25 @@ function AssistantBubble({
 export interface MessageListProps {
   /** EmptyState 추천칩 클릭 시 입력창에 텍스트 주입(ChatPanel 연결). */
   onPickPrompt: (text: string) => void;
+  /**
+   * 답변 하단 추천 질문 칩 클릭 → 그 질문을 즉시 전송(사용자 결정).
+   * EmptyState 의 onPickPrompt(입력창 주입)와 달리 바로 send 한다
+   * (systemPrompt "클릭해 바로 보낼 수 있는 질문" 인스트럭션과 일관).
+   */
+  onRecQuery: (text: string) => void;
 }
 
-export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
+export function MessageList({
+  onPickPrompt,
+  onRecQuery,
+}: MessageListProps): ReactNode {
   const messages = useChatStore((s) => s.messages);
   const isStreaming = useChatStore((s) => s.isStreaming);
+  // Slice M — 직전 SSE 이벤트가 token 이면 답변 본문 출력 중 →
+  // 마지막(스트리밍) 메시지 사고 패널 숨김(동적). thinking/tool
+  // 로 바뀌면 재표시. 과거 메시지엔 영향 없음(마지막만 적용).
+  const lastStreamEvent = useChatStore((s) => s.lastStreamEvent);
+  const outputting = lastStreamEvent === "token";
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // 스트리밍 append 시 마지막 메시지 길이 변화로도 스크롤 트리거.
@@ -367,13 +540,22 @@ export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
         >
           {messages.map((m, i) =>
             m.role === "user" ? (
-              <UserBubble key={i} content={m.content} />
+              <UserBubble
+                key={i}
+                content={m.content}
+                attachments={m.attachments}
+              />
             ) : (
               <AssistantBubble
                 key={i}
                 content={m.content}
                 thinkingSteps={m.thinkingSteps}
+                sources={m.sources}
                 streaming={isStreaming && i === messages.length - 1}
+                outputting={
+                  outputting && i === messages.length - 1
+                }
+                onRecQuery={onRecQuery}
               />
             ),
           )}

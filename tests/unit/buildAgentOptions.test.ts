@@ -62,6 +62,7 @@ function makeConfig(overrides: Partial<HarnessConfig> = {}): HarnessConfig {
     subagents: [],
     tools: [{ name: "currentTime" }],
     checkpointer: { __saver: true },
+    skills: { enabled: false, sources: [], backend: null },
     ...overrides,
   };
 }

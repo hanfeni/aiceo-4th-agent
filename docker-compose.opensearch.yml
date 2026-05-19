@@ -1,0 +1,48 @@
+# OpenSearch (단일 노드, 검색 실습 전용) — DART 작업과 격리된 신규 인프라.
+# run-opensearch.sh 가 이 파일을 기동한다. run-dev.sh(Next dev)는 안 건드림.
+#
+# Nori(한국어 형태소) 플러그인은 공식 이미지에 기본 미포함 → 기동 후
+# run-opensearch.sh 가 plugin install 한다(이미지 빌드 불요, 컴팩트 유지).
+#
+# 보안 플러그인 비활성(DISABLE_SECURITY_PLUGIN=true): 로컬 실습 전용,
+# https/인증 불필요. 절대 외부 노출 금지(localhost 바인드).
+
+services:
+  opensearch:
+    # 3.6.0 (latest, 2026-05-19 사용자 지시 "최신으로").
+    # 2.19.0·3.3.2 는 이 Docker Desktop arm64 VM 에서 번들 JDK
+    # SIGILL 크래시(JavaVersionChecker 단계 — 실측). 3.6.0 JDK 는
+    # 정상 부팅 확인됨(Node started / cluster GREEN).
+    image: opensearchproject/opensearch:3.6.0
+    container_name: aiceo-search-lab-os
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_SECURITY_PLUGIN=true"
+      - "DISABLE_INSTALL_DEMO_CONFIG=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      # named volume (Docker 자체 관리) — bind mount 금지.
+      # 2026-05-19: bind mount(./.opensearch-data)는 Docker Desktop
+      # File Sharing 에 ~/Documents 가 없으면 "operation not
+      # permitted"(실측). 학생마다 GUI 설정을 시킬 수 없으므로
+      # named volume 으로 호스트 권한 의존 제거(환경 무관·견고).
+      - aiceo-search-lab-data:/usr/share/opensearch/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  aiceo-search-lab-data:

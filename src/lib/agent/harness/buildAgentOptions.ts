@@ -162,6 +162,13 @@ export interface AgentOptions {
   tools: unknown[];
   subagents: HarnessConfig["subagents"];
   checkpointer: unknown;
+  /**
+   * SKILL — sources 가 있을 때만 존재(없으면 키 자체를 누락해 deepagents
+   * 기본 StateBackend 경로를 보존). skill on/off 분기는 registry 에서
+   * 끝났고 여기는 "있으면 전달"만 한다(AD-1 분기 격리 유지).
+   */
+  skills?: string[];
+  backend?: unknown;
 }
 
 /**
@@ -187,11 +194,21 @@ export function buildAgentOptions(
     registerHarnessProfileOnce(identifier, profile);
   }
 
-  return {
+  const options: AgentOptions = {
     model,
     systemPrompt,
     tools: config.tools,
     subagents: config.subagents,
     checkpointer: config.checkpointer,
   };
+
+  // SKILL — sources 가 있을 때만 skills/backend 주입. 없으면 키 자체를
+  // 빼서 deepagents 의 기본 backend(StateBackend) 경로를 그대로 둔다
+  // (skill off 시 createDeepAgent 인자 형태가 PoC 도입 전과 동일 — 회귀 0).
+  if (config.skills.enabled && config.skills.sources.length > 0) {
+    options.skills = config.skills.sources;
+    options.backend = config.skills.backend;
+  }
+
+  return options;
 }

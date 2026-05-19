@@ -32,22 +32,11 @@ const NON_BODY_BLOCK_TYPES = new Set(["thinking", "reasoning", "redacted_thinkin
 interface ChunkShape {
   content?: unknown;
   tool_call_chunks?: unknown;
-  additional_kwargs?: { tool_outputs?: unknown };
   kwargs?: {
     content?: unknown;
     tool_call_chunks?: unknown;
-    additional_kwargs?: { tool_outputs?: unknown };
   };
 }
-
-/**
- * OpenAI ServerTool(web_search 등) 호출의 실측 구조 (probe ws-log-probe).
- *   kwargs.additional_kwargs.tool_outputs[] = [{ id:"ws_...",
- *     type:"web_search_call", status:"completed",
- *     action:{ type:"search", queries:[...], query:"..." } }]
- * ClientTool 의 tool_call_chunks(점진 델타)와 경로·형태가 다르다.
- * `extractToolOutputs` 가 인라인으로 안전 접근(별도 인터페이스 불요).
- */
 
 /** 스트림 part[1] 메타데이터의 본 필터가 사용하는 부분. */
 interface ChunkMeta {
@@ -98,19 +87,28 @@ export function filterChunk(msg: unknown, meta: unknown): string | null {
   }
 
   const content = chunk.content ?? kwargs?.content;
+  return extractContentText(content);
+}
 
-  // U3: content 가 string 이면 그대로(빈 문자열은 스트림 마커 → 스킵).
+/**
+ * AIMessageChunk 의 content(string | 배열 | 기타)에서 본문 텍스트만
+ * 뽑는 순수 함수. filterChunk 의 그래프 노드 가드(MAIN_ANSWER_NODE)
+ * 없이 content 추출만 필요한 경로(예: model.stream() 직접 호출 —
+ * search-lab/meta-lab)가 재사용한다. 그래프 스트림은 filterChunk 가
+ * 노드 가드 후 이 함수를 호출(추출 로직 단일화 — 중복·드리프트 방지).
+ *
+ * - string: 그대로(빈 문자열은 스트림 마커 → null 스킵, U3)
+ * - 배열: text 블록만 이어붙임(thinking/reasoning 폐기 — R5)
+ * - 그 외(undefined/객체): 본문 없음 → null
+ */
+export function extractContentText(content: unknown): string | null {
   if (typeof content === "string") {
     return content.length > 0 ? content : null;
   }
-
-  // provider 추상화 대비: content 가 배열이면 text 블록만 추출(R5).
   if (Array.isArray(content)) {
     const text = extractTextFromBlocks(content);
     return text.length > 0 ? text : null;
   }
-
-  // content 가 undefined/객체 등 → 본문 없음.
   return null;
 }
 
@@ -196,10 +194,10 @@ export interface ToolCallDelta {
  * 분리된 별도 채널(FR-09 유지) — filterChunk 는 이미 tool_call_chunks
  * 있으면 본문에서 제외한다.
  *
- * **ClientTool 단일 채널.** ServerTool(web_search 등 provider 측 실행,
- * additional_kwargs.tool_outputs)은 `extractToolOutputs` 가 전담한다.
- * 한 청크를 양쪽이 잡아 tool_call 이 이중 emit 되던 문제를 일원화
- * (code-review 권장 — agent.ts 에서 두 추출기를 별도 호출, 채널 분리).
+ * **ClientTool 단일 채널** (tool_call_chunks 점진 델타). web_search 는
+ * ServerTool→ClientTool 교체되어 이제 모든 도구가 이 경로로 흐른다
+ * (ServerTool additional_kwargs.tool_outputs 채널·extractToolOutputs
+ * 는 제거됨 — dartTool 동형 통일).
  *
  * @returns 도구 호출 델타 배열(비어있으면 null).
  */
@@ -213,8 +211,8 @@ export function extractToolCalls(
   const chunk = msg as ChunkShape;
   const kwargs = isRecord(chunk.kwargs) ? chunk.kwargs : undefined;
 
-  // ClientTool 경로만 — tool_call_chunks 점진 델타. ServerTool 은
-  // extractToolOutputs 단일 채널(중복 emit 일원화).
+  // ClientTool 경로 — tool_call_chunks 점진 델타 (web_search 포함
+  // 전 도구 통일, ServerTool 채널 제거됨).
   const tcc = chunk.tool_call_chunks ?? kwargs?.tool_call_chunks;
   if (Array.isArray(tcc) && tcc.length > 0) {
     const out: ToolCallDelta[] = [];
@@ -288,68 +286,47 @@ export function extractToolResult(msg: unknown): ToolResultDelta | null {
   return result.length > 0 ? { name, result } : null;
 }
 
-/** ServerTool(web_search 등) 호출 1건. ClientTool 과 채널이 다르다. */
-export interface ToolOutputDelta {
-  id: string;
-  name: string;
-  args: string;
-  result: string;
+/** WebSource 와 동형(타입 import 회피 — chunkFilter 는 LLM/타입 비의존). */
+interface ParsedCitation {
+  title: string;
+  url: string;
 }
 
 /**
- * 스트림 청크에서 **ServerTool 호출(additional_kwargs.tool_outputs)**
- * 을 추출한다.
+ * `extractWebSearchCitations` 의 거울 함수 — 그 출력 텍스트를 다시
+ * `{title,url}[]` 로 복원한다(답변 하단 References 패널 데이터원).
  *
- * 실측(scripts/ws2-probe.mts): OpenAI built-in web_search 는
- * ClientTool 의 tool_call_chunk/ToolMessage 경로가 **아니라**,
- * model_request 노드 청크의 additional_kwargs.tool_outputs 에
- * `{ id, type:"web_search_call", status, action:{type:"search",
- * queries:[...] } }` 형태로 온다. 그래서 extractToolCalls/Result 가
- * 못 잡는다(사용자 보고: "웹검색만 마크 안 됨"의 원인). 이 함수가
- * ServerTool 채널을 **단독** 전담한다(extractToolCalls 의 ServerTool
- * 경로 제거 — 이중 emit 일원화). FR-09 유지(본문 미혼입 — 별도 채널).
+ * 입력: "참고 출처 N건:\n• 제목 (url)\n• url\n…"
+ *  - 각 항목은 `• ` 로 시작. 마지막 `(http(s)://...)` 가 url, 그 앞이
+ *    제목(없으면 url 자체를 제목 자리에 — SourcesPanel 폴백).
+ *  - http/https 만 url 로 인정(javascript: 등 스킴 차단 — 링크 안전).
  *
- * 정책 확정(사용자 결정):
- *  - args = JSON.stringify({ queries }) — 모델이 던진 **전체 검색어
- *    배열**을 사고 패널 IN 칸에 풍부하게 표시(디버깅·투명성 우선).
- *  - result = status 원문(completed 등). status 게이트 없이 매 호출
- *    방출하되 store reduceToolResult 가 id 매칭으로 자연 누적.
+ * 사고 패널 일반 result("completed"/"검색 완료" 등)와 구분: 유효
+ * 항목이 0개면 null(→ sources 미적재, 패널 미표시).
  *
- * @returns ServerTool 호출 배열 또는 null.
+ * agent.ts/chunkFilter 기존 코드 무변경 — 신규 export 만 추가(다른
+ * 에이전트 동시 작업과 git 충돌 0). 순수 함수(LLM 무관, 단위 테스트).
  */
-export function extractToolOutputs(
-  msg: unknown,
-  meta: unknown,
-): ToolOutputDelta[] | null {
-  const m = meta as ChunkMeta | undefined | null;
-  if (!isRecord(m) || m.langgraph_node !== MAIN_ANSWER_NODE) return null;
-  if (!isRecord(msg)) return null;
-  const chunk = msg as ChunkShape & {
-    additional_kwargs?: { tool_outputs?: unknown };
-    kwargs?: { additional_kwargs?: { tool_outputs?: unknown } };
-  };
-  const ak = chunk.additional_kwargs ?? chunk.kwargs?.additional_kwargs;
-  if (!isRecord(ak) || !Array.isArray(ak.tool_outputs)) return null;
-
-  const out: ToolOutputDelta[] = [];
-  for (const o of ak.tool_outputs) {
-    if (!isRecord(o)) continue;
-    const type = typeof o.type === "string" ? o.type : "";
-    if (!type) continue;
-    // web_search_call → name="web_search", args=검색어, result=상태
-    const action = isRecord(o.action) ? o.action : undefined;
-    const queries =
-      action && Array.isArray(action.queries)
-        ? action.queries.filter((q): q is string => typeof q === "string")
-        : [];
-    const name = type.replace(/_call$/, ""); // web_search_call → web_search
-    const status = typeof o.status === "string" ? o.status : "completed";
-    out.push({
-      id: typeof o.id === "string" ? o.id : "",
-      name,
-      args: queries.length > 0 ? JSON.stringify({ queries }) : "",
-      result: status,
-    });
+export function parseCitationText(text: string): ParsedCitation[] | null {
+  if (typeof text !== "string" || text.length === 0) return null;
+  const out: ParsedCitation[] = [];
+  // 마지막 (http(s)://...) 캡처 — 제목에 괄호가 있어도 url 만 분리.
+  const urlTail = /^(.*?)\s*\((https?:\/\/[^\s)]+)\)\s*$/;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line.startsWith("•")) continue;
+    const body = line.replace(/^•\s*/, "").trim();
+    const m = body.match(urlTail);
+    if (m) {
+      const title = m[1].trim();
+      const url = m[2];
+      out.push({ title: title.length > 0 ? title : url, url });
+      continue;
+    }
+    // 제목 없이 url 단독 — "• https://..."
+    if (/^https?:\/\/\S+$/.test(body)) {
+      out.push({ title: body, url: body });
+    }
   }
   return out.length > 0 ? out : null;
 }

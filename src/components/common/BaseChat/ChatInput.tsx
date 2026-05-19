@@ -14,7 +14,18 @@ import {
   Paperclip,
   Image as ImageIcon,
   Database,
+  X,
 } from "lucide-react";
+
+// 첨부 노출 환경분기(Plan Critic D1): dev 에서만 첨부/이미지 실동작.
+// process.env.NODE_ENV 는 Next.js 가 빌드 타임 인라인 → prod 빌드에선
+// 이 비교가 false 상수로 접혀 첨부 버튼 활성 분기가 죽은 코드로 제거되고,
+// extractText/prepareAttachments 는 useChat 의 동적 import 라 prod 번들에서
+// 물리적으로 빠진다(.next/static grep 0 검증). 함수로 둬 호출 시점 평가
+// (테스트 vi.stubEnv 가능 — 모듈 top-level 상수면 stub 무효).
+function isAttachEnabled(): boolean {
+  return process.env.NODE_ENV === "development";
+}
 
 /**
  * ChatInput — 디자인 핸드오프 InputBar 재현.
@@ -51,8 +62,13 @@ const toolChip: CSSProperties = {
 };
 
 export interface ChatInputProps {
-  /** trim 된 입력값으로 호출(빈/공백이면 호출 안 됨). */
-  onSend: (value: string) => void;
+  /**
+   * trim 된 입력값(+ 첨부)으로 호출. 텍스트 비어도 첨부 있으면 호출.
+   * files 는 ChatInput 이 store 에 결합되지 않게 콜백으로 위로 전달
+   * (순수 prop 컴포넌트 유지 — Plan Critic I2). 파일 분류/추출/전송은
+   * useChat 책임.
+   */
+  onSend: (value: string, files?: File[]) => void;
   /** 스트리밍 중이면 입력/전송 잠금(FR-03). */
   streaming: boolean;
   /** EmptyState 추천칩 등에서 입력값을 주입할 때(선택). */
@@ -65,8 +81,17 @@ export function ChatInput({
   initialValue = "",
 }: ChatInputProps): ReactNode {
   const [value, setValue] = useState(initialValue);
+  const [files, setFiles] = useState<File[]>([]);
+  // 이미지 썸네일 클릭 → 라이트박스 미리보기({url,name}|null).
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(
+    null,
+  );
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const canSend = value.trim().length > 0 && !streaming;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachEnabled = isAttachEnabled();
+  // 텍스트 또는 첨부 중 하나라도 있으면 전송 가능(첨부만 보내기 허용).
+  const hasContent = value.trim().length > 0 || files.length > 0;
+  const canSend = hasContent && !streaming;
 
   const autoGrow = useCallback(() => {
     const ta = taRef.current;
@@ -75,14 +100,34 @@ export function ChatInput({
     ta.style.height = Math.min(ta.scrollHeight, MAX_TEXTAREA_PX) + "px";
   }, []);
 
+  const addFiles = useCallback((picked: File[]) => {
+    if (picked.length === 0) return;
+    setFiles((prev) => [...prev, ...picked]);
+  }, []);
+
+  const removeFile = useCallback((idx: number) => {
+    setFiles((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  // hidden input 트리거(첨부=문서 / 이미지=image/*).
+  const openPicker = useCallback((accept: string) => {
+    const el = fileInputRef.current;
+    if (!el) return;
+    el.accept = accept;
+    el.value = ""; // 같은 파일 재선택 허용
+    el.click();
+  }, []);
+
   const submit = useCallback(() => {
     const trimmed = value.trim();
-    if (trimmed.length === 0 || streaming) return; // TC-23.1
-    onSend(trimmed);
+    // 텍스트도 첨부도 없으면 차단(TC-23.1). 첨부만 있으면 전송 허용.
+    if ((trimmed.length === 0 && files.length === 0) || streaming) return;
+    onSend(trimmed, files.length > 0 ? files : undefined);
     setValue("");
+    setFiles([]);
     const ta = taRef.current;
     if (ta) ta.style.height = "auto";
-  }, [value, streaming, onSend]);
+  }, [value, files, streaming, onSend]);
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -93,6 +138,33 @@ export function ChatInput({
       }
     },
     [submit],
+  );
+
+  // Ctrl+V — 클립보드 이미지 paste(스크린샷 붙여넣기). 이미지 파일이
+  // 있으면 첨부에 추가, 없으면(텍스트 paste) 브라우저 기본 동작 유지.
+  const onPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      if (!attachEnabled || streaming) return;
+      const dt = e.clipboardData;
+      const picked: File[] = [];
+      for (const item of Array.from(dt.items ?? [])) {
+        if (item.kind === "file" && item.type.startsWith("image/")) {
+          const f = item.getAsFile();
+          if (f) picked.push(f);
+        }
+      }
+      // items 가 비어도 files 폴백(브라우저별 차이).
+      if (picked.length === 0) {
+        for (const f of Array.from(dt.files ?? [])) {
+          if (f.type.startsWith("image/")) picked.push(f);
+        }
+      }
+      if (picked.length > 0) {
+        e.preventDefault(); // 이미지 paste 는 첨부로(텍스트 입력 방지)
+        addFiles(picked);
+      }
+    },
+    [streaming, addFiles, attachEnabled],
   );
 
   return (
@@ -137,6 +209,7 @@ export function ChatInput({
                 autoGrow();
               }}
               onKeyDown={onKeyDown}
+              onPaste={onPaste}
               placeholder={PLACEHOLDER}
               rows={1}
               aria-label="메시지 입력"
@@ -182,7 +255,204 @@ export function ChatInput({
             </button>
           </div>
 
-          {/* Tool chips — 시각 전용 mock(미구현). 클릭 no-op, title="준비 중". */}
+          {/* 첨부 미리보기 — 이미지는 썸네일만(클릭 시 라이트박스), 그 외는
+              아이콘 + 파일명 칩. 둘 다 X 로 제거. */}
+          {files.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+                marginTop: 10,
+              }}
+            >
+              {files.map((f, i) => {
+                const isImg = f.type.startsWith("image/");
+                if (isImg) {
+                  const url = URL.createObjectURL(f);
+                  return (
+                    <div
+                      key={`${f.name}-${i}`}
+                      style={{ position: "relative", flexShrink: 0 }}
+                    >
+                      {/* 썸네일만(파일명 텍스트 없음 — 사용자 요구). 클릭 시
+                          라이트박스 미리보기. */}
+                      <button
+                        type="button"
+                        onClick={() => setPreview({ url, name: f.name })}
+                        aria-label={`${f.name} 미리보기`}
+                        style={{
+                          padding: 0,
+                          border: "1px solid var(--t-neutral-8)",
+                          borderRadius: 8,
+                          background: "transparent",
+                          cursor: "zoom-in",
+                          display: "block",
+                          lineHeight: 0,
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={url}
+                          alt={f.name}
+                          style={{
+                            width: 56,
+                            height: 56,
+                            objectFit: "cover",
+                            borderRadius: 7,
+                          }}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(i)}
+                        aria-label={`${f.name} 제거`}
+                        title="제거"
+                        style={{
+                          position: "absolute",
+                          top: -7,
+                          right: -7,
+                          width: 20,
+                          height: 20,
+                          borderRadius: "50%",
+                          border: "1px solid var(--t-neutral-8)",
+                          background: "var(--surface-default)",
+                          color: "var(--text-subtle)",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          padding: 0,
+                          boxShadow: "0 2px 6px -2px rgba(15,23,42,.18)",
+                          transition: "color .12s, border-color .12s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = "var(--agent-600)";
+                          e.currentTarget.style.borderColor =
+                            "var(--agent-300)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = "var(--text-subtle)";
+                          e.currentTarget.style.borderColor =
+                            "var(--t-neutral-8)";
+                        }}
+                      >
+                        <X size={12} strokeWidth={2.4} aria-hidden />
+                      </button>
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={`${f.name}-${i}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 8px",
+                      borderRadius: 8,
+                      border: "1px solid var(--t-neutral-8)",
+                      background: "var(--t-neutral-4)",
+                      fontSize: 11.5,
+                      maxWidth: 200,
+                    }}
+                  >
+                    <Paperclip
+                      size={12}
+                      style={{ color: "var(--text-subtle)", flexShrink: 0 }}
+                      aria-hidden
+                    />
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: "var(--text-default)",
+                      }}
+                    >
+                      {f.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(i)}
+                      aria-label={`${f.name} 제거`}
+                      title="제거"
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        color: "var(--text-subtle)",
+                        display: "flex",
+                        flexShrink: 0,
+                        padding: 0,
+                      }}
+                    >
+                      <X size={13} aria-hidden />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 라이트박스 — 썸네일 클릭 시 원본 확대. 배경/닫기 클릭으로 닫힘. */}
+          {preview && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${preview.name} 미리보기`}
+              onClick={() => setPreview(null)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "rgba(0,0,0,0.7)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 100,
+                padding: 32,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                aria-label="미리보기 닫기"
+                title="닫기"
+                style={{
+                  position: "absolute",
+                  top: 20,
+                  right: 20,
+                  width: 36,
+                  height: 36,
+                  borderRadius: "50%",
+                  border: "none",
+                  background: "rgba(255,255,255,0.15)",
+                  color: "white",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <X size={20} aria-hidden />
+              </button>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={preview.url}
+                alt={preview.name}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
+                  borderRadius: 8,
+                }}
+              />
+            </div>
+          )}
+
+          {/* Tool chips — dev 에서 첨부/이미지 실동작(D1 환경분기). prod 는
+              기존 disabled mock 유지. 데이터 소스는 여전히 미구현 mock. */}
           <div
             style={{
               display: "flex",
@@ -193,11 +463,41 @@ export function ChatInput({
               borderTop: "1px solid var(--t-neutral-6)",
             }}
           >
-            <button type="button" disabled title="준비 중" style={toolChip}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              aria-hidden
+              onChange={(e) => {
+                addFiles(Array.from(e.target.files ?? []));
+              }}
+            />
+            <button
+              type="button"
+              disabled={!attachEnabled || streaming}
+              title={attachEnabled ? "파일 첨부" : "준비 중"}
+              onClick={() => openPicker(".txt,.md,.csv,.json,.pdf,.docx,text/*")}
+              style={{
+                ...toolChip,
+                cursor:
+                  attachEnabled && !streaming ? "pointer" : "not-allowed",
+              }}
+            >
               <Paperclip size={11} aria-hidden />
               첨부
             </button>
-            <button type="button" disabled title="준비 중" style={toolChip}>
+            <button
+              type="button"
+              disabled={!attachEnabled || streaming}
+              title={attachEnabled ? "이미지 첨부" : "준비 중"}
+              onClick={() => openPicker("image/png,image/jpeg,image/webp,image/gif")}
+              style={{
+                ...toolChip,
+                cursor:
+                  attachEnabled && !streaming ? "pointer" : "not-allowed",
+              }}
+            >
               <ImageIcon size={11} aria-hidden />
               이미지
             </button>

@@ -4,7 +4,6 @@ import {
   extractThinking,
   extractToolCalls,
   extractToolResult,
-  extractToolOutputs,
 } from "@/lib/agent/utils/chunkFilter";
 
 // chunkFilter 단위 테스트 (LLM 비의존, 순수 함수 — R5/FR-09).
@@ -262,7 +261,10 @@ describe("extractToolCalls — 도구 호출 델타 추출 (FR-09 거울상)", (
     expect(extractToolCalls(undefined, meta())).toBeNull();
   });
 
-  it("ServerTool 경로(additional_kwargs.tool_outputs)는 extractToolCalls 가 잡지 않는다 (채널 분리 — extractToolOutputs 전담)", () => {
+  it("미지 청크(additional_kwargs.tool_outputs)는 extractToolCalls 가 잡지 않는다 (tool_call_chunks 채널만)", () => {
+    // ServerTool→ClientTool 교체로 tool_outputs 채널은 더 이상
+    // 발생 안 함. 그래도 미지 형태 청크가 와도 extractToolCalls 가
+    // 오인하지 않고 null 반환해야 한다(채널 격리 회귀 가드 — 보존).
     const msg = {
       kwargs: {
         additional_kwargs: {
@@ -272,11 +274,10 @@ describe("extractToolCalls — 도구 호출 델타 추출 (FR-09 거울상)", (
         },
       },
     };
-    // 이중 emit 일원화: ClientTool 채널(extractToolCalls)은 ServerTool 무시.
     expect(extractToolCalls(msg, meta())).toBeNull();
   });
 
-  it("런타임 인스턴스형 additional_kwargs.tool_outputs 도 extractToolCalls 가 잡지 않는다 (최상위 경로도 채널 분리)", () => {
+  it("최상위 additional_kwargs.tool_outputs 도 extractToolCalls 가 잡지 않는다 (미지 청크 무시)", () => {
     const msg = {
       additional_kwargs: {
         tool_outputs: [
@@ -288,163 +289,8 @@ describe("extractToolCalls — 도구 호출 델타 추출 (FR-09 거울상)", (
   });
 });
 
-// ---------------------------------------------------------------------------
-// 이중 emit 일원화 회귀 가드 (이번 수정의 핵심):
-//   ServerTool(web_search) tool_outputs 청크 1개를 흘렸을 때
-//   - extractToolCalls  → null      (ClientTool 채널은 ServerTool 미포착)
-//   - extractToolOutputs → 길이 1 배열 (ServerTool 채널 단독 전담)
-//   이전엔 extractToolCalls 의 path② 가 같은 청크를 같이 잡아 tool_call 이
-//   이중 emit 되던 버그 → 두 추출기가 상호 배타(비중복) 임을 단언으로 고정.
-// ---------------------------------------------------------------------------
 
-describe("이중 emit 일원화 — web_search tool_outputs 는 단일 채널만 잡는다", () => {
-  it("ServerTool 청크 1개: extractToolCalls=null AND extractToolOutputs=길이1 (비중복·채널 분리)", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [
-            {
-              id: "ws_dedup",
-              type: "web_search_call",
-              status: "completed",
-              action: { type: "search", queries: ["q1", "q2"] },
-            },
-          ],
-        },
-      },
-    };
 
-    const clientCalls = extractToolCalls(msg, meta());
-    const serverOutputs = extractToolOutputs(msg, meta());
-
-    // ClientTool 채널은 ServerTool 을 절대 잡지 않는다(이중 emit 제거).
-    expect(clientCalls).toBeNull();
-    // ServerTool 채널만 정확히 1건 — 이전엔 양쪽이 잡아 2건이 됐다.
-    expect(serverOutputs).toEqual([
-      {
-        id: "ws_dedup",
-        name: "web_search",
-        args: JSON.stringify({ queries: ["q1", "q2"] }),
-        result: "completed",
-      },
-    ]);
-    expect(serverOutputs).toHaveLength(1);
-  });
-
-  it("ClientTool tool_call_chunks 청크는 반대로 extractToolCalls 만 잡고 extractToolOutputs=null (역방향 채널 분리)", () => {
-    const msg = {
-      kwargs: {
-        tool_call_chunks: [{ id: "c1", name: "current_time", args: "" }],
-      },
-    };
-    // 거울상: ClientTool 청크는 ServerTool 채널이 잡지 않는다.
-    expect(extractToolCalls(msg, meta())).toEqual([
-      { id: "c1", name: "current_time", args: "" },
-    ]);
-    expect(extractToolOutputs(msg, meta())).toBeNull();
-  });
-
-  it("두 채널 합산이 항상 청크당 1건 — 이중 카운트 0 (ServerTool & ClientTool 각각)", () => {
-    const serverChunk = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [{ id: "ws", type: "web_search_call", status: "completed" }],
-        },
-      },
-    };
-    const clientChunk = {
-      kwargs: { tool_call_chunks: [{ id: "c", name: "n", args: "{}" }] },
-    };
-    const count = (msg: unknown) =>
-      (extractToolCalls(msg, meta())?.length ?? 0) +
-      (extractToolOutputs(msg, meta())?.length ?? 0);
-    expect(count(serverChunk)).toBe(1); // 이전 버그: 2 (양쪽 포착)
-    expect(count(clientChunk)).toBe(1);
-  });
-});
-
-describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채널 단독 전담)", () => {
-  it("web_search_call: name='web_search', args=JSON({queries}), result=status (사용자 확정 정책)", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [
-            {
-              id: "ws_1",
-              type: "web_search_call",
-              status: "completed",
-              action: { type: "search", queries: ["a 검색", "b query"] },
-            },
-          ],
-        },
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      {
-        id: "ws_1",
-        name: "web_search",
-        args: JSON.stringify({ queries: ["a 검색", "b query"] }),
-        result: "completed",
-      },
-    ]);
-  });
-
-  it("런타임 인스턴스형(additional_kwargs 최상위) 도 추출한다", () => {
-    const msg = {
-      additional_kwargs: {
-        tool_outputs: [
-          { id: "ws_2", type: "web_search_call", status: "in_progress" },
-        ],
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      { id: "ws_2", name: "web_search", args: "", result: "in_progress" },
-    ]);
-  });
-
-  it("queries 없으면 args 빈 문자열, status 없으면 'completed' 기본", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [{ id: "x", type: "code_interpreter_call" }],
-        },
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      { id: "x", name: "code_interpreter", args: "", result: "completed" },
-    ]);
-  });
-
-  it("id 가 string 이 아니면 빈 문자열, 비-레코드 항목은 스킵", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [null, "noise", { id: 123, type: "web_search_call" }],
-        },
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      { id: "", name: "web_search", args: "", result: "completed" },
-    ]);
-  });
-
-  it("non-model_request 노드면 null (다른 노드 ServerTool 누출 차단)", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [{ id: "ws", type: "web_search_call" }],
-        },
-      },
-    };
-    expect(extractToolOutputs(msg, meta("tools"))).toBeNull();
-  });
-
-  it("tool_outputs 없으면 null (크래시 없이)", () => {
-    expect(extractToolOutputs({ kwargs: { content: "본문" } }, meta())).toBeNull();
-    expect(extractToolOutputs({ kwargs: {} }, meta())).toBeNull();
-    expect(extractToolOutputs(undefined, meta())).toBeNull();
-  });
-});
 
 describe("extractToolResult — 도구 실행 결과 추출 (FR-09 거울상)", () => {
   it("런타임 ToolMessage {type:'tool', name, content:string} → {name, result}", () => {
@@ -494,74 +340,6 @@ describe("extractToolResult — 도구 실행 결과 추출 (FR-09 거울상)", 
   });
 });
 
-describe("extractToolOutputs — ServerTool(web_search) 호출 추출 (FR-09 거울상)", () => {
-  it("model_request + tool_outputs web_search_call → {id,name:'web_search',args:queries JSON,result:status}", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [
-            {
-              id: "ws_1",
-              type: "web_search_call",
-              status: "completed",
-              action: { type: "search", queries: ["q1", "q2"] },
-            },
-          ],
-        },
-      },
-    };
-    const out = extractToolOutputs(msg, meta());
-    expect(out).toEqual([
-      {
-        id: "ws_1",
-        name: "web_search",
-        args: JSON.stringify({ queries: ["q1", "q2"] }),
-        result: "completed",
-      },
-    ]);
-  });
-
-  it("런타임 인스턴스형(additional_kwargs 최상위) 도 추출", () => {
-    const msg = {
-      additional_kwargs: {
-        tool_outputs: [{ id: "ws_2", type: "web_search_call", status: "running" }],
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      { id: "ws_2", name: "web_search", args: "", result: "running" },
-    ]);
-  });
-
-  it("queries 없으면 args 는 빈 문자열, status 없으면 'completed' 기본", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [{ id: "ws_3", type: "web_search_call" }],
-        },
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      { id: "ws_3", name: "web_search", args: "", result: "completed" },
-    ]);
-  });
-
-  it("non-model_request 노드면 null", () => {
-    const msg = {
-      kwargs: {
-        additional_kwargs: {
-          tool_outputs: [{ id: "ws", type: "web_search_call", status: "completed" }],
-        },
-      },
-    };
-    expect(extractToolOutputs(msg, meta("tools"))).toBeNull();
-  });
-
-  it("tool_outputs 부재면 null", () => {
-    expect(extractToolOutputs({ kwargs: { content: "본문" } }, meta())).toBeNull();
-    expect(extractToolOutputs({ kwargs: { additional_kwargs: {} } }, meta())).toBeNull();
-    expect(extractToolOutputs(undefined, meta())).toBeNull();
-  });
-});
 
 // ---------------------------------------------------------------------------
 // FR-09 음성 가드 — filterChunk 가 도구/사고 텍스트를 본문으로 절대 흘리지 않음.

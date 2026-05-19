@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 기업정보 분석 — 에이전트 UI 리디자인 제안</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; }
+    #root { width: 100%; height: 100vh; overflow: hidden; }
+    body { font-family: 'Pretendard', 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+    .dc-shell input, .dc-shell button, .dc-shell textarea { font-family: inherit; }
+  </style>
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="shell-shared.jsx"></script>
+  <script type="text/babel" src="dart-data.jsx"></script>
+  <script type="text/babel" src="dart-shared.jsx"></script>
+  <script type="text/babel" src="dart-parts.jsx"></script>
+  <script type="text/babel" src="dart-shells.jsx"></script>
+
+  <script type="text/babel" data-presets="react">
+    function App() {
+      return (
+        <DesignCanvas>
+          {/* ========== 01 · 전체 화면 — 디자인 방향 ========== */}
+          <DCSection
+            id="full-screens"
+            title="01 · 전체 화면 — 디자인 방향 3종"
+            subtitle="에이전트 디자인 시스템(Pretendard, 보라 accent, 따뜻한 크림 배경)에 맞춰 'AI 기업정보 분석' 메뉴를 재구성. 11개 평면 탭 → 5개 그룹 탭으로 정리하고, AI 분석은 모달 대신 도킹 가능한 사이드 패널로 통합."
+          >
+            <DCArtboard id="dart-a" label="A · 기존 호환 · 평면 11탭 (가장 보수적)" width={1480} height={900}>
+              <DartFull_A />
+            </DCArtboard>
+            <DCArtboard id="dart-b" label="B · 그룹 탭 (5섹션 + 부제) · 추천" width={1480} height={900}>
+              <DartFull_B />
+            </DCArtboard>
+            <DCArtboard id="dart-c" label="C · AI-First · 사이드 패널 도킹 (에이전트 정체성 강화)" width={1640} height={900}>
+              <DartFull_C />
+            </DCArtboard>
+            <DCArtboard id="dart-d" label="D · 공시 상세 (서브탭 + AI 패널 · 사용 시나리오)" width={1640} height={900}>
+              <DartFull_D />
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 02 · 시작 화면 / 검색 상태 ========== */}
+          <DCSection
+            id="empty"
+            title="02 · 시작 화면 — 기업 검색 진입점"
+            subtitle="기업을 선택하지 않은 상태. 단순 검색창 한 줄이 아니라 추천 시작 질문과 최근 본 기업을 함께 노출해 진입 마찰을 낮춤."
+          >
+            <DCArtboard id="empty-a" label="A · 추천 질문 + 최근 본 기업 (정적 진입)" width={1480} height={760}>
+              <EmptyState_A />
+            </DCArtboard>
+            <DCArtboard id="empty-b" label="B · 검색 자동완성 활성 상태 (실시간 매칭)" width={1480} height={760}>
+              <EmptyState_B />
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 03 · 기업 개요 카드 ========== */}
+          <DCSection
+            id="company-card"
+            title="03 · 기업 개요 카드"
+            subtitle="기업 식별 정보 표시 방식. A는 4열 정보 그리드(상세), B는 1줄 컴팩트(시세 메트릭 동시 노출)."
+          >
+            <DCArtboard id="company-a" label="A · 4열 정보 그리드 (정보 중심)" width={1100} height={260}>
+              <div style={{ padding: 20, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }} className="dc-shell">
+                <CompanyHeader variant="A" />
+              </div>
+            </DCArtboard>
+            <DCArtboard id="company-b" label="B · 한 줄 컴팩트 + 시세 메트릭" width={1100} height={130}>
+              <div style={{ padding: 20, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }} className="dc-shell">
+                <CompanyHeader variant="B" />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 04 · AI 분석 인터랙션 ========== */}
+          <DCSection
+            id="ai-panel"
+            title="04 · AI 분석 인터랙션 베리에이션"
+            subtitle="기존: 보라색 'AI 분석' 버튼 → 모달 풀스크린. 에이전트 정체성을 살려 사이드 패널 / 인라인 카드 / 모달 3가지로 비교."
+          >
+            <DCArtboard id="ai-a" label="A · 사이드 패널 도킹 (Cursor·Claude 스타일)" width={420} height={780}>
+              <div className="dc-shell" style={{ width: '100%', height: '100%', display: 'flex', background: 'var(--surface-subtle)' }}>
+                <AIAnalysisPanel width={420} />
+              </div>
+            </DCArtboard>
+            <DCArtboard id="ai-b" label="B · 인라인 카드 (페이지 컨텐츠와 통합)" width={760} height={780}>
+              <div className="dc-shell" style={{ padding: 24, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box', overflow: 'auto' }}>
+                <AIInlinePanel_B />
+              </div>
+            </DCArtboard>
+            <DCArtboard id="ai-c" label="C · 모달 (기존 방식 · 리스타일링)" width={1100} height={780}>
+              <AIModal_C />
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 05 · 탭 시스템 ========== */}
+          <DCSection
+            id="tabs"
+            title="05 · 탭 시스템 — 11개 → 5개 그룹화"
+            subtitle="원본의 11개 평면 탭은 가로 스크롤이 필요하고 위계가 없음. 5개 의미 그룹 + 부제 + 서브탭으로 정리해 정보 탐색을 개선."
+          >
+            <DCArtboard id="tabs-a" label="A · 평면 11탭 (기존 방식)" width={1380} height={56}>
+              <div className="dc-shell" style={{ background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }}>
+                <FlatTabBar />
+              </div>
+            </DCArtboard>
+            <DCArtboard id="tabs-b" label="B · 그룹 5탭 + 부제 (추천)" width={1380} height={76}>
+              <div className="dc-shell" style={{ background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }}>
+                <GroupedTabBar activeId="overview" />
+              </div>
+            </DCArtboard>
+            <DCArtboard id="tabs-c" label="C · 그룹 탭 + 서브탭 (공시 그룹 활성)" width={1380} height={130}>
+              <div className="dc-shell" style={{ background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }}>
+                <GroupedTabBar activeId="disc" />
+                <GroupSubNav items={[{id:'dart-d', label:'DART 공시'}, {id:'krx-d', label:'KRX 공시'}]} activeId="dart-d" />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 06 · KPI 카드 ========== */}
+          <DCSection
+            id="kpi"
+            title="06 · 주요 지표 카드"
+            subtitle="원본의 KPI 그리드는 텍스트만 있어 시계열 흐름을 알기 어려웠음. 작은 스파크라인과 전년 대비 증감을 카드 안에 통합."
+          >
+            <DCArtboard id="kpi-grid" label="KPI 그리드 (8지표 · 스파크라인 + 증감)" width={1100} height={280}>
+              <div style={{ padding: 20, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }} className="dc-shell">
+                {INDICATORS.map(ind => <KPICard key={ind.id} ind={ind} compact />)}
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 07 · AI 인사이트 스트립 ========== */}
+          <DCSection
+            id="ai-strip"
+            title="07 · AI 인사이트 스트립 (페이지 상단)"
+            subtitle="기업 선택 직후 자동 생성되는 한 줄 요약. 사용자가 'AI 분석' 버튼을 누르지 않아도 핵심 신호를 먼저 받게 함."
+          >
+            <DCArtboard id="ai-strip-a" label="자동 요약 스트립" width={1100} height={120}>
+              <div style={{ padding: 20, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }} className="dc-shell">
+                <AIInsightStrip />
+              </div>
+            </DCArtboard>
+          </DCSection>
+
+          {/* ========== 08 · 공시 / 주주 ========== */}
+          <DCSection
+            id="data-blocks"
+            title="08 · 데이터 블록"
+            subtitle="공시 리스트와 주주 구성 등 데이터 표현 컴포넌트."
+          >
+            <DCArtboard id="disc" label="공시 리스트 (배지 + 컴팩트 row)" width={900} height={400}>
+              <div style={{ padding: 20, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }} className="dc-shell">
+                <DisclosureList limit={6} />
+              </div>
+            </DCArtboard>
+            <DCArtboard id="share" label="주주 구성 (도넛 + 범례)" width={520} height={300}>
+              <div style={{ padding: 20, background: 'var(--surface-subtle)', height: '100%', boxSizing: 'border-box' }} className="dc-shell">
+                <ShareholderBlock />
+              </div>
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+
+    function mount() {
+      if (
+        !window.DartFull_A || !window.DartFull_B || !window.DartFull_C ||
+        !window.EmptyState_A || !window.EmptyState_B ||
+        !window.AIAnalysisPanel || !window.AIInlinePanel_B || !window.AIModal_C ||
+        !window.FlatTabBar || !window.GroupedTabBar || !window.GroupSubNav ||
+        !window.KPICard || !window.AIInsightStrip || !window.DisclosureList || !window.ShareholderBlock
+      ) {
+        return setTimeout(mount, 30);
+      }
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    }
+    mount();
+  </script>
+</body>
+</html>

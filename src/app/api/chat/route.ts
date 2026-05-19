@@ -3,6 +3,13 @@ export const dynamic = "force-dynamic";
 
 import { z } from "zod";
 import { createStream } from "@/lib/agent/agent";
+import { ALLOWED_MODELS } from "@/lib/agent/harness/models";
+import {
+  MAX_QUERY_LEN,
+  MAX_IMAGES_PER_TURN,
+  MAX_IMAGE_DATA_URL_LEN,
+  IMAGE_DATA_URL_RE,
+} from "@/lib/files/limits";
 import type { SseEvent } from "@/types";
 
 /**
@@ -27,9 +34,28 @@ import type { SseEvent } from "@/types";
 
 // 본문 계약 (PRD §1.3 FR-01 / AD-4). 알 수 없는 필드는 zod 기본 정책대로
 // 무시(strict 아님 — TC-16.3 "무시 후 정상 진행" 일관성).
+// FR-14·FR-15 / AD-14 / Plan Critic C5 — model 검증 SSOT 는 이 zod enum.
+// 화이트리스트 밖/타입오류는 safeParse 실패 → 기존 badRequest(AD-4: JSON
+// 400, SSE 아님) 경로로 자동 처리(route 에 수동 if 검증 추가 0줄 — R2).
+// E1/E2/A1 (Plan Critic) — 검증 SSOT 는 이 zod. 한도는 lib/files/limits
+// 상수(클라이언트와 공유 — 정책 단일화). 위반은 safeParse 실패 → 기존
+// badRequest(AD-4: JSON 400, SSE 아님) 경로로 자동 처리(수동 if 0줄 — R2).
+//  - query: 길이 상한(추출 텍스트 폭주 차단)
+//  - images: data URL prefix 화이트리스트(임의 바이너리 주입 차단) +
+//    개별 크기 상한 + 턴당 개수 상한(checkpointer 누적 완화)
 const bodySchema = z.object({
-  query: z.string(),
+  query: z.string().max(MAX_QUERY_LEN),
   conversationId: z.string().optional(),
+  model: z.enum(ALLOWED_MODELS).optional(),
+  images: z
+    .array(
+      z
+        .string()
+        .regex(IMAGE_DATA_URL_RE)
+        .max(MAX_IMAGE_DATA_URL_LEN),
+    )
+    .max(MAX_IMAGES_PER_TURN)
+    .optional(),
 });
 
 /** AD-4 — 검증 실패 응답은 SSE 아닌 JSON 400 으로 고정. */
@@ -84,7 +110,12 @@ export async function POST(req: Request): Promise<Response> {
       controller.enqueue(encodeSse({ type: "thread", conversationId }));
 
       try {
-        gen = await createStream({ query, conversationId });
+        gen = await createStream({
+          query,
+          conversationId,
+          model: parsed.data.model,
+          images: parsed.data.images,
+        });
         for await (const ev of gen) {
           controller.enqueue(encodeSse(ev));
         }

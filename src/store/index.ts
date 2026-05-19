@@ -4,17 +4,30 @@
 
 import { createStore, useStore } from "zustand";
 import type { StoreApi } from "zustand";
-import type { ChatMessage } from "@/types";
+import type { ChatMessage, SseEvent, WebSource } from "@/types";
 import {
   reduceReasoning,
   reduceToolCall,
   reduceToolResult,
 } from "@/lib/agent/utils/thinkingSteps";
+import { parseSseStream } from "@/lib/agent/utils/sseStreamParser";
+import { parseCitationText } from "@/lib/agent/utils/chunkFilter";
+
+/**
+ * 마지막으로 도착한 스트림 이벤트 종류(Slice M — 사고 패널 동적
+ * 게이트). 'token'=답변 본문 출력 중(중간·최종 무관), 'thinking'/
+ * 'tool'=사고/도구 진행 중, null=스트림 종료(done) 또는 미시작.
+ * ThinkingPanel 이 'token' 이면 실시간 표시를 숨기고, thinking/tool
+ * 로 바뀌면 다시 보여준다(출력↔사고 동적 토글).
+ */
+export type StreamEventKind = "token" | "thinking" | "tool" | null;
 
 export interface ChatState {
   messages: ChatMessage[];
   conversationId: string | null;
   isStreaming: boolean;
+  /** 직전 SSE 이벤트 종류. 사고 패널 출력/사고 동적 게이트용. */
+  lastStreamEvent: StreamEventKind;
   error: string | null;
   provider: string;
   model: string;
@@ -37,8 +50,62 @@ export interface ChatActions {
     result: string,
     id?: string,
   ) => void;
+  /**
+   * 마지막 assistant 메시지의 참고 출처(References 패널)를 교체한다.
+   * web_search citations 유래. 본문/사고와 분리된 별도 채널(FR-09).
+   * 같은 출처가 누적 청크로 여러 번 와도 멱등(전체 교체 — 최신 우선).
+   */
+  setSourcesOnLastAssistant: (sources: WebSource[]) => void;
   setConversationId: (conversationId: string) => void;
+  /**
+   * 과거 대화 복원 (Plan Critic C1). conversationId 와 messages 를 **단일
+   * set 으로 원자 커밋**한다. resetChat 의 대칭(새 thread+빈 messages ↔
+   * 기존 thread+복원 messages). 분리 액션 2개로 쪼개면 복원 직후 send 가
+   * 읽는 conversationId 가 중간 상태일 수 있어 새 thread 발급 위험.
+   */
+  loadConversation: (conversationId: string, messages: ChatMessage[]) => void;
+  /**
+   * SSE 스트리밍을 store 싱글톤에서 시작·소비한다(메뉴 이동 지속의 핵심).
+   *
+   * fetch + SSE 루프가 이 액션 클로저(=store 인스턴스)에 묶이므로
+   * ChatPanel 언마운트와 무관하게 끝까지 돈다. 재진입 시 컴포넌트는
+   * store 의 messages/isStreaming 을 그냥 구독하면 진행 상태가 그대로
+   * 보인다(웹 조사 확인: Zustand 모듈 싱글톤은 클라이언트 SPA 생애 persist).
+   *
+   * 관심사 분리: 첨부 추출/이미지 변환(@/lib/files 동적 import)은 호출부
+   * (useChat)에 남기고, 이 액션은 **이미 준비된 입력**만 받아 fetch+SSE
+   * 만 담당한다(store 의 LLM/파일 비의존 원칙 유지).
+   *
+   * 중복 가드: 이미 진행 중(isStreaming)이면 no-op(사용자 결정 — 진행
+   * 중이면 무시). user+assistant 메시지 추가까지 이 액션 안에서 원자적
+   * 으로 수행한다(추가 시점과 스트림 시작 사이 race 차단 — loadConversation
+   * 원자성과 동일 정신).
+   */
+  startStream: (input: {
+    /** 서버 전송용 쿼리(첨부 텍스트 추출분이 합쳐진 최종 형태). */
+    query: string;
+    /** 메시지 버블에 표시할 원본 사용자 입력(첨부 추출 전 trim 값). */
+    displayContent?: string;
+    images?: string[];
+    /** user 메시지 버블의 첨부 칩 메타(파일명·썸네일). */
+    attachments?: ChatMessage["attachments"];
+  }) => Promise<void>;
+  /**
+   * 실제 진행 중인 SSE fetch 가 있는지(=AbortController 살아있음).
+   * isStreaming 플래그와 구분되는 신뢰 신호: ChatPanel 의 stale 복구
+   * effect 가 "stale true(진짜 fetch 없음)" 와 "live true(메뉴 다녀와도
+   * 스트림 진행 중)" 를 구분하는 데 쓴다(무조건 false 화 → 살아있는
+   * 스트림 끊김 버그 차단). state 아님 — 액션 호출로 현재값 조회.
+   */
+  isStreamActive: () => boolean;
   setStreaming: (isStreaming: boolean) => void;
+  /**
+   * 직전 SSE 이벤트 종류 기록(Slice M). useChat 이 이벤트 분기마다
+   * 호출. ThinkingPanel 이 'token'(출력 중)이면 실시간 숨김.
+   */
+  setLastStreamEvent: (kind: StreamEventKind) => void;
+  /** 런타임 선택 모델 설정(FR-16). resetChat 에도 보존됨(AD-15). */
+  setModel: (model: string) => void;
   finalizeLastAssistant: () => void;
   setError: (error: string | null) => void;
   resetChat: () => void;
@@ -50,18 +117,82 @@ const initialState: ChatState = {
   messages: [],
   conversationId: null,
   isStreaming: false,
+  lastStreamEvent: null,
   error: null,
   provider: "",
   model: "",
 };
 
 /**
+ * SSE raw 이벤트를 타입 가드로 좁힌다(파서는 unknown 을 yield).
+ * useChat 에 있던 동일 가드를 store 로 이동(SSE 소비가 store 로 이사 —
+ * 단일 소비처). 순수 함수 — LLM/파일 비의존(store 원칙 유지).
+ */
+function asSseEvent(raw: unknown): SseEvent | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const ev = raw as Record<string, unknown>;
+  switch (ev.type) {
+    case "thread":
+      return typeof ev.conversationId === "string"
+        ? { type: "thread", conversationId: ev.conversationId }
+        : null;
+    case "token":
+      return typeof ev.text === "string"
+        ? { type: "token", text: ev.text }
+        : null;
+    case "thinking":
+      return typeof ev.text === "string"
+        ? { type: "thinking", text: ev.text }
+        : null;
+    case "tool_call":
+      return typeof ev.name === "string" || typeof ev.args === "string"
+        ? {
+            type: "tool_call",
+            id: typeof ev.id === "string" ? ev.id : "",
+            name: typeof ev.name === "string" ? ev.name : "",
+            args: typeof ev.args === "string" ? ev.args : "",
+          }
+        : null;
+    case "tool_result":
+      return typeof ev.result === "string"
+        ? {
+            type: "tool_result",
+            id: typeof ev.id === "string" ? ev.id : "",
+            name: typeof ev.name === "string" ? ev.name : "tool",
+            result: ev.result,
+          }
+        : null;
+    case "done":
+      return { type: "done" };
+    case "error":
+      return {
+        type: "error",
+        message:
+          typeof ev.message === "string" ? ev.message : "알 수 없는 오류",
+      };
+    default:
+      return null;
+  }
+}
+
+/**
  * 격리된 store 인스턴스를 생성한다(테스트·SSR 안전).
  * 싱글톤(chatStore)과 useChatStore 훅은 이 팩토리를 재사용한다.
  */
 export function createChatStore(): StoreApi<ChatStore> {
-  return createStore<ChatStore>((set) => ({
+  // 진행 중 스트림의 AbortController. state 가 아니라 팩토리 클로저의
+  // 비-상태 변수 — set 으로 넣으면 불필요한 리렌더 유발, 그리고 인스턴스
+  // 별 격리(테스트 안전). 명시 중단(stopStream)은 이번 범위 외지만
+  // 핸들은 보관해 둔다(후속 슬라이스 + 재전송 시 정리).
+  let activeController: AbortController | null = null;
+
+  return createStore<ChatStore>((set, get) => ({
     ...initialState,
+
+    // 실제 fetch 진행 신호 = AbortController 보유 여부(클로저 변수).
+    // startStream 진입 시 set, finally 에서 null. ChatPanel stale
+    // 복구가 이 신호로 live/stale 을 가른다.
+    isStreamActive: () => activeController !== null,
 
     addMessage: (message) =>
       set((state) => ({ messages: [...state.messages, message] })),
@@ -130,9 +261,28 @@ export function createChatStore(): StoreApi<ChatStore> {
         };
       }),
 
+    // 참고 출처 전체 교체(멱등). last 가 assistant 일 때만.
+    // 빈 배열이면 무시(검색했으나 인용 0 — 패널 미표시 유지).
+    setSourcesOnLastAssistant: (sources) =>
+      set((state) => {
+        const last = state.messages[state.messages.length - 1];
+        if (!last || last.role !== "assistant") return state;
+        if (sources.length === 0) return state;
+        return {
+          messages: [
+            ...state.messages.slice(0, -1),
+            { ...last, sources },
+          ],
+        };
+      }),
+
     setConversationId: (conversationId) => set({ conversationId }),
 
     setStreaming: (isStreaming) => set({ isStreaming }),
+
+    setLastStreamEvent: (kind) => set({ lastStreamEvent: kind }),
+
+    setModel: (model) => set({ model }),
 
     // 스트림 종료 마커. 현재는 부수효과 없음(메시지 내용 보존, 멱등).
     // useChat 의 finally 입력-잠금-해제 회귀 가드 지점(TC-20.4).
@@ -147,9 +297,137 @@ export function createChatStore(): StoreApi<ChatStore> {
         messages: [],
         error: null,
         isStreaming: false,
+        lastStreamEvent: null,
         provider: state.provider,
         model: state.model,
       })),
+
+    // 과거 대화 복원 (C1). resetChat 과 대칭 — 단일 set 원자 커밋으로
+    // conversationId(=기존 thread_id) + messages 를 동시 교체한다. 복원
+    // 직후 useChat.send 가 이 conversationId 를 읽어 body 에 실으면
+    // 서버 checkpointer 가 같은 thread 히스토리를 이어받는다(맥락 연속).
+    // provider/model 은 보존(FR-07 — resetChat 동일 정책).
+    loadConversation: (conversationId, messages) =>
+      set((state) => ({
+        conversationId,
+        messages,
+        error: null,
+        isStreaming: false,
+        provider: state.provider,
+        model: state.model,
+      })),
+
+    // SSE 소비를 store 싱글톤으로(메뉴 이동 지속의 핵심). fetch+루프가
+    // 이 액션 클로저(store 인스턴스)에 묶여 ChatPanel 언마운트와 무관
+    // 하게 끝까지 돈다. useChat 에 있던 fetch+SSE 루프를 그대로 이사
+    // (FR-09 분기 로직 무변경 — token/thinking 분리 동일).
+    startStream: async ({ query, displayContent, images, attachments }) => {
+      // 중복 가드(사용자 결정: 진행 중이면 무시). store 레벨로 끌어
+      // 올려 어디서 호출돼도 단일 진실(이전엔 useChat 가드).
+      if (get().isStreaming) return;
+
+      // user + 빈 assistant 메시지를 원자 추가 + 스트리밍 시작(추가
+      // 시점과 스트림 사이 race 차단 — loadConversation 원자성 정신).
+      // 버블엔 displayContent(첨부 추출 전 원문)를 쓰고, 서버엔 query
+      // (추출 텍스트 합본)를 보낸다(첨부 칩 + 추출본 둘 다 보존).
+      const userMsg: ChatMessage = {
+        role: "user",
+        content: displayContent ?? query,
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      };
+      set((state) => ({
+        error: null,
+        isStreaming: true,
+        messages: [
+          ...state.messages,
+          userMsg,
+          { role: "assistant", content: "" },
+        ],
+      }));
+
+      activeController = new AbortController();
+      try {
+        // R3 — body 엔 현재 turn 입력만. conversationId/model 동봉
+        // (턴 재사용 / 런타임 모델). 검증은 서버 zod enum 이 SSOT.
+        const { conversationId, model } = get();
+        const body: {
+          query: string;
+          conversationId?: string;
+          model?: string;
+          images?: string[];
+        } = { query };
+        if (conversationId) body.conversationId = conversationId;
+        if (model) body.model = model;
+        if (images) body.images = images;
+
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: activeController.signal,
+        });
+
+        // 비-200(AD-4: Zod/공백 거부 → 400 JSON {error}) 처리.
+        if (!res.ok) {
+          let message = `요청 실패 (HTTP ${res.status})`;
+          try {
+            const data = (await res.json()) as { error?: unknown };
+            if (typeof data.error === "string") message = data.error;
+          } catch {
+            /* JSON 아님 — 기본 메시지 유지 */
+          }
+          set({ error: message });
+          return;
+        }
+
+        // 정상 흐름: SSE 파싱 → 스토어 구동(이벤트 분기 무변경 — FR-09
+        // token/thinking 분리 그대로 이사. set/get 으로 직접 구동).
+        for await (const raw of parseSseStream(res.body)) {
+          const ev = asSseEvent(raw);
+          if (!ev) continue;
+          const s = get();
+          if (ev.type === "thread") {
+            s.setConversationId(ev.conversationId);
+          } else if (ev.type === "token") {
+            s.setLastStreamEvent("token");
+            s.appendToLastAssistant(ev.text);
+          } else if (ev.type === "thinking") {
+            s.setLastStreamEvent("thinking");
+            s.appendThinkingToLastAssistant(ev.text);
+          } else if (ev.type === "tool_call") {
+            s.setLastStreamEvent("tool");
+            s.appendToolCallToLastAssistant({
+              id: ev.id,
+              name: ev.name,
+              args: ev.args,
+            });
+          } else if (ev.type === "tool_result") {
+            s.setLastStreamEvent("tool");
+            s.setToolResultOnLastAssistant(ev.name, ev.result, ev.id);
+            if (ev.name === "web_search") {
+              const sources = parseCitationText(ev.result);
+              if (sources) s.setSourcesOnLastAssistant(sources);
+            }
+          } else if (ev.type === "error") {
+            s.setError(ev.message);
+            break;
+          } else if (ev.type === "done") {
+            break;
+          }
+        }
+      } catch (err) {
+        // fetch/스트림 throw(네트워크 단절 등) → 에러 표면화(터미널 아님).
+        const message = err instanceof Error ? err.message : String(err);
+        set({ error: message });
+      } finally {
+        // 어떤 경로든 입력 잠금 해제 + finalize(누락 시 입력 고착).
+        activeController = null;
+        const s = get();
+        s.setStreaming(false);
+        s.setLastStreamEvent(null);
+        s.finalizeLastAssistant();
+      }
+    },
   }));
 }
 

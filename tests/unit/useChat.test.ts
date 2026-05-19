@@ -100,6 +100,37 @@ describe("useChat — 전송 가드 (TC-23.1/23.2)", () => {
     const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
     expect(body.query).toBe("안녕");
   });
+
+  // --- 런타임 모델 선택: fetch body 에 store.model 동봉 (FR-14 / AD-15) ---
+  it("store.model 이 설정돼 있으면 fetch body 에 model 을 동봉한다", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "token", text: "hi" },
+      { type: "done" },
+    ]);
+    chatStore.getState().setModel("gpt-5.5");
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("안녕");
+    });
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBe("gpt-5.5");
+    expect(body.query).toBe("안녕");
+  });
+
+  it("store.model 이 빈 문자열이면 model 을 동봉하지 않는다(서버 env 경로)", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "done" },
+    ]);
+    chatStore.getState().setModel("");
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("안녕");
+    });
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.model).toBeUndefined();
+  });
 });
 
 describe("useChat — 정상 스트리밍 → store 구동 (TC-1.x/20.2)", () => {
@@ -243,5 +274,114 @@ describe("useChat — conversationId 재사용 (R3 / TC-3.5)", () => {
       (spy.mock.calls[0][1] as RequestInit).body as string,
     );
     expect(firstBody.conversationId).toBeUndefined();
+  });
+});
+
+// --- 첨부: send(input, files) (Slice E2 / FR-multimodal) ---
+// extractText 는 useChat 이 동적 import → vi.mock 으로 가로챔(D1 동적import
+// 경로 + LLM/라이브러리 무의존 단위 검증).
+// extractTextFromFile 만 모킹하고 pickFormat 은 실제 구현 보존
+// (prepareAttachments.classifyAttachment 가 pickFormat 을 의존 — 모듈
+// 전체 모킹 시 classifyAttachment 가 깨짐).
+vi.mock("@/lib/files/extractText", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/files/extractText")>();
+  return {
+    ...actual,
+    extractTextFromFile: vi.fn(async (f: File) =>
+      f.name.endsWith(".bad")
+        ? Promise.reject(new Error("손상된 파일"))
+        : `[추출:${f.name}]`,
+    ),
+  };
+});
+
+function imgFile(name = "p.png"): File {
+  return new File(["IMG"], name, { type: "image/png" });
+}
+function txtFile(name = "n.txt"): File {
+  return new File(["T"], name, { type: "text/plain" });
+}
+
+describe("useChat — 첨부 처리 (이미지/텍스트 분기)", () => {
+  it("이미지 첨부 → body.images 에 data URL 동봉, query 는 원문 유지", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "done" },
+    ]);
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("이 사진?", [imgFile()]);
+    });
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.query).toBe("이 사진?");
+    expect(Array.isArray(body.images)).toBe(true);
+    expect(body.images[0]).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("텍스트/PDF/DOCX 첨부 → 추출 텍스트가 query 에 합쳐짐(images 없음)", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "done" },
+    ]);
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("요약해줘", [txtFile("doc.txt")]);
+    });
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.query).toContain("요약해줘");
+    expect(body.query).toContain("[추출:doc.txt]");
+    expect(body.images).toBeUndefined();
+  });
+
+  it("이미지+텍스트 혼합 → images + query 둘 다 채워짐", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "done" },
+    ]);
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("분석", [imgFile(), txtFile()]);
+    });
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.images).toHaveLength(1);
+    expect(body.query).toContain("[추출:n.txt]");
+  });
+
+  it("추출 실패(손상 파일) → setError, fetch 미호출(E3)", async () => {
+    const spy = mockFetchOk([{ type: "done" }]);
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("q", [txtFile("broken.bad")]);
+    });
+    expect(spy).not.toHaveBeenCalled();
+    expect(chatStore.getState().error).toBeTruthy();
+  });
+
+  it("첨부만 있고 query 비어도 전송 가능(파일만 보내기)", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "done" },
+    ]);
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("", [imgFile()]);
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.images).toHaveLength(1);
+  });
+
+  it("files 없으면 기존 경로 무회귀(images 키 없음)", async () => {
+    const spy = mockFetchOk([
+      { type: "thread", conversationId: "c-1" },
+      { type: "done" },
+    ]);
+    const { result } = renderHook(() => useChat());
+    await act(async () => {
+      await result.current.send("일반 메시지");
+    });
+    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.query).toBe("일반 메시지");
+    expect(body.images).toBeUndefined();
   });
 });

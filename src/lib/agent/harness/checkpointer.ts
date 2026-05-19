@@ -66,11 +66,64 @@ function makeLazySaver(connString: string): SqliteSaver {
 }
 
 /**
- * env 분기로 lazy checkpointer 핸들을 만든다. 호출만으로는 fs side
- * effect/saver 생성이 없다 (AD-2). 반환값은 BaseCheckpointSaver 로
- * createDeepAgent 의 checkpointer 옵션에 그대로 주입 가능.
+ * globalThis 싱글톤 (R6 / Plan Critic C2). registry(그래프 주입)와 대화
+ * 히스토리 API 가 각각 createCheckpointer/getCheckpointer 를 호출해도 같은
+ * env 면 **동일 lazy 핸들**을 공유해야 한다. 공유가 깨지면 :memory: 모드에서
+ * API 가 채팅과 별개의 빈 in-memory DB 를 읽고(목록 항상 빔), 파일 모드에선
+ * "같은 경로" 우연 결합에 의존하는 fragile 설계가 된다.
+ *
+ * 캐시 단위는 lazy 핸들(Proxy) 자체다. Proxy 를 캐시해도 내부 real saver 는
+ * 여전히 첫 멤버 접근 시점에 1회 생성되므로 AD-2 lazy 불변식이 유지된다
+ * (인스턴스 획득만으로 fs side effect 0). 키는 backend|connString 으로
+ * env 조합을 구분(테스트가 여러 env 로 호출해도 오염 0). agent.ts 의
+ * globalThis.__agent 패턴을 그대로 미러링한다.
+ */
+type CheckpointerGlobal = { byKey?: Map<string, SqliteSaver> };
+const cg = globalThis as typeof globalThis & {
+  __checkpointer?: CheckpointerGlobal;
+};
+
+function singletonKey(env: CheckpointerEnv): string {
+  const backend = (env.HARNESS_CHECKPOINTER ?? "sqlite").trim().toLowerCase();
+  return `${backend}|${resolveConnString(env)}`;
+}
+
+function getOrCreateSingleton(env: CheckpointerEnv): SqliteSaver {
+  if (!cg.__checkpointer) cg.__checkpointer = {};
+  if (!cg.__checkpointer.byKey) cg.__checkpointer.byKey = new Map();
+  const key = singletonKey(env);
+  const cached = cg.__checkpointer.byKey.get(key);
+  if (cached) return cached;
+  const handle = makeLazySaver(resolveConnString(env));
+  cg.__checkpointer.byKey.set(key, handle);
+  return handle;
+}
+
+/**
+ * env 분기로 lazy checkpointer 핸들을 만든다(env 당 1회, 이후 메모이즈).
+ * 호출만으로는 fs side effect/saver 생성이 없다 (AD-2). 반환값은
+ * BaseCheckpointSaver 로 createDeepAgent 의 checkpointer 옵션에 그대로 주입
+ * 가능. registry.ts 의 유일한 호출처 — 시그니처 불변이라 R2(토글 diff 0줄)
+ * 유지.
  */
 export function createCheckpointer(env: CheckpointerEnv): SqliteSaver {
-  const connString = resolveConnString(env);
-  return makeLazySaver(connString);
+  return getOrCreateSingleton(env);
+}
+
+/**
+ * 대화 히스토리 API 진입점 (Plan Critic C2). registry 가 그래프에 주입한
+ * 것과 **동일한** saver 인스턴스를 돌려준다. createCheckpointer 와 같은
+ * 싱글톤을 공유하므로 호출 순서에 무관하게 1 인스턴스다.
+ */
+export function getCheckpointer(env: CheckpointerEnv): SqliteSaver {
+  return getOrCreateSingleton(env);
+}
+
+/**
+ * 테스트 전용 — globalThis 싱글톤 캐시를 비운다. vitest 의 모듈 격리는
+ * globalThis 까지 리셋하지 않으므로 테스트 간 핸들이 누수된다(다른 env
+ * 케이스가 이전 핸들을 재사용). prod 코드에서 호출 금지.
+ */
+export function __resetCheckpointerSingletonForTest(): void {
+  if (cg.__checkpointer) cg.__checkpointer.byKey = new Map();
 }

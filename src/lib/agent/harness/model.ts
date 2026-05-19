@@ -1,6 +1,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { isAllowedModel, MODEL_PROVIDER } from "./models";
 
 /**
  * LLM 프로바이더 추상화 (FR-10).
@@ -46,10 +47,34 @@ export function resolveProvider(env: ModelEnv): SupportedProvider {
  * provider 에 맞는 ChatModel 인스턴스를 생성한다.
  * provider 검증이 생성자 호출보다 먼저 일어난다 (TC-17.4: 잘못된 값이면
  * 어떤 provider 생성자도 호출되지 않음).
+ *
+ * modelOverride (FR-14 / AD-12·AD-14 — 런타임 모델 선택, Plan Critic C1):
+ * 지정되면 env.LLM_MODEL 대신 그 모델을 쓰고, provider 도 env.LLM_PROVIDER
+ * 가 아니라 MODEL_PROVIDER[model] 로 역산한다(.env 가 anthropic 이어도
+ * 화이트리스트 OpenAI 모델은 OpenAI 로 라우팅 — 화이트리스트가 SSOT).
+ * 화이트리스트 밖 값은 여기서 throw(defense-in-depth — route zod enum 이
+ * 1차 차단하나 이 경계도 방어해 생성자/과금 경로 미진입).
  */
-export function createModel(env: ModelEnv): BaseChatModel {
-  const provider = resolveProvider(env); // 잘못된 값이면 여기서 throw
-  const model = env.LLM_MODEL?.trim();
+export function createModel(
+  env: ModelEnv,
+  modelOverride?: string,
+): BaseChatModel {
+  let provider: SupportedProvider;
+  let model: string | undefined;
+
+  if (modelOverride !== undefined) {
+    if (!isAllowedModel(modelOverride)) {
+      throw new Error(
+        `Unsupported model override: "${modelOverride}". ` +
+          `Allowed: ${Object.keys(MODEL_PROVIDER).join(", ")}.`,
+      );
+    }
+    provider = MODEL_PROVIDER[modelOverride]; // C1: 모델에서 provider 역산
+    model = modelOverride;
+  } else {
+    provider = resolveProvider(env); // 잘못된 값이면 여기서 throw
+    model = env.LLM_MODEL?.trim();
+  }
   if (!model) {
     throw new Error("LLM_MODEL is required (no hardcoded default).");
   }
