@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { formatDuration } from "@/lib/agent/utils/formatDuration";
 import { ioSummary, needsFold } from "@/lib/agent/utils/ioSummary";
 import { isInProgress } from "@/lib/agent/utils/thinkingLabels";
+import { selectLiveSteps } from "@/lib/agent/utils/liveSteps";
 import { useThinkingLabelCycler } from "@/components/common/useThinkingLabelCycler";
 import type { ThinkingStep } from "@/types";
 
@@ -397,16 +398,43 @@ export function ThinkingPanel({
     setUserToggled(!open);
   };
 
-  // Slice T — 실시간 뷰: 스트리밍 중 + 사용자 미조작 →
-  // **마지막 step 1개만**(단일 컨테이너 순차 리플레이스). 사용자
-  // 보고: "개별 컨테이너가 리얼타임에서 기존엔 리플레이스됐는데
-  // 지금은 쭉 보임" — 이전 에이전트가 LIVE_WINDOW=3+pending 으로
-  // 바꿔 여러 개가 누적 표시되던 회귀를 Slice E/H 원본으로 복원.
-  // step 이 진행될 때마다 화면이 마지막 것으로 교체된다.
-  // 히스토리 뷰(완료/사용자토글)는 전체 누적(else: steps).
+  // 실시간 뷰(사용자 확정 규칙): 마지막=reasoning → 그 1개(도구
+  // 영역 즉시 리플레이스). 마지막=tool → 진행 중 + OUT 후 grace(0.6s)
+  // 내 tool 을 start 최근 3개 노출(병렬 도구 가시화 — 이전 1개만
+  // 보이던 사용자 보고 해소). 판정은 순수 함수 selectLiveSteps,
+  // 컴포넌트는 outSeenAt 추적 + grace 만료 리렌더만(상태/타이머).
   const liveMode = streaming && !userControlled;
-  const visibleSteps =
-    liveMode && hasAny ? [steps[steps.length - 1]] : steps;
+
+  // 라이브 visible step 을 이펙트가 계산해 state 로 둔다(렌더는 이
+  // state 만 읽어 순수 — ref/Date.now() 렌더 직접사용 회피). 이펙트는
+  // 외부 시스템(시간) 동기화: steps 변화 시 OUT 감지 시각 누적 +
+  // grace(0.6s) 타이머 1개. 타이머 만료 시에만 setState(콜백 — lint
+  // 의 "이펙트 내 동기 setState" 안티패턴 회피, 외부 이벤트 동기화).
+  const outSeenAtRef = useRef<Map<number, number>>(new Map());
+  const [liveVisible, setLiveVisible] = useState<ThinkingStep[]>([]);
+
+  useEffect(() => {
+    if (!liveMode || !hasAny) {
+      outSeenAtRef.current = new Map();
+      return;
+    }
+    const seen = outSeenAtRef.current;
+    const recompute = (): void => {
+      const now = Date.now();
+      steps.forEach((s, idx) => {
+        if (s.kind === "tool" && s.result !== undefined && !seen.has(idx)) {
+          seen.set(idx, now); // OUT 최초 감지 시각(멱등 — 1회만).
+        }
+      });
+      setLiveVisible(selectLiveSteps(steps, seen, now));
+    };
+    recompute(); // steps 변화 즉시 1회(외부 시간 캡처 — 이펙트 경계).
+    // grace 경과 시 재계산 → OUT 후 0.6s 지난 tool 탈락 반영.
+    const t = setTimeout(recompute, 620);
+    return () => clearTimeout(t);
+  }, [steps, liveMode, hasAny]);
+
+  const visibleSteps = liveMode && hasAny ? liveVisible : steps;
 
   // 상단 토글 라벨을 스트리밍 중 타이핑 순환 문구로 대체(medigate
   // StreamingView 타이틀 위치 모방). 패널이 접혀 있어도 보이는 위치라
