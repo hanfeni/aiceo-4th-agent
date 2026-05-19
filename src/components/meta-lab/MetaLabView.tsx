@@ -19,7 +19,7 @@ import { StageModal } from "./StageModal";
  *
  * 작업별 UX 분기 (사용자 결정 2026-05-19):
  *  - label/discover : 기존 페이드인-아웃 + 완료 후 접이식 (미변경)
- *  - allinone       : DART식 노드 그래프 4단계 + 노드 클릭 모달.
+ *  - allinone       : DART식 노드 그래프 5단계 + 노드 클릭 모달.
  *    기존 결과 렌더는 모달로 이식되므로 올인원에선 안 띄움.
  *    SSE 도 stage_start/stage_io 로 단계 상태·입출력만 받음.
  */
@@ -46,7 +46,12 @@ const TASKS = [
   {
     id: "allinone",
     label: "올인원",
-    hint: "발굴20×10회 → 수렴 → 분류기픽스 → 실분류5건 (자동 4단계)",
+    hint: "발굴20×10회 → 수렴 → 분류기픽스 → 실분류5건 (자동 4단계, 화면 확인만)",
+  },
+  {
+    id: "allinone_index",
+    label: "올인원 색인",
+    hint: "올인원 4단계 + ⑤ 메타를 OpenSearch 에 동적 색인 (자동 5단계, 검색 실습 메타 필터원)",
   },
 ] as const;
 
@@ -80,7 +85,7 @@ interface DocBlock {
   done: boolean;
 }
 
-/** 빈 stageIO 레코드 (4단계 모두 idle) — 실행 시작마다 리셋 */
+/** 빈 stageIO 레코드 (5단계 모두 idle) — 실행 시작마다 리셋 */
 function emptyStageIO(): Record<number, StageIO> {
   const r: Record<number, StageIO> = {};
   for (const n of META_STAGE_NODES) r[n.stage] = { status: "idle" };
@@ -111,7 +116,8 @@ export function MetaLabView(): ReactNode {
 
   async function run(): Promise<void> {
     if (running) return;
-    const isAllInOne = task === "allinone";
+    const isAllInOne =
+      task === "allinone" || task === "allinone_index";
     setRunning(true);
     setErr(null);
     setSystem("");
@@ -249,7 +255,15 @@ export function MetaLabView(): ReactNode {
     setRunning(false);
   }
 
-  const isAllInOne = task === "allinone";
+  // allinone(④까지) · allinone_index(⑤ 메타색인 포함) 둘 다
+  // 그래프+모달 UX. 그래프 노드만 task 별 4 vs 5 로 분기(노드
+  // 정의는 1벌, 표시만 슬라이스 — ⑤ 메타색인 노드 idle 잔존 방지).
+  const isAllInOne =
+    task === "allinone" || task === "allinone_index";
+  const graphNodes =
+    task === "allinone_index"
+      ? META_STAGE_NODES
+      : META_STAGE_NODES.slice(0, 4);
 
   return (
     // layout.tsx overflow:hidden+100dvh → 자체 스크롤 컨테이너 필요
@@ -328,7 +342,9 @@ export function MetaLabView(): ReactNode {
           >
             올인원은 자동 진행입니다 — ① 발굴 20개씩 ×10회(비복원,
             중복 없음) → ② 10개 결과 수렴 → ③ 분류기 인스트럭션 픽스
-            → ④ 실분류 5건. 문서 수는 고정이라 선택 불필요.
+            → ④ 실분류 5건 → ⑤ 메타 색인(분류기로 도메인 문서에
+            메타 부착해 OpenSearch 동적 색인). 문서 수는 고정이라
+            선택 불필요.
           </div>
         ) : (
           <div style={chipRow}>
@@ -417,10 +433,11 @@ export function MetaLabView(): ReactNode {
       {isAllInOne && (
         <div style={card}>
           <div style={sectionTitle}>
-            자동 4단계 파이프라인 (노드를 클릭하면 입력·출력 확인)
+            자동 {graphNodes.length}단계 파이프라인 (노드를 클릭하면
+            입력·출력 확인)
           </div>
           <PipelineGraph
-            stageNodes={META_STAGE_NODES}
+            stageNodes={graphNodes}
             stageStates={stageStates}
             onStageClick={(st) => setOpenStage(st)}
           />
@@ -431,7 +448,7 @@ export function MetaLabView(): ReactNode {
               lineHeight: 1.6,
             }}
           >
-            {META_STAGE_NODES.map((n) => (
+            {graphNodes.map((n) => (
               <div key={n.stage}>
                 <strong>{n.stage}. {n.label}</strong> — {n.hint}
               </div>
@@ -529,7 +546,8 @@ export function MetaLabView(): ReactNode {
 
       {/* 올인원 노드 클릭 모달 (포털 불필요 — fixed overlay) */}
       {isAllInOne && openStage != null && (() => {
-        const meta = META_STAGE_NODES.find((n) => n.stage === openStage);
+        // graphNodes 기준 — 일반 올인원(4노드)은 ⑤ 클릭 불가
+        const meta = graphNodes.find((n) => n.stage === openStage);
         if (!meta) return null;
         return (
           <StageModal

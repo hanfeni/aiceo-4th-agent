@@ -4,6 +4,8 @@ export const dynamic = "force-dynamic";
 import { z } from "zod";
 import { createStream } from "@/lib/agent/agent";
 import { ALLOWED_MODELS } from "@/lib/agent/harness/models";
+import { SEARCH_DOMAINS } from "@/lib/searchlab/domains";
+import { SQL_DOMAINS } from "@/lib/sqllab/domains";
 import {
   MAX_QUERY_LEN,
   MAX_IMAGES_PER_TURN,
@@ -56,6 +58,13 @@ const bodySchema = z.object({
     )
     .max(MAX_IMAGES_PER_TURN)
     .optional(),
+  // 인덱스 검색 도구 세션 도메인(챗 우측 드롭다운). 5개 코퍼스
+  // 중 1개면 그 도메인 index_search 도구가 그래프에 포함된다.
+  // 미지정/생략=기존 챗(도구 없음). 변경 시 새 그래프=세션 리프레시.
+  idxDomain: z.enum(SEARCH_DOMAINS).optional(),
+  // 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립 — 둘
+  // 다 가능. 미지정=도구 없음. 변경 시 새 그래프=세션 리프레시.
+  sqlDomain: z.enum(SQL_DOMAINS).optional(),
 });
 
 /** AD-4 — 검증 실패 응답은 SSE 아닌 JSON 400 으로 고정. */
@@ -115,6 +124,8 @@ export async function POST(req: Request): Promise<Response> {
           conversationId,
           model: parsed.data.model,
           images: parsed.data.images,
+          idxDomain: parsed.data.idxDomain,
+          sqlDomain: parsed.data.sqlDomain,
         });
         for await (const ev of gen) {
           controller.enqueue(encodeSse(ev));

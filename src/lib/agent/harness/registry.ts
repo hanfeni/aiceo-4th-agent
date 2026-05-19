@@ -5,6 +5,10 @@ import {
 } from "./checkpointer";
 import { resolveProvider, type ModelEnv } from "./model";
 import { HARNESS_TOOLS } from "./tools";
+import { makeIndexSearchTool } from "./tools/indexSearchTool";
+import type { SearchDomain } from "@/lib/searchlab/domains";
+import { makeSqlQueryTool } from "./tools/sqlQueryTool";
+import type { SqlDomain } from "@/lib/sqllab/domains";
 import { HARNESS_SUBAGENTS } from "./subagents";
 import { SKILL_SOURCES, createSkillsBackend } from "./skills";
 
@@ -108,7 +112,15 @@ function resolveSkillSources(
  * provider 검증은 model.ts(resolveProvider)에 위임한다. 잘못된 LLM_PROVIDER
  * 는 여기서 명확한 에러로 표면화되며 무음 폴백하지 않는다(AC-4).
  */
-export function buildHarnessConfig(env: HarnessEnv): HarnessConfig {
+export function buildHarnessConfig(
+  env: HarnessEnv,
+  // 인덱스 검색 도구 세션 도메인(우측 드롭다운 선택). 미지정이면
+  // 도구 미포함 → tools=HARNESS_TOOLS 그대로(기존 챗 100% 불변).
+  idxDomain?: SearchDomain,
+  // 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립 — 둘 다
+  // 선택하면 두 도구 모두 부여. 미지정이면 미포함(회귀 0).
+  sqlDomain?: SqlDomain,
+): HarnessConfig {
   // 잘못된 provider 를 은폐하지 않는다(무음 폴백 0 — AC-4). LLM 호출 아님.
   resolveProvider(env);
 
@@ -121,7 +133,17 @@ export function buildHarnessConfig(env: HarnessEnv): HarnessConfig {
     planning: { enabled: parseToggle(env.HARNESS_PLANNING, true) },
     filesystem: { enabled: filesystemEnabled },
     subagents: subagentsEnabled ? HARNESS_SUBAGENTS : [],
-    tools: HARNESS_TOOLS,
+    // idx/sql 도메인 있으면 그 도메인 바인딩 도구를 합성(도메인은
+    // 세션 정체성 — 변경 시 agent.ts 가 그래프 재빌드). 둘 다
+    // 미지정이면 정적 HARNESS_TOOLS 그대로(기존 챗 회귀 0). 둘
+    // 독립 — 동시 선택 시 두 도구 모두 부여.
+    tools: ((): unknown[] => {
+      if (!idxDomain && !sqlDomain) return HARNESS_TOOLS;
+      const t: unknown[] = [...HARNESS_TOOLS];
+      if (idxDomain) t.push(makeIndexSearchTool(idxDomain));
+      if (sqlDomain) t.push(makeSqlQueryTool(sqlDomain));
+      return t;
+    })(),
     // AD-2: lazy 핸들. 호출만으로는 ./.data/ 생성·saver 오픈 0.
     checkpointer: createCheckpointer(env),
     // SKILL — sources 가 비면 createDeepAgent 에 skills/backend 미주입

@@ -50,7 +50,7 @@ const CHUNK_SIZES = [
   { v: 512, label: "512토큰" },
   { v: 1000, label: "1000토큰" },
 ] as const;
-const CHUNK_OVERLAPS = [0, 100, 200] as const;
+const CHUNK_OVERLAPS = [0, 50, 100, 200] as const;
 
 interface IndexInfo {
   index: string;

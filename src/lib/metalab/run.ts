@@ -17,11 +17,22 @@
 
 import { createModel, type ModelEnv } from "@/lib/agent/harness/model";
 import { extractContentText } from "@/lib/agent/utils/chunkFilter";
-import { fetchCorpus, type SearchDomain } from "@/lib/searchlab/domains";
+import {
+  fetchCorpus,
+  DOMAIN_SPEC,
+  type SearchDomain,
+} from "@/lib/searchlab/domains";
+import {
+  getSearchClient,
+  buildIndexBody,
+} from "@/lib/searchlab/client";
+import { embedTexts } from "@/lib/searchlab/embed";
+import { ensureOpenSearch } from "@/lib/searchlab/ensure-infra";
 import {
   systemFor,
   CONVERGE_SYSTEM,
   buildClassifierSystem,
+  parseClassifierOutput,
   type MetaTask,
 } from "./prompts";
 
@@ -65,6 +76,10 @@ const ALLINONE_PER_SET = 20; // 발굴 회당 샘플 수
 const ALLINONE_SETS = 10; // 발굴 횟수
 const ALLINONE_CLASSIFY = 5; // 실분류 건수 (10→5, 사용자 결정 + 병렬)
 const ALLINONE_SAMPLE = ALLINONE_PER_SET * ALLINONE_SETS; // 200 (비복원)
+// ⑤ 메타 색인 상한 — 분류 LLM N회 + 임베딩 비용 제어(강의 시연
+// 시간 폭증 방지). 도메인 전체가 이보다 작으면 전체.
+const ALLINONE_META_LIMIT = 60;
+const ALLINONE_META_BATCH = 32; // 분류·임베딩·bulk 배치
 
 /**
  * Fisher-Yates 셔플 (seed 고정 — 재현성, training 03 프롬프트 규칙).
@@ -96,10 +111,11 @@ export async function* runMetaLab(
 ): AsyncGenerator<MetaEvent> {
   const { domain, task } = params;
 
-  // 올인원은 샘플링·단계 구조가 달라(200 비복원, 4단계) 전용 경로로
-  // 위임. 기존 label/discover 로직은 아래 그대로 보존(미변경).
-  if (task === "allinone") {
-    yield* runAllInOne(domain);
+  // 올인원 2종: allinone=①~④(화면 확인), allinone_index=①~⑤
+  // (+메타 OpenSearch 색인). withMetaIndex 로 ⑤ 조건부(사용자
+  // 결정 2026-05-19 분리). label/discover 는 아래 그대로 보존.
+  if (task === "allinone" || task === "allinone_index") {
+    yield* runAllInOne(domain, task === "allinone_index");
     return;
   }
 
@@ -206,19 +222,23 @@ export async function* runMetaLab(
 }
 
 /**
- * 올인원 — 4단계 자동 파이프라인 (사용자 확정 2026-05-19).
+ * 올인원 — 자동 파이프라인 (사용자 확정 2026-05-19).
  *
  *  ① 발굴 ×10: 코퍼스 비복원 200건 → 20개씩 10묶음, 각 묶음을
  *     DISCOVER 로 분류체계 제안 (10개 발굴 결과)
  *  ② 수렴: 10개 결과를 CONVERGE 로 재투입 → 후보 라벨 선정·확정
  *  ③ 분류기 픽스: 확정 스키마로 분류기 인스트럭션 동적 생성
- *  ④ 실분류 ×10: 픽스된 분류기로 (샘플 안 쓴) 문서 10건 라벨링
+ *  ④ 실분류 5: 픽스된 분류기로 (샘플 안 쓴) 문서 5건 라벨링
+ *  ⑤ 메타 색인: withMetaIndex=true(allinone_index)일 때만 —
+ *     분류기로 도메인 문서 메타 부착 → OpenSearch 동적 색인.
+ *     false(allinone)면 ④까지로 끝(화면 확인만, 색인 안 함).
  *
  * 중복 없음: 한 번 셔플한 풀을 분할 → 발굴 10회 간 문서 중복 0.
  * ④ 는 발굴에 안 쓰인 뒤쪽 문서 사용(발굴/분류 문서도 비중복).
  */
 async function* runAllInOne(
   domain: SearchDomain,
+  withMetaIndex: boolean,
 ): AsyncGenerator<MetaEvent> {
   // 시작 시 발굴 시스템 인스트럭션 노출 (실습 핵심)
   yield { type: "system", task: "allinone", text: systemFor("discover") };
@@ -416,6 +436,187 @@ async function* runAllInOne(
       label: `${i + 1}. ${d.title}`,
       text: labels[i],
     })),
+  };
+
+  // allinone(색인 X)은 ④까지로 종료 — ⑤ 코드 무변경 보존(guard
+  // clause). allinone_index 만 아래 ⑤ 메타 색인으로 진행.
+  if (!withMetaIndex) {
+    yield { type: "done" };
+    return;
+  }
+
+  // ── ⑤ 메타 색인 (분류기로 도메인 문서 메타 부착 → OpenSearch) ─
+  // 사용자 요청 2026-05-19: 올인원 결과 메타를 인덱스에 동적
+  // 추가 색인. 픽스된 classifierSystem 으로 docs 상한건을 분류
+  // → 메타 + 임베딩을 searchlab-<domain> 에 재색인(검색 실습·
+  // RAG 가 메타 필터 활용). 색인 인프라는 searchlab 부품 재사용.
+  yield { type: "stage_start", step: "metaindex" };
+
+  // 분류 대상: 발굴/실분류에 안 쓴 풀 우선, 부족하면 전체에서.
+  // (셔플 순서 유지 — discoverPool 다음 구간부터)
+  const metaPool = shuffled
+    .slice(ALLINONE_SAMPLE) // 발굴 미사용분
+    .slice(0, ALLINONE_META_LIMIT);
+  const targetIndex = DOMAIN_SPEC[domain].index;
+
+  // OpenSearch 준비 (미기동 시 spawn — searchlab 와 동일 경로).
+  // InfraEvent 는 metalab MetaEvent 에 없으므로 phase 로 요약 흘림.
+  try {
+    const infraGen = ensureOpenSearch();
+    let infraOk = false;
+    while (true) {
+      const r = await infraGen.next();
+      if (r.done) {
+        infraOk = r.value;
+        break;
+      }
+      // 인프라 진행은 phase 로 간단 표면화(노드 모달 외 진행감)
+      yield { type: "phase", step: "metaindex", text: r.value.text };
+    }
+    if (!infraOk) {
+      yield {
+        type: "error",
+        message:
+          "OpenSearch 준비 실패 — 메타 색인 불가. Docker/OpenSearch " +
+          "상태를 확인하세요(도메인 색인 메뉴에서 1회 기동 후 재시도).",
+      };
+      return;
+    }
+  } catch (e) {
+    yield {
+      type: "error",
+      message:
+        (e instanceof Error ? e.message : String(e)) +
+        " (OpenSearch 인프라 확인 중)",
+    };
+    return;
+  }
+
+  const client = getSearchClient();
+  // 메타 필드 포함 매핑으로 인덱스 재생성(멱등). 기존 searchlab
+  // 색인이 있으면 덮어씀 — 올인원 메타색인은 메타 필드가 핵심.
+  try {
+    const exists = await client.indices.exists({ index: targetIndex });
+    if (exists.body) {
+      await client.indices.delete({ index: targetIndex });
+    }
+    await client.indices.create({
+      index: targetIndex,
+      body: buildIndexBody({ withMeta: true }) as unknown as Record<
+        string,
+        unknown
+      >,
+    });
+  } catch (e) {
+    yield {
+      type: "error",
+      message:
+        "메타 색인 인덱스 생성 실패: " +
+        (e instanceof Error ? e.message : String(e)).slice(0, 200),
+    };
+    return;
+  }
+
+  // 배치: 분류(LLM) → 임베딩 → 메타 포함 bulk
+  let indexed = 0;
+  const sampleMeta: string[] = []; // 모달 표시용 앞 몇 건
+  for (let i = 0; i < metaPool.length; i += ALLINONE_META_BATCH) {
+    const batch = metaPool.slice(i, i + ALLINONE_META_BATCH);
+    let metas: ReturnType<typeof parseClassifierOutput>[];
+    let vectors: number[][];
+    try {
+      [metas, vectors] = await Promise.all([
+        Promise.all(
+          batch.map(async (d) => {
+            const res = await model.invoke([
+              { role: "system", content: classifierSystem },
+              {
+                role: "user",
+                content: `제목: ${d.title}\n\n본문:\n${d.body.slice(0, 4000)}`,
+              },
+            ]);
+            return parseClassifierOutput(
+              extractContentText(res.content) ?? "",
+            );
+          }),
+        ),
+        embedTexts(
+          batch.map((d) => `${d.title}\n${d.body}`.slice(0, 8000)),
+        ),
+      ]);
+    } catch (e) {
+      yield {
+        type: "error",
+        message:
+          (e instanceof Error ? e.message : String(e)) +
+          " (메타 분류·임베딩 중 — OpenAI rate limit 가능)",
+      };
+      return;
+    }
+    const bulk: unknown[] = [];
+    batch.forEach((d, j) => {
+      const m = metas[j];
+      bulk.push({
+        index: { _index: targetIndex, _id: d.doc_id },
+      });
+      bulk.push({
+        doc_id: d.doc_id,
+        chunk_id: 0, // 메타색인은 문서 단위(청킹 미적용)
+        title: d.title,
+        body: d.body,
+        embedding: vectors[j],
+        // 동적 메타 필드 (분류기 산출 — 검색 실습 필터원)
+        main_category: m.main_category,
+        mid_category: m.mid_category,
+        sub_category: m.sub_category,
+        keywords: m.keywords,
+        meta_description: m.description,
+      });
+      if (sampleMeta.length < 8) {
+        sampleMeta.push(
+          `── ${d.title} ──\n` +
+            `main=${m.main_category} / mid=${m.mid_category} / ` +
+            `sub=${m.sub_category}\nkeywords=[${m.keywords.join(", ")}]`,
+        );
+      }
+    });
+    try {
+      const res = await client.bulk({
+        body: bulk as unknown as Record<string, unknown>[],
+        refresh: false,
+      });
+      if (res.body.errors) {
+        yield {
+          type: "error",
+          message: `[${domain}] 메타 색인 bulk 오류`,
+        };
+        return;
+      }
+    } catch (e) {
+      yield {
+        type: "error",
+        message: e instanceof Error ? e.message : String(e),
+      };
+      return;
+    }
+    indexed += batch.length;
+  }
+  await client.indices.refresh({ index: targetIndex });
+
+  yield {
+    type: "stage_io",
+    step: "metaindex",
+    input:
+      `[고정 분류기 인스트럭션]\n${classifierSystem}\n\n` +
+      `[대상] ${targetIndex} 인덱스 (메타 필드 동적 추가)\n` +
+      `[입력] 발굴 미사용 ${metaPool.length}건 분류→메타+임베딩 색인`,
+    output:
+      `✓ ${targetIndex} 에 ${indexed}건 메타 색인 완료.\n` +
+      `동적 추가 필드: main_category / mid_category / ` +
+      `sub_category / keywords / meta_description\n\n` +
+      `이제 검색 실습에서 이 메타로 필터링·집계가 가능합니다.\n\n` +
+      `── 색인된 메타 샘플 (앞 ${sampleMeta.length}건) ──\n\n` +
+      sampleMeta.join("\n\n"),
   };
 
   yield { type: "done" };

@@ -31,6 +31,19 @@ export interface ChatState {
   error: string | null;
   provider: string;
   model: string;
+  /**
+   * 인덱스 검색 도구 세션 도메인(챗 우측 드롭다운). null=도구 없음
+   * (기존 챗). 5개 코퍼스 중 1개면 그 도메인 index_search 도구가
+   * 그래프에 포함. 변경 시 resetChat 으로 세션 리프레시(서버
+   * getGraph 캐시 키도 달라져 새 그래프 — 사용자 결정 2026-05-19).
+   */
+  idxDomain: string | null;
+  /**
+   * 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립(둘 다
+   * 선택 가능). null=도구 없음. 변경 시 resetChat 으로 세션
+   * 리프레시(서버 getGraph 캐시 키 변경 — 사용자 결정 2026-05-19).
+   */
+  sqlDomain: string | null;
 }
 
 export interface ChatActions {
@@ -106,6 +119,12 @@ export interface ChatActions {
   setLastStreamEvent: (kind: StreamEventKind) => void;
   /** 런타임 선택 모델 설정(FR-16). resetChat 에도 보존됨(AD-15). */
   setModel: (model: string) => void;
+  /** 인덱스 검색 도메인 설정(null=도구 없음). 호출처가 변경
+   *  직후 resetChat 을 불러 세션 리프레시(서버 그래프 재빌드). */
+  setIdxDomain: (domain: string | null) => void;
+  /** 데이터 조회(SQL) 도메인 설정(null=도구 없음). 호출처가
+   *  변경 직후 resetChat 으로 세션 리프레시. */
+  setSqlDomain: (domain: string | null) => void;
   finalizeLastAssistant: () => void;
   setError: (error: string | null) => void;
   resetChat: () => void;
@@ -121,6 +140,8 @@ const initialState: ChatState = {
   error: null,
   provider: "",
   model: "",
+  idxDomain: null,
+  sqlDomain: null,
 };
 
 /**
@@ -283,6 +304,8 @@ export function createChatStore(): StoreApi<ChatStore> {
     setLastStreamEvent: (kind) => set({ lastStreamEvent: kind }),
 
     setModel: (model) => set({ model }),
+    setIdxDomain: (idxDomain) => set({ idxDomain }),
+    setSqlDomain: (sqlDomain) => set({ sqlDomain }),
 
     // 스트림 종료 마커. 현재는 부수효과 없음(메시지 내용 보존, 멱등).
     // useChat 의 finally 입력-잠금-해제 회귀 가드 지점(TC-20.4).
@@ -300,6 +323,10 @@ export function createChatStore(): StoreApi<ChatStore> {
         lastStreamEvent: null,
         provider: state.provider,
         model: state.model,
+        // idx/sqlDomain 보존 — resetChat 은 세션(thread)만 새로,
+        // 사용자가 고른 도메인 선택은 유지(model 과 동일 정책).
+        idxDomain: state.idxDomain,
+        sqlDomain: state.sqlDomain,
       })),
 
     // 과거 대화 복원 (C1). resetChat 과 대칭 — 단일 set 원자 커밋으로
@@ -349,16 +376,22 @@ export function createChatStore(): StoreApi<ChatStore> {
       try {
         // R3 — body 엔 현재 turn 입력만. conversationId/model 동봉
         // (턴 재사용 / 런타임 모델). 검증은 서버 zod enum 이 SSOT.
-        const { conversationId, model } = get();
+        const { conversationId, model, idxDomain, sqlDomain } = get();
         const body: {
           query: string;
           conversationId?: string;
           model?: string;
           images?: string[];
+          idxDomain?: string;
+          sqlDomain?: string;
         } = { query };
         if (conversationId) body.conversationId = conversationId;
         if (model) body.model = model;
         if (images) body.images = images;
+        // 도메인 선택 시에만 동봉 — 미선택(null)이면 서버 zod
+        // 가 미수신 → 도구 없는 기존 챗(회귀 0). 서버 enum SSOT.
+        if (idxDomain) body.idxDomain = idxDomain;
+        if (sqlDomain) body.sqlDomain = sqlDomain;
 
         const res = await fetch("/api/chat", {
           method: "POST",

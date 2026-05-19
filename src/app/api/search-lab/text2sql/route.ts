@@ -1,22 +1,25 @@
 /**
- * 메타라벨링 실습 API — POST /api/meta-lab (SSE).
+ * Text-to-SQL 실습 API — POST /api/search-lab/text2sql (SSE).
  *
- * chat route 의 SSE 패턴 재사용: bodySchema(zod) → ReadableStream →
- * `data: <JSON>\n\n` 직렬화 → text/event-stream. R7 runtime=nodejs.
- * 학생이 LLM 이 실제 토큰을 뱉는 모습 + 시스템 인스트럭션을 본다.
+ * 검색 실습의 Text-to-SQL 모드 전용 스트리밍 경로(RAG 옆 task).
+ * search-lab/rag route 패턴 동형: zod → ReadableStream →
+ * `data:<JSON>\n\n`. R7 runtime=nodejs (better-sqlite3·모델 node).
+ *
+ * 도메인은 SQL_DOMAINS(적재 도메인) — 검색 도메인과 같은 5개이나
+ * 적재 대상은 *.csv 라 별도 enum 으로 검증한다.
  */
 
 import { z } from "zod";
-import { runMetaLab } from "@/lib/metalab/run";
-import { SEARCH_DOMAINS } from "@/lib/searchlab/domains";
+import { runText2Sql } from "@/lib/sqllab/text2sql";
+import { SQL_DOMAINS } from "@/lib/sqllab/domains";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
-  domain: z.enum(SEARCH_DOMAINS),
-  task: z.enum(["label", "discover", "allinone", "allinone_index"]),
-  // allinone 은 발굴 20×10·실분류 5 고정이라 count 불필요(옵션).
-  count: z.number().int().min(1).max(30).optional(),
+  domain: z.enum(SQL_DOMAINS),
+  question: z.string().min(1).max(500),
+  maxRows: z.number().int().min(1).max(200).optional(),
 });
 
 function encodeSse(ev: unknown): Uint8Array {
@@ -36,7 +39,10 @@ export async function POST(req: Request): Promise<Response> {
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) {
     return new Response(
-      JSON.stringify({ error: "요청 형식 오류", detail: parsed.error.issues }),
+      JSON.stringify({
+        error: "요청 형식 오류",
+        detail: parsed.error.issues,
+      }),
       { status: 400, headers: { "content-type": "application/json" } },
     );
   }
@@ -44,7 +50,7 @@ export async function POST(req: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const ev of runMetaLab(parsed.data)) {
+        for await (const ev of runText2Sql(parsed.data)) {
           controller.enqueue(encodeSse(ev));
         }
       } catch (e) {

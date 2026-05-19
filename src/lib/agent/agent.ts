@@ -1,6 +1,9 @@
 import { createDeepAgent } from "deepagents";
 import type { SseEvent } from "@/types";
 import { buildHarnessConfig, type HarnessEnv } from "./harness/registry";
+import type { SearchDomain } from "@/lib/searchlab/domains";
+import type { SqlDomain } from "@/lib/sqllab/domains";
+import { tableInfo } from "@/lib/sqllab/db";
 import { buildAgentOptions } from "./harness/buildAgentOptions";
 import { createModel } from "./harness/model";
 import { getSystemPrompt } from "./prompts/systemPrompt";
@@ -89,13 +92,18 @@ const ENV_KEY = "__env__";
  * createModel(env, model) 이 화이트리스트 검증 + provider 역산을 수행
  * (Plan Critic C1) — 이 파일엔 모델/토글 분기 0줄(R2 유지).
  */
-function buildGraph(model?: string): DeepAgentGraph {
+function buildGraph(
+  model?: string,
+  idxDomain?: SearchDomain,
+  sqlDomain?: SqlDomain,
+): DeepAgentGraph {
   const env = process.env as unknown as HarnessEnv;
   // HarnessConfig.tools/checkpointer 는 R8 에 따라 느슨한 계약(unknown[]/
   // unknown)이다. deepagents 의 정밀 타입으로의 narrowing 은 이 단일 호출
   // 경계에서만 일어난다(model.ts 의 `as unknown as` 선례와 동일 패턴).
+  // idx/sqlDomain 은 registry 가 흡수(미지정=기존 도구셋 — R2 0줄 유지).
   const options = buildAgentOptions(
-    buildHarnessConfig(env),
+    buildHarnessConfig(env, idxDomain, sqlDomain),
     createModel(env, model),
     getSystemPrompt(),
   ) as unknown as Parameters<typeof createDeepAgent>[0];
@@ -107,13 +115,32 @@ function buildGraph(model?: string): DeepAgentGraph {
  * 같은 모델 동시 진입 시 Promise 가 이미 박혀 있어 buildGraph 는 그 모델
  * 당 1회만 실행된다(AD-3 를 모델별로 유지). 다른 모델은 별도 엔트리.
  */
-function getGraph(model?: string): Promise<DeepAgentGraph> {
+function getGraph(
+  model?: string,
+  idxDomain?: SearchDomain,
+  sqlDomain?: SqlDomain,
+  // SQL 도메인 적재 여부. 미적재→적재 전환 시 키가 달라져 새
+  // 그래프(스키마 박힌 도구)를 빌드 → stale '미적재 도구' 영구
+  // 잔존 결함 해소(사용자 결정 2026-05-19). 행수 아닌 boolean —
+  // 재적재(행수 변화)는 스키마 불변이라 그래프 재빌드 불필요.
+  sqlLoaded?: boolean,
+): Promise<DeepAgentGraph> {
   if (!g.__agent) g.__agent = {};
   if (!g.__agent.graphByModel) g.__agent.graphByModel = new Map();
-  const key = model ?? ENV_KEY;
+  // 캐시 키에 idx/sqlDomain(+sql 적재상태) 합성 — 도메인이 곧
+  // 세션 정체성. 드롭다운 변경/적재 전환 시 다른 키 → 새
+  // createDeepAgent= 세션 리프레시. 둘 다 없으면 키가 기존과
+  // 동일(기존 챗 회귀 0). bound: 모델(3)+env × idx(6) × sql(6)
+  // × sqlLoaded(2) = 최대 288(화이트리스트 한정 — 무한증가 0).
+  const key =
+    (model ?? ENV_KEY) +
+    (idxDomain ? `|idx:${idxDomain}` : "") +
+    (sqlDomain ? `|sql:${sqlDomain}|sl:${sqlLoaded ? 1 : 0}` : "");
   const cached = g.__agent.graphByModel.get(key);
   if (cached) return cached;
-  const built = Promise.resolve().then(() => buildGraph(model));
+  const built = Promise.resolve().then(() =>
+    buildGraph(model, idxDomain, sqlDomain),
+  );
   g.__agent.graphByModel.set(key, built);
   return built;
 }
@@ -129,6 +156,19 @@ export interface CreateStreamArgs {
    * 미지정이면 content 는 string(무회귀).
    */
   images?: string[];
+  /**
+   * 인덱스 검색 도구 세션 도메인(챗 우측 드롭다운). 지정 시 그
+   * 도메인 바인딩 index_search 도구가 그래프에 포함된다. 변경하면
+   * getGraph 캐시 키가 달라져 새 그래프=세션 리프레시(MCP 도구
+   * 재인식 — 사용자 결정 2026-05-19). 미지정=기존 챗(도구 없음).
+   */
+  idxDomain?: SearchDomain;
+  /**
+   * 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립 — 지정
+   * 시 그 도메인 sql_query 도구 포함. 변경 시 캐시 키 변경=세션
+   * 리프레시. 미지정=도구 없음(회귀 0).
+   */
+  sqlDomain?: SqlDomain;
 }
 
 /**
@@ -142,8 +182,21 @@ export async function createStream({
   conversationId,
   model,
   images,
+  idxDomain,
+  sqlDomain,
 }: CreateStreamArgs): Promise<AsyncGenerator<SseEvent>> {
-  const graph = await getGraph(model);
+  // SQL 도메인 선택 시 현재 적재 상태를 읽어 그래프 캐시 키에
+  // 반영(미적재→적재 전환=다른 키=새 그래프=스키마 박힌 도구).
+  // tableInfo 는 better-sqlite3 동기 호출(가벼움, 매 요청 1회).
+  let sqlLoaded = false;
+  if (sqlDomain) {
+    try {
+      sqlLoaded = tableInfo(sqlDomain) !== null;
+    } catch {
+      sqlLoaded = false; // 조회 실패 시 미적재 취급(graceful)
+    }
+  }
+  const graph = await getGraph(model, idxDomain, sqlDomain, sqlLoaded);
 
   // 이미지 있으면 LangChain v1 블록배열, 없으면 string(무회귀). 이미지
   // 누적은 checkpointer 가 자동 보존(R3) — route zod 가 턴당 개수·크기를

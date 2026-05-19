@@ -1,5 +1,5 @@
 /**
- * 메타랩 올인원 — 4단계 노드 메타 (순수 상수).
+ * 메타랩 올인원 — 5단계 노드 메타 (순수 상수).
  *
  * 사용자 결정 2026-05-19: 올인원에 한해 DART식 노드 그래프 시각화.
  * 공용 PipelineGraph 에 이 배열을 주입. dartStageNodes 패턴 동형
@@ -17,9 +17,10 @@ export const STEP_TO_STAGE: Record<string, number> = {
   converge: 2,
   fix: 3,
   classify: 4,
+  metaindex: 5,
 };
 
-/** 올인원 4단계 (run.ts 진행 순서와 동일) */
+/** 올인원 5단계 (run.ts 진행 순서와 동일) */
 export const META_STAGE_NODES: readonly StageNodeMeta[] = [
   {
     stage: 1,
@@ -43,6 +44,12 @@ export const META_STAGE_NODES: readonly StageNodeMeta[] = [
     stage: 4,
     label: "실분류",
     hint: "픽스된 분류기로 미사용 문서 5건 병렬 라벨링",
+    emphasis: true,
+  },
+  {
+    stage: 5,
+    label: "메타 색인",
+    hint: "분류기로 도메인 문서 메타 부착 → OpenSearch 동적 색인(검색 실습 메타 필터원)",
     emphasis: true,
   },
 ];

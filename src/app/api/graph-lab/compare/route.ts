@@ -1,22 +1,18 @@
 /**
- * 메타라벨링 실습 API — POST /api/meta-lab (SSE).
+ * 온톨로지 실습 — 3방식 비교 API. POST /api/graph-lab/compare (SSE).
  *
- * chat route 의 SSE 패턴 재사용: bodySchema(zod) → ReadableStream →
- * `data: <JSON>\n\n` 직렬화 → text/event-stream. R7 runtime=nodejs.
- * 학생이 LLM 이 실제 토큰을 뱉는 모습 + 시스템 인스트럭션을 본다.
+ * 같은 질문을 RAG / Text-to-SQL / GraphRAG 으로 돌려 결과를 스트리밍.
+ * runCompare 제너레이터를 SSE 직렬화 (rag/route.ts 동형). R7 nodejs.
  */
 
 import { z } from "zod";
-import { runMetaLab } from "@/lib/metalab/run";
-import { SEARCH_DOMAINS } from "@/lib/searchlab/domains";
+import { runCompare } from "@/lib/graphlab/compare";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
-  domain: z.enum(SEARCH_DOMAINS),
-  task: z.enum(["label", "discover", "allinone", "allinone_index"]),
-  // allinone 은 발굴 20×10·실분류 5 고정이라 count 불필요(옵션).
-  count: z.number().int().min(1).max(30).optional(),
+  query: z.string().min(2).max(2000),
 });
 
 function encodeSse(ev: unknown): Uint8Array {
@@ -44,13 +40,14 @@ export async function POST(req: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const ev of runMetaLab(parsed.data)) {
+        for await (const ev of runCompare(parsed.data.query)) {
           controller.enqueue(encodeSse(ev));
         }
       } catch (e) {
         controller.enqueue(
           encodeSse({
-            type: "error",
+            type: "method_error",
+            method: "graphrag",
             message: e instanceof Error ? e.message : String(e),
           }),
         );

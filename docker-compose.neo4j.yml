@@ -1,0 +1,46 @@
+# Neo4j (단일 노드, 온톨로지/GraphRAG 실습 전용) — search-lab OpenSearch
+# 와 격리된 신규 인프라. run-neo4j.sh 가 이 파일을 기동한다.
+# run-dev.sh(Next dev)·docker-compose.opensearch.yml 은 안 건드림.
+#
+# 인증: Neo4j 는 비밀번호가 필수(NEO4J_AUTH=none 불가). 로컬 실습
+# 전용 고정 크리덴셜 사용 — 절대 외부 노출 금지(localhost 바인드).
+#   user=neo4j  password=aiceo-graph-lab
+#
+# 이미지: neo4j:5-community 는 arm64/amd64 멀티아치 공식 지원
+# (OpenSearch 가 arm64 Docker Desktop VM 에서 특정 버전 SIGILL
+#  크래시했던 실측 교훈 → community 5.x 멀티아치 검증 태그 사용).
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: aiceo-graph-lab-neo4j
+    environment:
+      - NEO4J_AUTH=neo4j/aiceo-graph-lab
+      # APOC 미사용(컴팩트 유지). 기본 Cypher 만으로 멀티홉 시연 충분.
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=512m
+      - NEO4J_server_memory_pagecache_size=512m
+    ports:
+      # 7474=Browser(디버깅용) / 7687=Bolt(드라이버 접속)
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    volumes:
+      # named volume (Docker 자체 관리) — bind mount 금지.
+      # search-lab 과 동일 교훈: ~/Documents bind mount 는 Docker
+      # Desktop File Sharing 미설정 시 "operation not permitted"
+      # (실측). 학생마다 GUI 설정 시킬 수 없으므로 named volume.
+      - aiceo-graph-lab-data:/data
+    healthcheck:
+      # cypher-shell 로 1쿼리 — Bolt 준비 완료 확인(HTTP 7474 보다
+      # 드라이버가 실제 쓰는 7687 Bolt 가 떴는지가 정확).
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -u neo4j -p aiceo-graph-lab 'RETURN 1' || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+
+volumes:
+  aiceo-graph-lab-data:
