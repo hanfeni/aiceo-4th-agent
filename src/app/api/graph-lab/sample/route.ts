@@ -3,10 +3,15 @@
  *
  * "DB 구조 보기" 모달이 호출. 전체 46만 엣지는 렌더 불가·불필요
  * → 인터랙티브 탐색용 서브그래프만 반환:
- *   - seed=null  : 보유 기관 수 상위 종목 + 그 종목을 가진 기관 일부
- *                   (그래프가 어떻게 생겼는지 한눈에)
- *   - seed=<id>  : 그 노드(기관 accession 또는 종목 cusip)의 이웃
- *                   (사용자가 클릭해 확장 — 인터랙티브 탐색)
+ *   - seed=null      : 보유 기관 수 상위 종목 + 그 종목을 가진 기관 일부
+ *                       (그래프가 어떻게 생겼는지 한눈에)
+ *   - seed=m:<accn>  : 그 기관이 보유한 종목들의 이웃 (클릭 확장)
+ *   - seed=c:<cusip> : 그 종목을 보유한 기관들의 이웃 (클릭 확장)
+ *
+ * seed 는 클라이언트 reactflow 노드 ID 와 동일한 접두사 형식
+ * (m: / c:). cusip 과 accession 은 의미가 다른 네임스페이스라
+ * OR 매칭(모호)이 아니라 접두사 1글자로 노드 종류를 명시 분기한다
+ * — 지식그래프의 노드 정체성을 정확히 보존(설계 의도).
  *
  * 노드 라벨 Manager/Company, 엣지 OWNS 를 reactflow 가 쓰기 좋은
  * {nodes, edges} 형태로. R7 runtime=nodejs.
@@ -43,15 +48,34 @@ export async function GET(req: Request): Promise<Response> {
                 m.accession AS mid, m.name AS mname`,
       );
     } else {
-      // 확장: 클릭한 노드의 이웃 (기관이면 보유종목, 종목이면 보유기관)
-      rows = await runCypher(
-        `MATCH (m:Manager)-[:OWNS]->(c:Company)
-         WHERE m.accession = $seed OR c.cusip = $seed
-         RETURN c.cusip AS cid, c.name AS cname,
-                m.accession AS mid, m.name AS mname
-         LIMIT 40`,
-        { seed },
-      );
+      // seed = "<kind>:<raw>" — 접두사로 노드 종류 분기(모호한 OR 제거).
+      // m: 기관 → 그 기관 보유 종목 / c: 종목 → 그 종목 보유 기관.
+      const kind = seed.slice(0, 2);
+      const raw = seed.slice(2);
+      if (kind === "m:") {
+        rows = await runCypher(
+          `MATCH (m:Manager {accession: $raw})-[:OWNS]->(c:Company)
+           RETURN c.cusip AS cid, c.name AS cname,
+                  m.accession AS mid, m.name AS mname
+           LIMIT 40`,
+          { raw },
+        );
+      } else if (kind === "c:") {
+        rows = await runCypher(
+          `MATCH (m:Manager)-[:OWNS]->(c:Company {cusip: $raw})
+           RETURN c.cusip AS cid, c.name AS cname,
+                  m.accession AS mid, m.name AS mname
+           LIMIT 40`,
+          { raw },
+        );
+      } else {
+        return new Response(
+          JSON.stringify({
+            error: `알 수 없는 seed 형식: "${seed}" (m: 또는 c: 접두사 필요)`,
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        );
+      }
     }
 
     const nodeMap = new Map<string, GNode>();
