@@ -175,11 +175,23 @@ async function* runSqlPanel(
     yield { type: "method_error", method: "sql", message: "그래프 미구축 — 먼저 '그래프 구축'을 실행하세요." };
     return;
   }
+  // 공정 비교(사용자 결정): SQL 도 '제대로 했을 때'의 결과를 내게
+  // 한다. ETF 오답·기관 식별 누락은 SQL 의 본질 한계가 아니라
+  // 프롬프트 부실 탓 → 가이드를 명시해 SQL 의 최선을 끌어낸 뒤
+  // GraphRAG 와 비교해야 "구조적으로 멀티홉이 SQL 에 안 맞는다"가
+  // 설득력을 가진다(SQL 이 멍청해서 진 게 아님을 보이는 것).
   const sys =
-    "당신은 Text-to-SQL 어시스턴트입니다. 테이블은 holdings" +
-    "(accession, cusip, issuer, value_usd_k, shares) 하나뿐입니다. " +
-    "기관은 accession 으로 식별됩니다. 질문을 풀 SQL 을 ```sql``` " +
-    "코드펜스로만 출력하세요. 설명 금지.";
+    "당신은 숙련된 Text-to-SQL 어시스턴트입니다. 테이블은 holdings" +
+    "(accession, cusip, issuer, value_usd_k, shares) 하나뿐입니다.\n" +
+    "규칙:\n" +
+    "- 기관은 accession 으로 식별합니다(1 accession = 1 기관 신고).\n" +
+    "- '기관'을 물으면 issuer(종목)가 아니라 accession 기준으로 집계하세요.\n" +
+    "- ETF·인덱스펀드(issuer 에 'ETF','TRUST','INDEX','SPDR'," +
+    "'ISHARES' 등 포함)는 운용기관이 아니므로 '기관' 답에서 제외하세요.\n" +
+    "- 포트폴리오 유사도는 두 accession 이 공유하는 cusip 수로 계산하세요.\n" +
+    "- 가능한 한 정확한 SQL 을 작성하되, 단일 테이블로 표현이 불가능한 " +
+    "부분이 있으면 주석(-- )으로 한 줄 남기세요.\n" +
+    "질문을 풀 SQL 을 ```sql``` 코드펜스로만 출력하세요. 설명 금지.";
   let sql = "";
   try {
     sql = stripFence(await llmText(sys, `질문: ${query}`));
@@ -192,8 +204,10 @@ async function* runSqlPanel(
   yield { type: "result", method: "sql", rows: r.rows, preview: r.preview };
 
   const sys2 =
-    "위 SQL 실행 결과를 보고 질문에 답하되, 단일 테이블·다중 JOIN " +
-    "한계로 못 푼 부분이 있으면 솔직히 밝히세요. 3~5문장 한국어.";
+    "위 SQL 실행 결과로 질문에 답하세요. SQL 로 잘 풀린 부분은 그대로 " +
+    "제시하고, 단일 테이블에서 다중 self-JOIN 이 필요해 표현이 " +
+    "곤란했던 부분이 있으면 그 구조적 이유만 한 줄로 짚으세요(억지 " +
+    "한계 고백 금지 — 잘 됐으면 잘 됐다고). 3~5문장 한국어.";
   try {
     const model = createModel(modelEnv());
     const st = await model.stream([
