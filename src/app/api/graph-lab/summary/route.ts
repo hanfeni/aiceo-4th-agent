@@ -207,7 +207,9 @@ async function multiHopInsight(
   // 경로에 종목 1개 + 깊이 → 그 종목 보유 기관들이 함께 많이
   // 보유한 다른 종목 (연쇄 통찰 — 경로가 길수록 자동 심화)
   if (companies.length === 1) {
-    const [r] = (await runCypher(
+    // runCypher 는 레코드 "배열"을 반환 → 구조분해([r]) 금지.
+    // 상위 3개 종목을 모두 순회해야 하므로 배열 그대로 받는다.
+    const rows = (await runCypher(
       `MATCH (m:${managerLabel})-[:${ownsRel}]->(:${companyLabel} {cusip:$cu})
        MATCH (m)-[:${ownsRel}]->(other:${companyLabel})
        WHERE other.cusip <> $cu
@@ -215,17 +217,13 @@ async function multiHopInsight(
        ORDER BY k DESC LIMIT 3`,
       { cu: companies[0] },
     )) as { co: string; k: number }[];
-    if (r) {
-      const top = (r as unknown as { co: string; k: number }[])
-        .map((x) => `${x.co}(${x.k}곳)`)
-        .join(", ");
-      if (top)
-        lines.push(
-          `🔀 연쇄: 이 종목 보유 기관들이 함께 가장 많이 보유한 ` +
-            `다른 종목 — ${top}. "A를 가진 기관은 B도 갖더라"가 ` +
-            `한 경로로 드러납니다.`,
-        );
-    }
+    const top = rows.map((x) => `${x.co}(${x.k}곳)`).join(", ");
+    if (top)
+      lines.push(
+        `🔀 연쇄: 이 종목 보유 기관들이 함께 가장 많이 보유한 ` +
+          `다른 종목 — ${top}. "A를 가진 기관은 B도 갖더라"가 ` +
+          `한 경로로 드러납니다.`,
+      );
   }
 
   void hasValue;
