@@ -659,7 +659,16 @@ describe("POST /api/dart/analyze — 고정흐름 SSE + Zod(AD-4) + R5/R7", () =
       expect(s1done?.output).toContain("corp_code=00126380");
       expect(s1done?.output).toContain("상장사");
 
+      // stage2(DART 공시 수집) done.output = 실제 수집된 DART 데이터
+      // 원문(ctx.text) 그 자체 — 상태 메시지 아님(교육생이 LLM 에
+      // 들어가는 실제 재무 숫자·인력·주주 값을 노드 클릭으로 확인).
+      // mock ctx.text="CTX" → output 에 그대로 포함(R5: 우리 산출물).
+      const s2done = stages.find((s) => s.stage === 2);
+      expect(s2done?.output).toContain("CTX");
+      expect(s2done?.output).not.toContain("수집 완료"); // 상태문구 아님
+
       // stage3 done.output 에 "압축 컨텍스트" + text.length(3).
+      // (stage3 은 그래프에서 시각 숨김이나 라우트는 emit 유지.)
       const s3done = stages.find((s) => s.stage === 3);
       expect(s3done?.output).toContain("압축 컨텍스트");
       expect(s3done?.output).toContain("3자");

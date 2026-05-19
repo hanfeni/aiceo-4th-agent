@@ -176,13 +176,18 @@ export async function POST(req: Request): Promise<Response> {
           }),
         );
         // ── 단계 2: DART 공시 수집 (collectDartContext 내부 완료) ──
+        // output = 실제 수집된 DART 데이터 원문(ctx.text) 그 자체 —
+        // 상태 메시지 아님. 교육생이 노드 클릭 시 LLM 에 실제로 들어가는
+        // 재무 숫자·인력·주주·배당 값을 확인(D14 교육 목적 — "AI 에
+        // 무엇이 들어가는가"). R5 정합: ctx.text 는 collectDartContext
+        // (우리 코드)의 결정론적 산출물 — LLM 응답/reasoning 아님.
         controller.enqueue(
           encodeSse({
             type: "stage",
             stage: 2,
             status: "done",
             label: "DART 공시 수집",
-            output: `${ctx.corpName} 공시 데이터 수집 완료`,
+            output: ctx.text,
           }),
         );
         // ── 단계 3: 컨텍스트 압축 (OPEN-5 — context-formatter) ──

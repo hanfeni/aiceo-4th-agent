@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import {
   ReactFlow,
   Background,
@@ -48,12 +48,16 @@ export interface DartPipelineGraphProps {
   onStageClick?: (stage: number) => void;
 }
 
-// 가독성 향상(사용자 요청 — 노드·폰트 확대). fitView 가 폰트 확대를
-// 상쇄하지 않도록 노드·폰트·컨테이너 height 를 비례 확대(약 1.4×).
-const NODE_W = 228;
+// 가독성 향상(사용자 요청 — 노드·폰트 추가 확대). fitView 가 폰트
+// 확대를 상쇄하지 않도록 노드 폭·컨테이너 height 를 비례 확대.
+const NODE_W = 260;
 const NODE_GAP = 64;
 
-export function DartPipelineGraph({
+// React.memo: 부모(DartAnalyzeView)가 token 마다 setResult 로
+// 리렌더돼도, stageStates(부모 useMemo 로 안정)·onStageClick
+// (useState setter — 안정 참조)이 불변이면 리렌더 완전 스킵
+// → 노드 깜빡임 구조적 0. 심볼명 보존(import 무영향).
+function DartPipelineGraphImpl({
   stageStates,
   onStageClick,
 }: DartPipelineGraphProps): ReactNode {
@@ -71,16 +75,16 @@ export function DartPipelineGraph({
           data: {
             label: (
               <div style={{ textAlign: "center", lineHeight: 1.4 }}>
-                <div style={{ fontWeight: 700, fontSize: 16 }}>
+                <div style={{ fontWeight: 700, fontSize: 20 }}>
                   {meta.emphasis ? "🤖 " : ""}
                   {meta.label}
                 </div>
                 <div
                   style={{
-                    fontSize: 12,
+                    fontSize: 14,
                     color: c.text,
                     opacity: 0.85,
-                    marginTop: 5,
+                    marginTop: 6,
                   }}
                 >
                   {status === "running"
@@ -145,7 +149,10 @@ export function DartPipelineGraph({
   return (
     <div
       style={{
-        height: 240,
+        // 노드 1줄에 타이트한 높이 — 수직 여유를 없애 fitView 가
+        // 수평 기준으로 fit(노드가 폭을 채워 폰트 체감 확대 + 위아래
+        // 빈 공간 제거). padding 과 함께 노드 묶음을 정중앙 배치.
+        height: 150,
         border: "1px solid var(--border, #e4e4e7)",
         borderRadius: 12,
         background: "#fff",
@@ -157,7 +164,11 @@ export function DartPipelineGraph({
         edges={edges}
         onNodeClick={(_e, n) => onStageClick?.(Number(n.id))}
         fitView
-        fitViewOptions={{ padding: 0.12 }}
+        // 노드는 상수 5개·위치 고정 → 초기 1회 fit 으로 충분(재마운트
+        // key 불필요 — 부모 stageStates 가 메모이즈돼 nodes useMemo
+        // 안정, token 리렌더가 그래프에 전파 0 → 깜빡임 0). padding
+        // 으로 5노드 bounding box 를 뷰포트 정중앙 배치(잘림 0).
+        fitViewOptions={{ padding: 0.14 }}
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
@@ -172,3 +183,6 @@ export function DartPipelineGraph({
     </div>
   );
 }
+
+/** 메모이즈 래핑(깜빡임 0) — 심볼명 DartPipelineGraph 보존. */
+export const DartPipelineGraph = memo(DartPipelineGraphImpl);

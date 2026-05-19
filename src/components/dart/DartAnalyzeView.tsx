@@ -3,6 +3,7 @@
 import {
   useState,
   useRef,
+  useMemo,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -73,6 +74,19 @@ export function DartAnalyzeView(): ReactNode {
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // stageStates(그래프 prop)를 stageIO 변경 시에만 재생성. 인라인
+  // Object.fromEntries 면 token 마다 setResult 리렌더 → 매번 새 객체
+  // → DartPipelineGraph useMemo([stageStates]) 무효화 → nodes/edges
+  // 재생성 + fitView 재실행 → 노드 깜빡임. useMemo 로 참조 안정화
+  // (status 만 추출 — input/output 은 패널이 stageIO 직접 참조).
+  const stageStates = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(stageIO).map(([k, v]) => [k, v.status]),
+      ),
+    [stageIO],
+  );
 
   async function run(): Promise<void> {
     if (running) return;
@@ -240,9 +254,7 @@ export function DartAnalyzeView(): ReactNode {
           인지) → 분석 중 stage 이벤트로 색 전이. stageStates 는
           stageIO 의 status 만 추출(입출력은 D14c 노드 클릭 패널). */}
       <DartPipelineGraph
-        stageStates={Object.fromEntries(
-          Object.entries(stageIO).map(([k, v]) => [k, v.status]),
-        )}
+        stageStates={stageStates}
         onStageClick={setSelectedStage}
       />
 
