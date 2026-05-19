@@ -1,6 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
+import { AccessDiagram } from "./AccessDiagram";
 
 /**
  * ComparePanels — RAG / Text-to-SQL / GraphRAG 결과를 3열로.
@@ -164,6 +165,18 @@ function Panel({
           </div>
           <pre style={codeBox}>{st.resultPreview}</pre>
         </div>
+      )}
+
+      {/* 데이터 접근 방식 도해 — code/result 에서 동적 파생.
+          쿼리가 나온 뒤(code) 표시 → "이 쿼리가 데이터를 어떻게
+          타는가"를 방식별 고유 도해로 대비(사용자 결정). */}
+      {(st.code || st.resultRows !== null) && (
+        <AccessDiagram
+          method={id as "rag" | "sql" | "graphrag"}
+          code={st.code}
+          resultPreview={st.resultPreview}
+          resultRows={st.resultRows}
+        />
       )}
 
       {st.answer && (
