@@ -344,12 +344,21 @@ export function extractToolOutputs(
     if (!isRecord(o)) continue;
     const type = typeof o.type === "string" ? o.type : "";
     if (!type) continue;
-    // web_search_call → name="web_search", args=검색어, result=상태
+    // web_search_call → name="web_search", args=action(통째 보존), result=상태
+    //
+    // RAW 실측(docs/notes/ws-id-format-probe.md): action.type 은
+    //   search       {type,queries,query}
+    //   open_page    {type,url}
+    //   find_in_page {type,pattern,url}
+    // + 미래 새 type 가능. 특정 키(queries/url/pattern)를 하드코딩하면
+    // 미실측 type 에서 빈 표시 버그 + R8 위반(비공개 포맷 단정). 따라서
+    // **type 외 모든 필드를 그대로 보존**하는 graceful passthrough:
+    // args = JSON.stringify({ actions: [<action 통째>] }). 청크당 1
+    // action 만 옴 — 그룹 누적(여러 action 을 1 step)은 reducer
+    // (thinkingSteps.reduceToolCall web_search 분기) 책임. action 없거나
+    // 비-record(in_progress/status 누락 청크)면 args="" 유지(기존 거울
+    // 동작 — 표시할 action 정보 자체가 없음).
     const action = isRecord(o.action) ? o.action : undefined;
-    const queries =
-      action && Array.isArray(action.queries)
-        ? action.queries.filter((q): q is string => typeof q === "string")
-        : [];
     const name = type.replace(/_call$/, ""); // web_search_call → web_search
     const isWebSearch = type === "web_search_call";
     const rawStatus = typeof o.status === "string" ? o.status : "";
@@ -367,7 +376,9 @@ export function extractToolOutputs(
     out.push({
       id: typeof o.id === "string" ? o.id : "",
       name,
-      args: queries.length > 0 ? JSON.stringify({ queries }) : "",
+      // graceful passthrough: action 통째를 actions[] 1원소로. type 외
+      // 모든 필드 보존(하드코딩 0 — R8). action 없으면 "" (기존 거울).
+      args: action ? JSON.stringify({ actions: [action] }) : "",
       result,
     });
   }
