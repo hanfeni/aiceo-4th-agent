@@ -246,9 +246,13 @@ async function multiHopInsight(
     }
   }
 
-  // 경로에 종목 2개+ → 그 종목들을 "모두" 보유한 기관 (common ownership)
-  if (companies.length >= 2) {
-    const uniq = [...new Set(companies)];
+  // 경로에 "서로 다른" 종목 2개+ → 그 종목들을 모두 보유한
+  // 기관 (common ownership). 고유 개수로 판정 — Position 합류
+  // (m:·p: 가 같은 값 중복 주입)로 부푼 length 가 아니라
+  // dedup 후 2개 이상일 때만(빈/단일은 무의미·파라미터 오류).
+  const uniqCompanies = [...new Set(companies)];
+  if (uniqCompanies.length >= 2) {
+    const uniq = uniqCompanies;
     const [r] = (await runCypher(
       `MATCH (m:${managerLabel})
        WHERE all(cu IN $cusips WHERE
@@ -269,9 +273,14 @@ async function multiHopInsight(
     }
   }
 
-  // 경로에 기관 2개+ → 두 기관이 함께 보유한 종목 (포트폴리오 유사도)
-  if (managers.length >= 2) {
-    const [a, b] = [...new Set(managers)].slice(-2);
+  // 경로에 "서로 다른" 기관 2개+ → 두 기관 공통 보유 종목
+  // (포트폴리오 유사도). 고유 개수로 판정 — 같은 기관이 m:·p:
+  // 두 경로로 들어와도 dedup 후 2개 이상이라야 b 가 정의됨
+  // (이전: length>=2 통과 후 Set 으로 1개 → b undefined →
+  //  'Expected parameter(s): b' 런타임 에러).
+  const uniqManagers = [...new Set(managers)];
+  if (uniqManagers.length >= 2) {
+    const [a, b] = uniqManagers.slice(-2);
     const [r] = (await runCypher(
       `MATCH (m1:${managerLabel} {accession:$a})-[:${ownsRel}]->(c:${companyLabel})
        MATCH (m2:${managerLabel} {accession:$b})-[:${ownsRel}]->(c)
@@ -289,9 +298,11 @@ async function multiHopInsight(
     }
   }
 
-  // 경로에 종목 1개 + 깊이 → 그 종목 보유 기관들이 함께 많이
-  // 보유한 다른 종목 (연쇄 통찰 — 경로가 길수록 자동 심화)
-  if (companies.length === 1) {
+  // 경로에 "서로 다른" 종목이 정확히 1개 → 그 종목 보유 기관들이
+  // 함께 많이 보유한 다른 종목 (연쇄 — 경로 길수록 자동 심화).
+  // 고유 개수 1 로 판정(합류로 c:·p: 같은 cusip 2개 들어와도
+  // 연쇄가 누락되지 않도록 — 이전 length===1 은 건너뜀).
+  if (uniqCompanies.length === 1) {
     // runCypher 는 레코드 "배열"을 반환 → 구조분해([r]) 금지.
     // 상위 3개 종목을 모두 순회해야 하므로 배열 그대로 받는다.
     const rows = (await runCypher(
@@ -300,7 +311,7 @@ async function multiHopInsight(
        WHERE other.cusip <> $cu
        RETURN other.name AS co, count(DISTINCT m) AS k
        ORDER BY k DESC LIMIT 3`,
-      { cu: companies[0] },
+      { cu: uniqCompanies[0] },
     )) as { co: string; k: number }[];
     const top = rows.map((x) => `${x.co}(${x.k}곳)`).join(", ");
     if (top)
