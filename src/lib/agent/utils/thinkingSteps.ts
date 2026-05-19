@@ -210,6 +210,14 @@ export function reduceToolResult(
   if (idx < 0) return steps;
   const s = steps[idx];
   if (s.kind !== "tool") return steps;
+  // Slice L — citations 우선(순서 의존 버그 수정). 이미 출처가
+  // 채워진 step('참고 출처…')은 이후 status('검색 완료' 등)가 와도
+  // 덮지 않는다(출처 영속, SSE 도착 순서 무관). citations→citations
+  // 갱신(새 출처)은 허용. same-ref 반환 → store setState 스킵.
+  const curIsCitation =
+    typeof s.result === "string" && s.result.startsWith("참고 출처");
+  const nextIsCitation = result.startsWith("참고 출처");
+  if (curIsCitation && !nextIsCitation) return steps;
   const elapsedMs =
     s.startedAt !== undefined ? Math.max(0, now - s.startedAt) : undefined;
   // 완료 → 제목을 '… 도구 완료'(task 면 '… 에이전트 완료')로 전환.

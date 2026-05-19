@@ -309,6 +309,48 @@ describe("reduceToolResult — web_search citations 마지막 step 덮어쓰기"
     expect(asTool(s[0]).result).toBe(CITE);
     expect(asTool(s[1]).result).toBeUndefined();
   });
+
+  // Slice L — 순서 의존 버그(사용자 보고 "출처가 안 나옴"): citations
+  // 가 step 에 채워진 뒤 status('검색 완료')가 나중에 와도 출처가
+  // 덮이면 안 된다(citations 우선 — 출처 영속). SSE 도착 순서 무관.
+  it("citations 먼저 → 같은 step 에 나중 status('검색 완료') 와도 출처 보존", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    // citations 가 먼저(id 없음 → 마지막 web_search step 덮어쓰기).
+    s = reduceToolResult(s, "web_search", CITE, "");
+    expect(asTool(s[0]).result).toBe(CITE);
+    // 나중에 status('검색 완료')가 같은 step id 로 옴 → 출처 보존.
+    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
+    expect(asTool(s[0]).result).toBe(CITE); // 덮이지 않음
+  });
+
+  it("citations step 에 id 없는 status 폴백도 안 덮음(첫 미완료로 우회)", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
+    // w1 에 citations(마지막? — w2 가 마지막이므로 w2 에 덮임).
+    s = reduceToolResult(s, "web_search", CITE, "");
+    expect(asTool(s[1]).result).toBe(CITE); // w2 = 출처
+    // id 없는 status('검색 완료') → citations 아닌 일반 → 첫 미완료
+    // (w1, result===undefined)에 채움. w2(citations)는 불변.
+    s = reduceToolResult(s, "web_search", "검색 완료", "");
+    expect(asTool(s[0]).result).toBe("검색 완료"); // w1 완료
+    expect(asTool(s[1]).result).toBe(CITE); // w2 출처 보존
+  });
+
+  it("citations step 에 id 매칭 status 가 와도 출처 우선(명시 id 여도)", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolResult(s, "web_search", CITE, ""); // w1 = 출처
+    // status 가 같은 id(w1) 로 명시되어 와도 출처 보존.
+    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
+    expect(asTool(s[0]).result).toBe(CITE);
+  });
+
+  it("citations 가 또 와서 갱신은 허용(출처→출처 덮어쓰기 OK)", () => {
+    const CITE2 = "참고 출처 2건:\n• A (https://a.x)\n• B (https://b.x)";
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolResult(s, "web_search", CITE, "");
+    s = reduceToolResult(s, "web_search", CITE2, ""); // 새 출처로 갱신
+    expect(asTool(s[0]).result).toBe(CITE2);
+  });
 });
 
 describe("교차 통합 — 회귀 가드 (사고→도구→사고→도구 순서 보존)", () => {
