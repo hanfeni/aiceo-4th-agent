@@ -3,7 +3,7 @@ import { currentTimeTool } from "./exampleTool";
 import { webSearchTool } from "./webSearchTool";
 
 /**
- * H4 커스텀 도구 등록 지점 (requirements.md 디렉토리 원칙의 re-export
+ * H4 커스텀 도구 등록 지점 (스펙 디렉토리 원칙의 re-export
  * 허용 예외 — 등록 지점에만 허용).
  *
  * 새 도구 추가 절차 (요소 추가·제거 용이 — FR-08):

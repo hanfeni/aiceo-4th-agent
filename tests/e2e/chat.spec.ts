@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 /**
  * Slice 9 E2E — UC-1/UC-3 해피패스 + thinking 누출 e2e probe.
  *
- * 실 LLM(gpt-5.4-mini, OpenAI — 과금·비결정). requirements.md
+ * 실 LLM(gpt-5.4-mini, OpenAI — 과금·비결정). 스펙
  * [E2E 테스트 작성 규칙] 엄수:
  *  - "정확히 N 줄"/"특정 단어 포함" 어설션 금지.
  *  - /api/chat: 200 + text/event-stream.
@@ -152,7 +152,7 @@ test.describe("UC-1/UC-3 — 채팅 해피패스 (실 LLM)", () => {
     );
 
     await page.goto("/chat");
-    // requirements.md 함정 4 재현 입력(추론 필요 — reasoning 토큰 유발).
+    // 스펙 함정 4 재현 입력(추론 필요 — reasoning 토큰 유발).
     await page
       .locator(TEXTAREA)
       .fill("17 곱하기 24 더하기 89 만 숫자로 답해");

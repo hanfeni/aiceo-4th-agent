@@ -1,5 +1,5 @@
 /**
- * systemPrompt — 한국어 챗봇 시스템 프롬프트 (AC-10 / requirements.md §9).
+ * systemPrompt — 한국어 챗봇 시스템 프롬프트 (AC-10 / 스펙 §9).
  *
  * 간단한 한국어 챗봇 어시스턴트 역할만 정의한다. 레퍼런스 소스(OpenCode SDK
  * 구안 등) 잔재·템플릿 cruft 금지. createDeepAgent({ systemPrompt }) 로 주입된다.

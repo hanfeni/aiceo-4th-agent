@@ -10,23 +10,17 @@ import {
 } from "lucide-react";
 
 /**
- * (main) 그룹 셸 — 디자인 AdminCompactSidebar (chat.jsx:276-352).
+ * (main) 그룹 셸 — 디자인 핸드오프 AdminCompactSidebar 재현.
  *
- * requirements.md §1.8: Sidebar(로고 + "채팅" 링크) + Header(고정 이메일)를
+ * 스펙 §1.8: Sidebar(로고 + "채팅" 링크) + Header(고정 이메일)를
  * 인라인 구성(분리 금지 — 별도 컴포넌트 파일 없음). 라이트 모드.
  *
  * 기능(실 동작): "채팅" 단일 nav 링크만 실 라우트(/chat). 워크스페이스
  * 피커·그룹 nav 항목·사용자 카드 메뉴는 시각 전용 mock(disabled, 미구현).
- * 고정 이메일은 사용자 카드에 표시(USER 카드 패턴 chat.jsx:342-349).
- *
- * 픽셀값 인용(chat.jsx):
- *  - aside: width 280, background var(--medi-gray-50), padding 12px 10px (:279)
- *  - 워크스페이스 로고: 28x28 radius 9 blue gradient (:282)
- *  - nav single: padding 10px 12px radius 10 border t-neutral-8 (:294)
- *  - 사용자 카드 avatar: 30x30 원형 agent gradient (:343)
+ * 고정 이메일은 사용자 카드에 표시.
  */
 
-// 고정 표시 이메일(Header — requirements.md §1.8 "고정 이메일 표시").
+// 고정 표시 이메일(Header — 스펙 §1.8 "고정 이메일 표시").
 // PUBLIC 저장소 노출 방지를 위해 실명/사내 이메일 대신 예시값 사용.
 const FIXED_USER_EMAIL = "user@example.com";
 const USER_INITIALS = "US";
@@ -198,7 +192,7 @@ function Sidebar(): ReactNode {
         </div>
       </nav>
 
-      {/* User card — 고정 이메일 표시(Header 등가, requirements.md §1.8). */}
+      {/* User card — 고정 이메일 표시(Header 등가, 스펙 §1.8). */}
       <div
         style={{
           display: "flex",

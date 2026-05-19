@@ -44,13 +44,28 @@ export type ThinkingStep =
       args: string;
       /** 실행 결과(OUT). 미수신 시 undefined(실행 중). */
       result?: string;
+      /**
+       * 같은 도구가 연속 호출된 횟수(medigate toolKey 그룹화 모방).
+       * 1 이면 뱃지 미표시, 2 이상이면 `x2` 표기. 기본 1.
+       */
+      count?: number;
+      /**
+       * tool_call 수신 시각(ms epoch). 클라이언트 측정 — deepagents/
+       * LangGraph 는 서버 elapsed 를 안 주므로 reducer 가 clock 으로 기록.
+       */
+      startedAt?: number;
+      /**
+       * IN→OUT 소요시간(ms). tool_result 매칭 시 now-startedAt 으로 채움.
+       * medigate IOPair elapsed 표시 모방.
+       */
+      elapsedMs?: number;
       order: number;
     };
 
 /**
  * 서버 → 클라이언트 SSE 이벤트 (discriminated union).
  * route.ts 가 thread → token(*) → done|error 순으로 emit
- * (docs/notes/live-stream-events.md / PRD §1.6).
+ * (PRD §1.6 SSE 계약).
  */
 export type SseEvent =
   | { type: "thread"; conversationId: string }

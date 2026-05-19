@@ -1,8 +1,18 @@
 # 프로젝트: LangGraph DeepAgents(JS) 기반 하네스 + LLM 챗 에이전트
 
-전체 스펙: [requirements.md](requirements.md) — 이 파일은 "코드 생성 시 어기면 안 되는
-중요 사항"만 압축한다. 상세 함정/구현 순서는 requirements.md 를 따른다.
-폐기 문서: prompt-sample.md (OpenCode SDK 구안 — 참고용 보존, 따르지 말 것).
+이 파일은 코드 트리에 남는 **유일한 가드 문서**다 — "코드 생성 시 어기면
+안 되는 중요 사항"만 압축한다. 상세 함정·구현 순서·전체 스펙(requirements.md),
+PRD/plan/use-cases/QA/실측 노트/디자인 핸드오프 원본(docs/)은 코드 최소화를
+위해 옵시디언 vault 로 이관됐다 (2026-05-19, commit `3f0a46d`).
+vault 위치: `specs/aiceo-4th-agent/` (iCloud Obsidian Documents/)
+
+- `requirements.md` — 전체 스펙 (이 파일의 상세 원본)
+- `docs/` — PRD, plan, use-cases, qa, notes, design-ref
+- `prompt-sample.md` — 폐기된 OpenCode SDK 구안 (따르지 말 것)
+- `README.md` — 이관 인덱스·출처
+
+코드 생성·변경 시 상세 근거가 필요하면 위 vault 산출물을 참조한다.
+실측이 스펙과 충돌하면 임의 변경 말고 사용자 보고(R8 불변).
 
 ## 스택 핵심 (코드 생성 전 반드시 인지)
 

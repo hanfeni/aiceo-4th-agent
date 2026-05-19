@@ -1,7 +1,7 @@
 import type { SubagentSpec } from "@/types";
 
 /**
- * H2-b Subagent 등록 지점 (requirements.md re-export 허용 예외).
+ * H2-b Subagent 등록 지점 (스펙 디렉토리 원칙의 re-export 허용 예외).
  *
  * 새 subagent 추가 절차 (요소 추가·제거 용이 — FR-08):
  *   1. harness/subagents/<mySubagent>.ts 에 SubagentSpec 정의

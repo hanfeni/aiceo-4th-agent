@@ -1,6 +1,6 @@
 /* ============================================================
    디자인 토큰 — handoff "09 · 인터랙티브 풀시안" (ChatAgentUI)
-   출처: docs/design-ref/tokens.css + medicnc-tokens.css
+   출처: 디자인 핸드오프 토큰(tokens.css + medicnc-tokens.css)
    라이트 모드 기본. 컴포넌트는 var(--…) 로 이 토큰을 참조한다.
    Pretendard + Inter (디자인 폰트 스택).
    @import 규칙은 다른 모든 규칙보다 먼저 와야 한다(CSS spec). 폰트
@@ -11,11 +11,22 @@
 @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css");
 @import "tailwindcss";
 
-:root {
+/* ------------------------------------------------------------
+   폰트는 @theme 으로 승격한다. Tailwind v4 Preflight 가 html/body
+   의 기본 font-family 를 주입하므로, :root 변수 선언만으로는
+   Preflight 가 cascade 에서 이겨 Pretendard 가 적용되지 않는다.
+   @theme 에 두면 Tailwind 가 Preflight 기본 폰트를 이 변수로
+   자동 바인딩하고 font-sans/font-mono 유틸리티도 함께 생성한다.
+   색상/radius/shadow 토큰은 유틸리티 클래스가 불필요하므로
+   :root 에 그대로 둔다(인라인 var() 참조 전용).
+   ------------------------------------------------------------ */
+@theme {
   --font-sans: "Pretendard", "Inter", -apple-system, BlinkMacSystemFont,
     system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 
+:root {
   /* Agent accent — violet (디자인 사이드바 그룹 accent) */
   --agent-50: #f5f3ff;
   --agent-100: #ede9fe;

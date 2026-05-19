@@ -1,7 +1,7 @@
 /**
  * chunkFilter — 스트림 청크에서 UI 본문 텍스트만 추출하는 순수 함수 (R5 / FR-09).
  *
- * 설계 근거(실측): docs/notes/live-stream-events.md + Slice 9 런타임 재실측
+ * 설계 근거(실측): U2 스트림 형태 + Slice 9 런타임 재실측
  * - U2: streamMode "messages" → 각 part 는 [AIMessageChunk, meta] 2-튜플.
  * - U3 (Slice 9 정정): probe 의 JSON.stringify 관찰은 직렬화형(`kwargs.content`)
  *       이었으나, for-await 로 순회하는 **실제 런타임 객체는 살아있는 LangChain

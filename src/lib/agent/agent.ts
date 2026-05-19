@@ -28,13 +28,12 @@ import {
  * conversationHistory 를 messages 에 수동 누적하지 않는다(중복 누적/컨텍스트
  * 오염 차단). 그래프 input.messages 에는 현재 turn query 만 들어간다.
  *
- * U2 (docs/notes/live-stream-events.md) — graph.stream(input, config) 의
- * streamMode 는 RunnableConfig 키 "messages". 각 part 는 [AIMessageChunk,
- * meta] 2-튜플. chunkFilter 가 본문 텍스트만 추출한다(R5/FR-09).
+ * U2 — graph.stream(input, config) 의 streamMode 는 RunnableConfig 키
+ * "messages". 각 part 는 [AIMessageChunk, meta] 2-튜플. chunkFilter 가
+ * 본문 텍스트만 추출한다(R5/FR-09).
  */
 
-// 실측(node_modules/@langchain/langgraph pregel index.d.ts:111 + Slice 1
-// scripts/probe.mts): 컴파일 그래프의 .stream() 은 **Promise<IterableReadable
+// 실측: 컴파일 그래프의 .stream() 은 **Promise<IterableReadable
 // Stream>** 을 반환한다. await 로 풀어야 for await 가 가능하다(await 누락 시
 // "stream is not async iterable" 런타임 에러 — 단위 mock 은 async generator
 // 라 await 없이도 통과해 이 형태 차이를 못 잡았다, architect AI-5).

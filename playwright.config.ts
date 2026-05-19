@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-// requirements.md [E2E 테스트 작성 규칙]: real API 는 non-deterministic.
+// 스펙 [E2E 테스트 작성 규칙]: real API 는 non-deterministic.
 // retries:1 로 rate limit 흡수, reuseExistingServer:false 로 깨끗한 기동.
 export default defineConfig({
   testDir: "./tests/e2e",

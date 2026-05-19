@@ -11,7 +11,7 @@ import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
  * 테스트" 가 문자 그대로 성립한다. 실제 `SqliteSaver.fromConnString` 은
  * LangGraph 가 saver 메서드를 처음 호출하는 시점에 1회만 일어난다.
  *
- * U5 실측 (docs/notes/live-stream-events.md):
+ * U5 실측:
  *  - sqlite → SqliteSaver.fromConnString(CHECKPOINTER_SQLITE_PATH)
  *  - memory → SqliteSaver.fromConnString(":memory:")  (별도 MemorySaver
  *    import 은 pnpm strict 에서 불가하므로 in-memory sqlite 로 통일)

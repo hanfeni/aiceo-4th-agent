@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 /**
- * ChatInput — 디자인 InputBar (docs/design-ref/chat.jsx:693).
+ * ChatInput — 디자인 핸드오프 InputBar 재현.
  *
  * 기능(실 백엔드 연결): Enter 전송 / Shift+Enter 줄바꿈, textarea 자동 증가
  * (max 160px), 스트리밍 중 입력+전송 잠금(FR-03). onSend 는 trim 된 값으로

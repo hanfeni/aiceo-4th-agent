@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 /**
  * Slice 9 E2E — TC-22 "연속 2회 이상" stateful 멀티턴 (실 LLM).
  *
- * requirements.md [검증 철학]: "한 번 성공은 보장이 아니다." 모든 stateful
+ * 스펙 [검증 철학]: "한 번 성공은 보장이 아니다." 모든 stateful
  * 경로(멀티턴 + 체크포인터)는 "연속 2회 이상", "여러 유형의 입력"으로 검증.
  * → 같은 대화에서 2턴 흐름을 최소 2회 독립 실행, 서로 다른 입력 유형
  *   (일반 인사 / 추론 유발)을 섞는다.
