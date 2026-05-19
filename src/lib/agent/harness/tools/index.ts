@@ -1,6 +1,11 @@
 import type { ClientTool, ServerTool } from "@langchain/core/tools";
-import { currentTimeTool } from "./exampleTool";
-import { webSearchTool } from "./webSearchTool";
+import { currentTimeTool, currentTimeToolDisplayName } from "./exampleTool";
+import {
+  webSearchTool,
+  webSearchToolDisplayName,
+  webSearchToolDescription,
+} from "./webSearchTool";
+import { dartToolDisplayName, dartToolDescription } from "./dartTool";
 
 /**
  * H4 커스텀 도구 등록 지점 (스펙 디렉토리 원칙의 re-export
@@ -8,8 +13,12 @@ import { webSearchTool } from "./webSearchTool";
  *
  * 새 도구 추가 절차 (요소 추가·제거 용이 — FR-08):
  *   1. harness/tools/<myTool>.ts 작성 (langchain `tool()` 형태, zod ^4)
- *   2. 아래 HARNESS_TOOLS 배열에 import 후 1줄 추가
- *   3. 그 외 파일 변경 0 (agent.ts/route.ts 무수정 — R2/NFR-6)
+ *      + `export const <myTool>DisplayName = "한글명";`
+ *   2. 아래 HARNESS_TOOLS 배열 + HARNESS_TOOL_DISPLAY_NAMES 배열에
+ *      각 1줄 추가 (도구명은 ClientTool=.name / ServerTool=.type 실측)
+ *   3. 그 외 파일 변경 0 (agent.ts/route.ts/harness 화면 무수정 —
+ *      R2/NFR-6 + FR-08: /harness introspect 가 이 매핑을 동적으로 읽어
+ *      새 도구도 한글명까지 자동 표시)
  *
  * 도구는 두 종류가 혼재할 수 있다 (createDeepAgent 가 1급 수용 —
  * probe note §6-A): ClientTool(우리 측 실행, 예: exampleTool) /
@@ -21,4 +30,37 @@ import { webSearchTool } from "./webSearchTool";
 export const HARNESS_TOOLS: (ClientTool | ServerTool)[] = [
   currentTimeTool,
   webSearchTool,
+];
+
+/**
+ * 도구명 → 사고 패널/하네스 화면 한글 표시명 매핑 (FR-08 동적화).
+ * /harness introspect 가 이 배열을 읽어 displayName 을 붙인다 — 새 도구
+ * 추가 시 이 배열 1줄만 더하면 화면 코드(page.tsx/HarnessView) 수정 0.
+ * 도구명은 ClientTool=.name / ServerTool=.type (실측 — probe note).
+ * HARNESS_TOOLS 와 별도 배열로 둬 기존 도구 배열 타입/회귀 0.
+ */
+export const HARNESS_TOOL_DISPLAY_NAMES: {
+  name: string;
+  displayName: string;
+  /** ServerTool 처럼 .description 미보유 도구의 설명(introspect ToolMeta
+   *  와 구조 호환 — 인라인 유지로 introspect 역방향 결합 회피). */
+  description?: string;
+}[] = [
+  // ClientTool(current_time)은 도구 객체 .description 보유 → 매핑 description
+  // 불요(introspect 가 .description 우선). ServerTool 만 매핑이 유일 경로.
+  { name: "current_time", displayName: currentTimeToolDisplayName },
+  {
+    name: "web_search",
+    displayName: webSearchToolDisplayName,
+    description: webSearchToolDescription,
+  },
+  // dart_company_data 는 R5 격리로 HARNESS_TOOLS 배열엔 미등록(메인
+  // 직접호출 시 본문 누출 위험 — architect 확정). dartAnalyst subagent
+  // tools:[dartTool] 에만 직접 주입된다. 단 사고 패널 한글 표시는
+  // 필요하므로 이 매핑에는 등록(FR-08 — /harness introspect·thinking).
+  {
+    name: "dart_company_data",
+    displayName: dartToolDisplayName,
+    description: dartToolDescription,
+  },
 ];
