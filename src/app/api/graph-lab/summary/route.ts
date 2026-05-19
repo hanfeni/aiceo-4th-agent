@@ -159,6 +159,22 @@ async function multiHopInsight(
 ): Promise<string[]> {
   const companies = ids.filter((x) => x.kind === "c:").map((x) => x.raw);
   const managers = ids.filter((x) => x.kind === "m:").map((x) => x.raw);
+  // Position(p:<accession>|<cusip>) — 3-노드 모드 전용. cusip/
+  // accession 을 풀어 종목·기관 양쪽 관점에 합류시킨다(아래
+  // positionInsight 가 put_call 분포까지 — Position 노드의 존재
+  // 이유. 이게 없으면 3-노드 토글 해석이 부실/2-노드와 동일).
+  const positions = ids
+    .filter((x) => x.kind === "p:")
+    .map((x) => {
+      const [pa, pc] = x.raw.split("|");
+      return { accession: pa, cusip: pc };
+    });
+  // p: 의 cusip/accession 을 종목/기관 풀에 합류 → 기존 멀티홉
+  // 분기(common ownership·유사도)가 Position 경로에서도 작동.
+  for (const p of positions) {
+    if (p.cusip) companies.push(p.cusip);
+    if (p.accession) managers.push(p.accession);
+  }
   const lines: string[] = [];
 
   // ── 0순위: 방금 밟은 마지막 두 노드의 "직접 연결" ────────
@@ -293,6 +309,44 @@ async function multiHopInsight(
           `다른 종목 — ${top}. "A를 가진 기관은 B도 갖더라"가 ` +
           `한 경로로 드러납니다.`,
       );
+  }
+
+  // ── Position 고유 통찰 (3-노드 모드) ──────────────────────
+  // 경로에 Position 이 있으면 그 종목의 "현물 vs 옵션 분포"를
+  // 보여준다. 이건 OWNS(2-노드)로는 절대 못 보는 통찰 —
+  // Position 노드의 존재 이유이자 3-노드 토글을 켠 목적.
+  // 사용자 지적("3개 노드 경우 설명 부실")의 직접 처방.
+  if (positions.length > 0) {
+    const last = positions[positions.length - 1];
+    const rows = (await runCypher(
+      `MATCH (:${managerLabel})-[:${GRAPH_SCHEMA.holdsRel}]->
+             (p:${GRAPH_SCHEMA.positionLabel})-[:${GRAPH_SCHEMA.ofRel}]->
+             (c:${companyLabel} {cusip:$cu})
+       WITH coalesce(p.put_call,'') AS kind, count(*) AS k
+       RETURN kind, k ORDER BY k DESC`,
+      { cu: last.cusip },
+    )) as { kind: string; k: number }[];
+    if (rows.length > 0) {
+      const spot = rows.find((r) => r.kind === "")?.k ?? 0;
+      const call = rows.find((r) => r.kind === "Call")?.k ?? 0;
+      const put = rows.find((r) => r.kind === "Put")?.k ?? 0;
+      const opt = call + put;
+      if (opt > 0) {
+        lines.push(
+          `🎯 보유 성격: 이 종목은 현물 포지션 ${spot}건 + **옵션 ` +
+            `${opt}건**(Call ${call} · Put ${put}). 대부분 직접 ` +
+            `보유하지만 일부 기관은 옵션으로 베팅 — 같은 "보유"도 ` +
+            `방향(롱/헤지)이 다릅니다. OWNS 2-노드로는 안 보이는, ` +
+            `Position 노드라야 갈리는 통찰입니다.`,
+        );
+      } else {
+        lines.push(
+          `🎯 보유 성격: 이 종목 포지션은 전부 현물(${spot}건) — ` +
+            `옵션 포지션 없음. Position 노드는 현물/옵션을 구별해 ` +
+            `담지만 이 종목은 모두 직접 보유입니다.`,
+        );
+      }
+    }
   }
 
   void hasValue;
