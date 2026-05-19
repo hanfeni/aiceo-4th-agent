@@ -6,6 +6,45 @@ import {
   fireEvent,
   waitFor,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
+
+// @xyflow/react 최소 모킹 (D14b — DartAnalyzeView 가 DartPipelineGraph 를
+// 렌더하며 @xyflow/react 를 transitive import. @xyflow/react@12 는 mount
+// 시 ResizeObserver(브라우저 전용)를 호출하는데 jsdom 엔 없어 전 테스트가
+// ReferenceError. dartPipelineGraph.test.tsx 와 동일한 계약 mock 으로
+// 무력화(단일 "테스트상 React Flow" 정의 공유 — 두 테스트 동반 검증).
+// vi.mock 은 hoist 되어 아래 DartAnalyzeView import 의 transitive
+// @xyflow/react 도착 전에 인터셉트한다.
+interface MockNode {
+  id: string;
+}
+vi.mock("@xyflow/react", () => ({
+  ReactFlow: ({
+    nodes,
+    onNodeClick,
+  }: {
+    nodes: MockNode[];
+    onNodeClick?: (e: unknown, n: MockNode) => void;
+  }): ReactNode => (
+    <div data-testid="rf" data-node-count={nodes.length}>
+      {nodes.map((n) => (
+        <button
+          key={n.id}
+          type="button"
+          data-testid={`rf-node-${n.id}`}
+          onClick={() => onNodeClick?.({}, n)}
+        >
+          node-{n.id}
+        </button>
+      ))}
+    </div>
+  ),
+  Background: (): ReactNode => null,
+  Position: { Left: "left", Right: "right" },
+  MarkerType: { ArrowClosed: "arrowclosed" },
+}));
+vi.mock("@xyflow/react/dist/style.css", () => ({}));
+
 import { DartAnalyzeView } from "@/components/dart/DartAnalyzeView";
 import { AgentNav } from "@/app/(main)/AgentNav";
 
@@ -176,11 +215,24 @@ describe("DartAnalyzeView — 정상 SSE 흐름 (UC-41 / TC-41.1)", () => {
     });
   });
 
-  it("tool_call 단계에서 진행(progress) 배너가 노출된다", async () => {
-    // tool_call 후 멈춰 두면 progress 가 잔류(token 도착 전 상태 관찰).
+  it("노드-엣지 파이프라인 그래프는 분석 전에도 5단계 항상 렌더된다", () => {
+    // D14b: progress 텍스트 배너 폐지 → DartPipelineGraph 상시 렌더
+    // (교육생이 분석 전 5단계 구조를 idle 노드로 미리 인지). 모킹된
+    // ReactFlow 가 data-node-count 로 전달 노드 수를 노출.
+    render(<DartAnalyzeView />);
+    expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe("5");
+  });
+
+  it("stage 이벤트 → 해당 노드가 진행/완료 상태로 전이된다", async () => {
+    // D14b: tool_call/tool_result(D12) 는 무시, stage 이벤트가
+    // 시각화 데이터원. stage 시작→running, done→done. 모킹 ReactFlow
+    // 가 노드를 rf-node-<id> 버튼으로 렌더하므로 노드 존재만 확인하고,
+    // 상태 색은 DartPipelineGraph 단위 테스트(dartPipelineGraph)에서 검증.
     mockFetchOk([
       { type: "thread", conversationId: "c-2" },
-      { type: "tool_call", name: "dart_company_data" },
+      { type: "stage", stage: 1, status: "start", label: "기업 식별" },
+      { type: "stage", stage: 1, status: "done", label: "기업 식별" },
+      { type: "stage", stage: 4, status: "start", label: "OpenAI 8관점 분석" },
     ]);
     render(<DartAnalyzeView />);
     fireEvent.change(screen.getByLabelText("분석 대상 기업명"), {
@@ -189,7 +241,11 @@ describe("DartAnalyzeView — 정상 SSE 흐름 (UC-41 / TC-41.1)", () => {
     fireEvent.click(screen.getByRole("button", { name: "분석" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/DART 공시 데이터 수집 중/)).toBeTruthy();
+      // stage 이벤트 소비 후에도 5노드 캔버스 유지(상시 렌더 불변).
+      expect(screen.getByTestId("rf").getAttribute("data-node-count")).toBe(
+        "5",
+      );
+      expect(screen.getByTestId("rf-node-4")).toBeTruthy();
     });
   });
 

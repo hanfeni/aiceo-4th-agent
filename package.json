@@ -20,6 +20,7 @@
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.1",
     "@langchain/openai": "^1.4.5",
     "@opensearch-project/opensearch": "^3.6.0",
+    "@xyflow/react": "^12.10.2",
     "better-sqlite3": "^12.10.0",
     "clsx": "^2.1.1",
     "deepagents": "^1.10.2",

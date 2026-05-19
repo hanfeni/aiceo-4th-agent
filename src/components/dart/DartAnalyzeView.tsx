@@ -7,6 +7,15 @@ import {
   type ReactNode,
 } from "react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
+import { DartPipelineGraph } from "./DartPipelineGraph";
+import type { StageStatus } from "./dartStageNodes";
+
+/** stage 이벤트로 누적하는 단계별 입출력(D14c 노드 클릭 패널용) */
+interface StageIO {
+  status: StageStatus;
+  input?: string;
+  output?: string;
+}
 
 /**
  * DART 기업 펀더멘털 분석 전용 폼 UI (고정흐름 — D12).
@@ -47,31 +56,18 @@ const formRow: CSSProperties = {
   alignItems: "center",
   marginBottom: 16,
 };
-const inputStyle: CSSProperties = {
-  flex: "1 1 220px",
-  minWidth: 200,
-  padding: "9px 12px",
-  border: "1px solid var(--border, #d4d4d8)",
-  borderRadius: 8,
-  fontSize: 14,
-};
-const selectStyle: CSSProperties = { ...inputStyle, flex: "0 0 160px" };
-const btnStyle = (disabled: boolean): CSSProperties => ({
-  padding: "9px 18px",
-  borderRadius: 8,
-  border: "none",
-  background: disabled ? "#a1a1aa" : "var(--agent-500, #4f46e5)",
-  color: "#fff",
-  fontSize: 14,
-  fontWeight: 600,
-  cursor: disabled ? "not-allowed" : "pointer",
-});
+// input/select/버튼은 globals.css 의 .cf-field / .cf-select /
+// .cf-btn 클래스로 통일(인라인 한계인 :hover / :focus-within ring /
+// select 커스텀 화살표를 클래스로 재현 — medigate Control Atoms 정합).
+// 레이아웃 인라인(flex/minWidth)만 컴포넌트에 잔류.
 
 export function DartAnalyzeView(): ReactNode {
   const [corpName, setCorpName] = useState("");
   const [perspective, setPerspective] = useState<string>("comprehensive");
   const [result, setResult] = useState("");
-  const [progress, setProgress] = useState<string | null>(null);
+  // progress 텍스트 배너 → 노드-엣지 그래프(D14b). stage 이벤트로
+  // 단계별 상태+입출력 누적(D14c 노드 클릭 패널이 stageIO 참조).
+  const [stageIO, setStageIO] = useState<Record<number, StageIO>>({});
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -86,7 +82,7 @@ export function DartAnalyzeView(): ReactNode {
     setRunning(true);
     setErr(null);
     setResult("");
-    setProgress(null);
+    setStageIO({});
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -114,16 +110,33 @@ export function DartAnalyzeView(): ReactNode {
           const line = f.trim();
           if (!line.startsWith("data:")) continue;
           const ev = JSON.parse(line.slice(5).trim());
-          if (ev.type === "tool_call") {
-            setProgress(`DART 공시 데이터 수집 중… (${name})`);
-          } else if (ev.type === "tool_result") {
-            setProgress("데이터 수집 완료 — 분석 생성 중…");
+          if (ev.type === "stage") {
+            // D14a 라우트 stage 이벤트 → 노드 상태+입출력 누적.
+            // status: start→running / done→done / error→error.
+            // Strict Mode 2회 호출 방어: 함수형 불변 업데이트.
+            const st: StageStatus =
+              ev.status === "start"
+                ? "running"
+                : ev.status === "done"
+                  ? "done"
+                  : "error";
+            setStageIO((m) => ({
+              ...m,
+              [ev.stage]: {
+                status: st,
+                // input/output 은 들어온 것만 갱신(다음 이벤트가
+                // 덮어쓰지 않게 기존 값 보존 — start 의 input +
+                // done 의 output 합성).
+                input: ev.input ?? m[ev.stage]?.input,
+                output: ev.output ?? m[ev.stage]?.output,
+              },
+            }));
           } else if (ev.type === "token") {
             // Strict Mode 업데이터 2회 호출 방어: 함수형 누적(외부 변이 0).
             setResult((r) => r + ev.text);
-            setProgress(null);
-          } else if (ev.type === "done") {
-            setProgress(null);
+          } else if (ev.type === "tool_call" || ev.type === "tool_result") {
+            // D12 호환 이벤트 — 노드-엣지(D14b)가 진행 표시를 대체.
+            // 무시(stage 이벤트가 시각화 데이터원).
           } else if (ev.type === "error") {
             setErr(ev.message);
           }
@@ -144,7 +157,15 @@ export function DartAnalyzeView(): ReactNode {
   }
 
   return (
-    <div style={wrap}>
+    // layout.tsx overflow:hidden+100dvh → 자체 스크롤 컨테이너 필요
+    // (search-lab/meta-lab/harness 와 동일 패턴, 챗만 예외).
+    // cf-scope--agent: DART 는 "AI 에이전트" 그룹 → 그 안 cf-*
+    // (input/select/버튼)이 보라 accent 상속(검색·라벨링은 기본 blue).
+    <div
+      className="thin-scroll cf-scope--agent"
+      style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
+    >
+      <div style={wrap}>
       <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>
         DART 기업 펀더멘털 분석
       </h1>
@@ -155,7 +176,8 @@ export function DartAnalyzeView(): ReactNode {
 
       <div style={formRow}>
         <input
-          style={inputStyle}
+          className="cf-field"
+          style={{ flex: "1 1 220px", minWidth: 200 }}
           placeholder="기업명 (예: 삼성전자)"
           value={corpName}
           onChange={(e) => setCorpName(e.target.value)}
@@ -166,7 +188,8 @@ export function DartAnalyzeView(): ReactNode {
           aria-label="분석 대상 기업명"
         />
         <select
-          style={selectStyle}
+          className="cf-field cf-select"
+          style={{ flex: "0 0 160px" }}
           value={perspective}
           onChange={(e) => setPerspective(e.target.value)}
           disabled={running}
@@ -179,12 +202,12 @@ export function DartAnalyzeView(): ReactNode {
           ))}
         </select>
         {running ? (
-          <button style={btnStyle(false)} onClick={stop} type="button">
+          <button className="cf-btn" onClick={stop} type="button">
             중지
           </button>
         ) : (
           <button
-            style={btnStyle(false)}
+            className="cf-btn cf-btn--primary"
             onClick={() => void run()}
             type="button"
           >
@@ -210,20 +233,15 @@ export function DartAnalyzeView(): ReactNode {
         </div>
       )}
 
-      {progress && (
-        <div
-          style={{
-            padding: "10px 14px",
-            background: "#f4f4f5",
-            borderRadius: 8,
-            fontSize: 13,
-            color: "#52525b",
-            marginBottom: 16,
-          }}
-        >
-          {progress}
-        </div>
-      )}
+      {/* 교육용 노드-엣지 파이프라인 시각화(D14b). 분석 전에도
+          5단계 구조를 idle 노드로 항상 표시(교육생이 흐름 미리
+          인지) → 분석 중 stage 이벤트로 색 전이. stageStates 는
+          stageIO 의 status 만 추출(입출력은 D14c 노드 클릭 패널). */}
+      <DartPipelineGraph
+        stageStates={Object.fromEntries(
+          Object.entries(stageIO).map(([k, v]) => [k, v.status]),
+        )}
+      />
 
       {result && (
         <div
@@ -237,6 +255,7 @@ export function DartAnalyzeView(): ReactNode {
           <ChatMarkdown content={result} />
         </div>
       )}
+      </div>
     </div>
   );
 }
