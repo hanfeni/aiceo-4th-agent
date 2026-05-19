@@ -67,28 +67,45 @@ const THINKING_MD_CLASS =
   "[&_strong]:not-italic [&_strong]:font-semibold " +
   "[&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_code]:not-italic";
 
-/** reasoning step 본문 (디자인 StepInline reasoning 인용 :152-158). */
+/** 제목 미수신(영문 bold 경계 전) reasoning step 폴백 헤더. */
+const REASONING_FALLBACK_TITLE = "사고 정리 중";
+
+/**
+ * reasoning step 본문 (디자인 StepInline reasoning 인용 :152-158).
+ * medigate-new 모방: 제목은 step 위 별도 헤더(14px 굵게). 제목이
+ * 비면 폴백("사고 정리 중") 표시. active(스트리밍 중 마지막 step)면
+ * 제목 옆 점 펄스로 "진행 중" 마킹(medigate lastGroup.isActive).
+ */
 function ReasoningBlock({
   title,
   content,
+  active = false,
 }: {
   title: string;
   content: string;
+  active?: boolean;
 }): ReactNode {
+  const headerText = title.length > 0 ? title : REASONING_FALLBACK_TITLE;
   return (
     <div>
-      {title.length > 0 && (
-        <div
-          style={{
-            fontSize: 12.5,
-            fontWeight: 600,
-            color: "var(--text-default)",
-            marginBottom: 6,
-          }}
-        >
-          {title}
-        </div>
-      )}
+      <div
+        style={{
+          fontSize: 12.5,
+          fontWeight: 600,
+          color: "var(--text-default)",
+          marginBottom: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <span>{headerText}</span>
+        {active && (
+          <span role="status" aria-label="진행 중">
+            <DotPulse />
+          </span>
+        )}
+      </div>
       {content.trim().length > 0 && (
         <div
           style={{
@@ -205,9 +222,19 @@ function ToolBlock({
   );
 }
 
-function StepView({ step }: { step: ThinkingStep }): ReactNode {
+function StepView({
+  step,
+  active = false,
+}: {
+  step: ThinkingStep;
+  active?: boolean;
+}): ReactNode {
   return step.kind === "reasoning" ? (
-    <ReasoningBlock title={step.title} content={step.content} />
+    <ReasoningBlock
+      title={step.title}
+      content={step.content}
+      active={active}
+    />
   ) : (
     <ToolBlock step={step} />
   );
@@ -300,19 +327,26 @@ export function ThinkingPanel({
             gap: 14,
           }}
         >
-          {visibleSteps.map((s, i) => (
-            <div key={s.kind === "tool" ? s.id || s.order : s.order}>
-              {i > 0 && (
-                <div
-                  style={{
-                    borderTop: "1px dashed var(--t-neutral-12)",
-                    marginBottom: 14,
-                  }}
-                />
-              )}
-              <StepView step={s} />
-            </div>
-          ))}
+          {visibleSteps.map((s, i) => {
+            // active = 스트리밍 중 + 이 step 이 원본 배열의 **마지막**
+            // (= 현재 진행 중인 사고). visibleSteps 의 마지막이 아니라
+            // 원본 steps 의 마지막이라야 History 뷰에서도 정확
+            // (medigate-new lastGroup.isActive 모방).
+            const isLast = s === steps[steps.length - 1];
+            return (
+              <div key={s.kind === "tool" ? s.id || s.order : s.order}>
+                {i > 0 && (
+                  <div
+                    style={{
+                      borderTop: "1px dashed var(--t-neutral-12)",
+                      marginBottom: 14,
+                    }}
+                  />
+                )}
+                <StepView step={s} active={streaming && isLast} />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
