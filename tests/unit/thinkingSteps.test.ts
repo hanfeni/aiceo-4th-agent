@@ -212,6 +212,125 @@ describe("reduceToolCall — id 매칭 머지 / 조각 누적 / 교차", () => {
   });
 });
 
+// Slice R — web_search **개별 step**(C 의 1그룹 묶기 폐기, 사용자
+// 'N 묶지 말고 풀어버림'). web_search_call 전체 id 는 호출마다
+// 고유(ws-id-format-probe: ws_ + 공유16자 + 호출별고유) → Slice E
+// '새 id = 새 step' 이 자동으로 개별 분리. 같은 id 후속 델타만
+// 그 step args 누적(스트리밍 청크). 실시간엔 ThinkingPanel
+// liveMode 가 마지막 step 만 표시 → 순차 리플레이스.
+// task/current_time 도 동일(Slice E 불변).
+const wsArgs = (...actions: unknown[]) => JSON.stringify({ actions });
+
+describe("reduceToolCall — web_search 개별 step (Slice R, 1그룹 폐기)", () => {
+  it("첫 web_search → step 1개(id/startedAt 기록)", () => {
+    const r = reduceToolCall(
+      [],
+      { id: "ws_a1", name: "web_search", args: wsArgs({ type: "search", queries: ["q1"] }) },
+      0,
+      111,
+    );
+    expect(r).toHaveLength(1);
+    const s = r[0];
+    expect(s.kind).toBe("tool");
+    if (s.kind === "tool") {
+      expect(s.name).toBe("web_search");
+      expect(s.id).toBe("ws_a1");
+      expect(s.startedAt).toBe(111);
+      expect(JSON.parse(s.args)).toEqual({
+        actions: [{ type: "search", queries: ["q1"] }],
+      });
+    }
+  });
+
+  it("후속 web_search(다른 id) → **각각 새 step**(개별 분리, 묶지 않음)", () => {
+    let r = reduceToolCall(
+      [],
+      { id: "ws_a1", name: "web_search", args: wsArgs({ type: "search", queries: ["q1"] }) },
+      0,
+      100,
+    );
+    r = reduceToolCall(
+      r,
+      { id: "ws_a2", name: "web_search", args: wsArgs({ type: "open_page", url: "u" }) },
+      1,
+      200,
+    );
+    r = reduceToolCall(
+      r,
+      { id: "ws_a3", name: "web_search", args: wsArgs({ type: "find_in_page", pattern: "p", url: "u" }) },
+      2,
+      300,
+    );
+    expect(r).toHaveLength(3); // 3 호출 → 3 개별 step (그룹 X)
+    const ids = r.map((s) => (s.kind === "tool" ? s.id : ""));
+    expect(ids).toEqual(["ws_a1", "ws_a2", "ws_a3"]);
+    // 각 step 은 자기 action 만(누적 X) + 자기 startedAt.
+    if (r[0].kind === "tool") {
+      expect(JSON.parse(r[0].args).actions).toEqual([
+        { type: "search", queries: ["q1"] },
+      ]);
+      expect(r[0].startedAt).toBe(100);
+    }
+    if (r[2].kind === "tool") {
+      expect(JSON.parse(r[2].args).actions).toEqual([
+        { type: "find_in_page", pattern: "p", url: "u" },
+      ]);
+      expect(r[2].startedAt).toBe(300);
+    }
+  });
+
+  it("같은 id 후속 델타 → 그 step args 이어붙임(스트리밍 청크, Slice E)", () => {
+    let r = reduceToolCall([], { id: "ws_a1", name: "web_search", args: '{"q":' }, 0, 1);
+    r = reduceToolCall(r, { id: "ws_a1", name: "", args: '"x"}' }, 1, 2);
+    expect(r).toHaveLength(1); // 같은 id — 새 step 아님
+    if (r[0].kind === "tool") {
+      expect(r[0].args).toBe('{"q":"x"}');
+      expect(r[0].name).toBe("web_search"); // 빈 name 은 기존 유지
+    }
+  });
+
+  it("web_search → task 끼임 → web_search: 교차 보존, 개별 step 3개", () => {
+    let r = reduceToolCall(
+      [],
+      { id: "w1", name: "web_search", args: wsArgs({ type: "search", queries: ["q1"] }) },
+      0,
+      10,
+    );
+    r = reduceToolCall(r, { id: "t1", name: "task", args: '{"subagent_type":"x"}' }, 1, 20);
+    r = reduceToolCall(
+      r,
+      { id: "w2", name: "web_search", args: wsArgs({ type: "search", queries: ["q2"] }) },
+      2,
+      30,
+    );
+    expect(r).toHaveLength(3); // w1, task, w2 — 전부 개별(교차 보존)
+    expect(r.map((s) => (s.kind === "tool" ? s.id : ""))).toEqual([
+      "w1",
+      "t1",
+      "w2",
+    ]);
+    const wsSteps = r.filter((s) => s.kind === "tool" && s.name === "web_search");
+    expect(wsSteps).toHaveLength(2); // 1그룹 아님 — 2개 개별 step
+  });
+
+  it("Slice E 불변: task/current_time 동일 도구도 개별 step", () => {
+    let r = reduceToolCall([], { id: "c1", name: "current_time", args: "{}" }, 0, 1);
+    r = reduceToolCall(r, { id: "c2", name: "current_time", args: "{}" }, 1, 2);
+    const ct = r.filter((s) => s.kind === "tool" && s.name === "current_time");
+    expect(ct).toHaveLength(2);
+  });
+
+  it("args 가 비-JSON(빈 문자열 등)이어도 크래시 0 (graceful)", () => {
+    const r = reduceToolCall([], { id: "w1", name: "web_search", args: "" }, 0, 1);
+    expect(r).toHaveLength(1);
+    const s = r[0];
+    if (s.kind === "tool") {
+      expect(s.name).toBe("web_search");
+      expect(s.args).toBe(""); // 그대로 보존(reducer 가 안 묶음)
+    }
+  });
+});
+
 describe("reduceToolResult — id/name 매칭 result 채움", () => {
   it("id 매칭 → 해당 tool step 에 result 채움", () => {
     const steps = reduceToolCall([], { id: "t1", name: "web_search", args: "{}" }, 0);
@@ -242,12 +361,14 @@ describe("reduceToolResult — id/name 매칭 result 채움", () => {
     expect(r).toBe(input);
   });
 
-  it("id 매칭이 name 매칭보다 우선한다", () => {
-    // 같은 name 인 tool step 2개. id 는 두 번째(t2) 를 지정 →
-    // name 으로는 첫 번째(result undefined)가 잡히지만 id 우선이라 t2 가 채워져야.
-    let steps = reduceToolCall([], { id: "t1", name: "web_search", args: "{}" }, 0);
-    steps = reduceToolCall(steps, { id: "t2", name: "web_search", args: "{}" }, 1);
-    const r = reduceToolResult(steps, "web_search", "t2-결과", "t2");
+  it("id 매칭이 name 매칭보다 우선한다(비-web_search — web_search 는 그룹화라 별도)", () => {
+    // 같은 name tool step 2개. id 는 t2 지정 → name 으로는 첫 번째
+    // (result undefined)가 잡히지만 id 우선이라 t2 가 채워져야. web_search
+    // 는 S2 그룹화로 1 step 이 되므로 이 일반 규칙은 비-web_search 로
+    // 검증(reduceToolResult 일반 경로 — Slice E 불변).
+    let steps = reduceToolCall([], { id: "t1", name: "current_time", args: "{}" }, 0);
+    steps = reduceToolCall(steps, { id: "t2", name: "current_time", args: "{}" }, 1);
+    const r = reduceToolResult(steps, "current_time", "t2-결과", "t2");
     const t1 = asTool(r[0]);
     const t2 = asTool(r[1]);
     expect(t1.id).toBe("t1");
@@ -270,39 +391,46 @@ describe("reduceToolResult — id/name 매칭 result 채움", () => {
 // "3개 step 모두 OUT 에 전체 출처"). status 는 OUT 아님(Part1 롤백)
 // → citations 오기 전 web_search step 은 result=undefined("실행
 // 중…"). 일반 도구/id 매칭은 기존 단일 채움 유지.
-describe("reduceToolResult — web_search citations 모든 step 동일 채움", () => {
+// Slice R — web_search 개별 step 복원(C 1그룹 폐기). citations(id
+// 없음, "참고 출처…")는 Slice N 다중채움대로 **모든 web_search
+// step OUT 에 동일 출처**를 채운다(검색 N개 = step N개, 각자 OUT
+// 에 전체 출처 — 사용자 'N 묶지 말고 풀어버림' + 이전 Slice N
+// 결정 일치). 비-web_search(current_time)는 Slice E 단일 name
+// 폴백 그대로(불변).
+describe("reduceToolResult — web_search citations 모든 개별 step 채움 (Slice R)", () => {
   const CITE = "참고 출처 1건:\n• 삼성 (https://s.example)";
 
-  it("web_search 2개(둘 다 미완료) + citations(id 없음) → 둘 다 출처", () => {
+  it("web_search 2 호출 → 2 개별 step, citations(id 없음) → 둘 다 출처", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
-    // status 는 OUT 아님 — 둘 다 result undefined('실행 중…').
-    expect(asTool(s[0]).result).toBeUndefined();
+    expect(s).toHaveLength(2); // 개별 step 2개(그룹 X)
+    expect(asTool(s[0]).result).toBeUndefined(); // citations 전 '실행 중…'
     expect(asTool(s[1]).result).toBeUndefined();
-    // citations(id 없음 + "참고 출처") → 모든 web_search step 채움.
     s = reduceToolResult(s, "web_search", CITE, "");
     expect(asTool(s[0]).result).toBe(CITE);
-    expect(asTool(s[1]).result).toBe(CITE);
+    expect(asTool(s[1]).result).toBe(CITE); // 모든 web_search step
   });
 
-  it("web_search 3개 → citations 1번에 3개 OUT 전부 동일 출처", () => {
+  it("web_search 3 호출 → 3 step, citations 1번에 3개 OUT 전부 채움", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
     s = reduceToolCall(s, { id: "w3", name: "web_search", args: "{}" }, 2);
     s = reduceToolResult(s, "web_search", CITE, "");
+    expect(s).toHaveLength(3);
     expect(s.map((x) => asTool(x).result)).toEqual([CITE, CITE, CITE]);
   });
 
-  it("web_search step 1개 + citations → 그 step OUT 에 출처", () => {
+  it("web_search 1 호출 + citations → 그 step OUT 에 출처", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolResult(s, "web_search", CITE, "");
     expect(asTool(s[0]).result).toBe(CITE);
   });
 
-  it("교차(reasoning 끼임)여도 web_search step 전부에만 출처 채움", () => {
+  it("교차(reasoning 끼임): web_search step 전부에 출처, reasoning 불변", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceReasoning(s, "중간 사고", 1);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 2);
+    expect(s).toHaveLength(3); // w1, reasoning, w2 — 교차 보존
     s = reduceToolResult(s, "web_search", CITE, "");
     expect(asTool(s[0]).result).toBe(CITE); // w1
     expect(s[1].kind).toBe("reasoning"); // reasoning 불변
@@ -317,7 +445,7 @@ describe("reduceToolResult — web_search citations 모든 step 동일 채움", 
     expect(r).toBe(input);
   });
 
-  it("id 있는 citations(드묾)는 id 매칭 우선(단일 step 만 — 다중 분기 안 탐)", () => {
+  it("id 명시 citation → id 매칭 그 step 만(다중채움 분기 안 탐)", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
     s = reduceToolResult(s, "web_search", CITE, "w1"); // id 명시 → w1 만
@@ -325,7 +453,7 @@ describe("reduceToolResult — web_search citations 모든 step 동일 채움", 
     expect(asTool(s[1]).result).toBeUndefined();
   });
 
-  it("citations 갱신(출처→새 출처)도 모든 web_search step 에 반영", () => {
+  it("citations 갱신(출처→새 출처)도 모든 web_search step 반영", () => {
     const CITE2 = "참고 출처 2건:\n• A (https://a.x)\n• B (https://b.x)";
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
@@ -335,17 +463,17 @@ describe("reduceToolResult — web_search citations 모든 step 동일 채움", 
     expect(asTool(s[1]).result).toBe(CITE2);
   });
 
-  it("citations 다중 채움은 새 배열 반환(불변), 입력 미변형", () => {
+  it("citations 채움은 새 배열 반환(불변), 입력 미변형", () => {
     const base = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     const r = reduceToolResult(base, "web_search", CITE, "");
     expect(r).not.toBe(base);
     expect(asTool(base[0]).result).toBeUndefined(); // 원본 불변
   });
 
-  it("비-web_search 도구는 다중 분기 안 탐(기존 단일 name 폴백)", () => {
+  it("비-web_search 도구는 다중 분기 안 탐(기존 단일 name 폴백 — Slice E 불변)", () => {
     let s = reduceToolCall([], { id: "c1", name: "current_time", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "c2", name: "current_time", args: "{}" }, 1);
-    // current_time 결과(출처 패턴 아님) id 없음 → 첫 미완료(c1)만.
+    // current_time 은 Slice E 그대로 — 2 호출 = 2 개별 step.
     s = reduceToolResult(s, "current_time", "2026-05-19", "");
     expect(asTool(s[0]).result).toBe("2026-05-19");
     expect(asTool(s[1]).result).toBeUndefined();
@@ -470,22 +598,27 @@ describe("reduceToolResult — elapsedMs 계산(now - startedAt)", () => {
 });
 
 // ── Slice E: 동일 도구도 항상 개별 step (count 메커니즘 제거) ──────
-// 사용자 요구: "웹검색이 반복되면 곱하기로 표현되는데 개별 검색을
-// 나눠서 보여줘야 한다". medigate 의 toolKey 그룹화(×count)를 폐기.
-// 1-tier flat 구조엔 검색마다 별도 step 이 자연스럽다. 각 호출은
-// 자기 IN/OUT/elapsed 를 독립적으로 가진다.
-describe("reduceToolCall — 동일 도구도 항상 개별 step (count 제거)", () => {
-  it("같은 name 도구가 연속(직전 step 완료) → 새 step 분리, count 미설정", () => {
+// 사용자 요구(이전): 동일 도구 반복을 ×count 로 묶지 말고 개별 step.
+// medigate toolKey 그룹화(×count) 폐기. 각 호출 독립 IN/OUT/elapsed.
+//
+// ⚠ S2 예외: web_search 는 사용자 요구 진화로 **그룹화**된다(에이전트
+// 1번 의도 = ServerTool 내부 멀티스텝 → 1 그룹). Slice E "개별 step"
+// 규칙은 **비-web_search(current_time/task 등) 한정**. 아래 케이스는
+// web_search → current_time 으로 픽스처 교체(Slice E 의도 보존 +
+// web_search 그룹화와 무모순 입증). web_search 그룹 동작은 별도
+// describe("reduceToolCall — web_search 그룹화") 참조.
+describe("reduceToolCall — 동일 도구도 항상 개별 step (count 제거, 비-web_search)", () => {
+  it("같은 name 도구(비-ws) 연속(직전 완료) → 새 step 분리, count 미설정", () => {
     let steps = reduceToolCall(
       [],
-      { id: "a1", name: "web_search", args: '{"q":"삼성"}' },
+      { id: "a1", name: "current_time", args: '{"tz":"KST"}' },
       0,
       1_000,
     );
-    steps = reduceToolResult(steps, "web_search", "r1", "a1", 1_500);
+    steps = reduceToolResult(steps, "current_time", "r1", "a1", 1_500);
     steps = reduceToolCall(
       steps,
-      { id: "a2", name: "web_search", args: '{"q":"LG"}' },
+      { id: "a2", name: "current_time", args: '{"tz":"UTC"}' },
       1,
       2_000,
     );
@@ -493,30 +626,28 @@ describe("reduceToolCall — 동일 도구도 항상 개별 step (count 제거)"
     expect(asTool(steps[0])).toMatchObject({
       id: "a1",
       result: "r1",
-      args: '{"q":"삼성"}',
+      args: '{"tz":"KST"}',
     });
     expect(asTool(steps[1])).toMatchObject({
       id: "a2",
-      args: '{"q":"LG"}',
+      args: '{"tz":"UTC"}',
       startedAt: 2_000,
     });
-    // 새 step 은 result 키 자체가 없다(실행 전 — undefined).
     expect(asTool(steps[1]).result).toBeUndefined();
-    // 두 검색이 독립 step — 검색어가 각자 보존된다(묶임 0).
     expect(asTool(steps[0]).args).not.toBe(asTool(steps[1]).args);
   });
 
-  it("같은 검색어로 재시도해도 별도 step (완전 동일 호출도 분리)", () => {
+  it("같은 인자로 재호출해도 별도 step (비-ws — 완전 동일 호출도 분리)", () => {
     let steps = reduceToolCall(
       [],
-      { id: "a1", name: "web_search", args: '{"q":"삼성"}' },
+      { id: "a1", name: "current_time", args: '{"tz":"KST"}' },
       0,
       1_000,
     );
-    steps = reduceToolResult(steps, "web_search", "r1", "a1", 1_200);
+    steps = reduceToolResult(steps, "current_time", "r1", "a1", 1_200);
     steps = reduceToolCall(
       steps,
-      { id: "a2", name: "web_search", args: '{"q":"삼성"}' },
+      { id: "a2", name: "current_time", args: '{"tz":"KST"}' },
       1,
       1_300,
     );

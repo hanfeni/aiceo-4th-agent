@@ -114,9 +114,16 @@ export function reduceReasoning(
  * 받아 reducer 의 순수성을 유지(테스트는 고정값 주입 — NFR-11).
  *
  * Slice E — 동일 도구도 **항상 개별 step**(count 그룹화 폐기). 사용자
- * 요구: 반복 web_search 를 ×count 로 묶지 말고 각 검색을 나눠서 보일
- * 것. 새 id 면 무조건 새 step → 검색마다 독립 IN/OUT/elapsed. 같은 id
- * 후속 델타만 그 step 에 args 누적(스트리밍 청크 보존).
+ * 요구: 반복 web_search 를 묶지 말고 각 검색을 나눠서 보일 것. 새 id
+ * 면 무조건 새 step → 검색마다 독립 IN/OUT/elapsed. 같은 id 후속
+ * 델타만 그 step 에 args 누적(스트리밍 청크 보존).
+ *
+ * Slice R — web_search 도 Slice E 와 동일 경로(개별 step). 이전
+ * 에이전트의 'web_search 1그룹 묶기(args.actions[] 누적)'는 폐기
+ * (사용자 'N 묶지 말고 풀어버림'). web_search_call 전체 id 는
+ * 호출마다 고유(ws-id-format-probe — ws_ + 공유16자 + 호출별
+ * 고유)라 아래 delta.id 경로가 자동으로 개별 분리한다. 실시간엔
+ * ThinkingPanel liveMode 가 마지막 step 만 표시 → 순차 리플레이스.
  */
 export function reduceToolCall(
   steps: ThinkingStep[],
