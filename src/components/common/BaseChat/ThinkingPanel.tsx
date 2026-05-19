@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { formatDuration } from "@/lib/agent/utils/formatDuration";
+import { isInProgress } from "@/lib/agent/utils/thinkingLabels";
 import { useThinkingLabelCycler } from "@/components/common/useThinkingLabelCycler";
 import type { ThinkingStep } from "@/types";
 
@@ -67,25 +68,25 @@ const THINKING_MD_CLASS =
   "[&_strong]:not-italic [&_strong]:font-semibold " +
   "[&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_code]:not-italic";
 
-/** 제목 미수신(영문 bold 경계 전) reasoning step 폴백 헤더. */
-const REASONING_FALLBACK_TITLE = "사고 정리 중";
-
 /**
  * reasoning step 본문 (디자인 StepInline reasoning 인용 :152-158).
- * medigate-new 모방: 제목은 step 위 별도 헤더(14px 굵게). 제목이
- * 비면 폴백("사고 정리 중") 표시. active(스트리밍 중 마지막 step)면
- * 제목 옆 점 펄스로 "진행 중" 마킹(medigate lastGroup.isActive).
+ * medigate-new useAgentService 모방: 제목은 reducer 가 order 기반
+ * 한글 안내문구로 생성('질문 분석 중' / '결과 분석 중'). 영문
+ * reasoning 텍스트는 제목이 아니라 content(본문)에 그대로 렌더.
+ *
+ * 진행 표시: 제목이 '… 중'으로 끝나면(isInProgress) 그 뒤에 **스태틱
+ * '...'** 를 텍스트로 붙인다(사용자 요구 — 점 애니메이션 컴포넌트
+ * 아님, 컨테이너 밖 제목 라인에). 완료되면 reducer 가 '중' 을 뗀
+ * 제목으로 바꾸므로 자동으로 '...' 도 사라진다(상태=제목 텍스트).
  */
 function ReasoningBlock({
   title,
   content,
-  active = false,
 }: {
   title: string;
   content: string;
-  active?: boolean;
 }): ReactNode {
-  const headerText = title.length > 0 ? title : REASONING_FALLBACK_TITLE;
+  const inProgress = isInProgress(title);
   return (
     <div>
       <div
@@ -94,17 +95,10 @@ function ReasoningBlock({
           fontWeight: 600,
           color: "var(--text-default)",
           marginBottom: 6,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
         }}
       >
-        <span>{headerText}</span>
-        {active && (
-          <span role="status" aria-label="진행 중">
-            <DotPulse />
-          </span>
-        )}
+        {title}
+        {inProgress && <span aria-hidden> ...</span>}
       </div>
       {content.trim().length > 0 && (
         <div
@@ -157,6 +151,7 @@ function ToolBlock({
         }}
       >
         {step.title || step.name}
+        {isInProgress(step.title) && <span aria-hidden> ...</span>}
       </div>
       <div
         style={{
@@ -222,19 +217,9 @@ function ToolBlock({
   );
 }
 
-function StepView({
-  step,
-  active = false,
-}: {
-  step: ThinkingStep;
-  active?: boolean;
-}): ReactNode {
+function StepView({ step }: { step: ThinkingStep }): ReactNode {
   return step.kind === "reasoning" ? (
-    <ReasoningBlock
-      title={step.title}
-      content={step.content}
-      active={active}
-    />
+    <ReasoningBlock title={step.title} content={step.content} />
   ) : (
     <ToolBlock step={step} />
   );
@@ -327,26 +312,22 @@ export function ThinkingPanel({
             gap: 14,
           }}
         >
-          {visibleSteps.map((s, i) => {
-            // active = 스트리밍 중 + 이 step 이 원본 배열의 **마지막**
-            // (= 현재 진행 중인 사고). visibleSteps 의 마지막이 아니라
-            // 원본 steps 의 마지막이라야 History 뷰에서도 정확
-            // (medigate-new lastGroup.isActive 모방).
-            const isLast = s === steps[steps.length - 1];
-            return (
-              <div key={s.kind === "tool" ? s.id || s.order : s.order}>
-                {i > 0 && (
-                  <div
-                    style={{
-                      borderTop: "1px dashed var(--t-neutral-12)",
-                      marginBottom: 14,
-                    }}
-                  />
-                )}
-                <StepView step={s} active={streaming && isLast} />
-              </div>
-            );
-          })}
+          {/* 진행/완료 상태는 step.title 텍스트에 인코딩됨('… 중' →
+              완료 시 reducer 가 '중' 제거). 별도 active 판정 불필요
+              — StepView 가 isInProgress(title)로 스태틱 '...' 표시. */}
+          {visibleSteps.map((s, i) => (
+            <div key={s.kind === "tool" ? s.id || s.order : s.order}>
+              {i > 0 && (
+                <div
+                  style={{
+                    borderTop: "1px dashed var(--t-neutral-12)",
+                    marginBottom: 14,
+                  }}
+                />
+              )}
+              <StepView step={s} />
+            </div>
+          ))}
         </div>
       )}
     </div>

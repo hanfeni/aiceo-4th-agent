@@ -19,13 +19,17 @@ const reasoning = (
   order: number,
 ): ThinkingStep => ({ kind: "reasoning", title, content, order });
 
-const tool = (order: number): ThinkingStep => ({
+const tool = (
+  order: number,
+  title = "웹 검색 도구 완료",
+  result: string | undefined = "ok",
+): ThinkingStep => ({
   kind: "tool",
-  title: "web_search",
+  title,
   id: `t${order}`,
   name: "web_search",
   args: "{}",
-  result: "ok",
+  result,
   order,
 });
 
@@ -49,67 +53,74 @@ describe("ThinkingPanel — 빈 step / 미표시 게이트", () => {
   });
 });
 
-describe("ThinkingPanel — reasoning 제목 헤더(영문 그대로)", () => {
-  it("영문 bold 제목이 step 헤더로 그대로 렌더된다(번역/가공 없음)", () => {
+describe("ThinkingPanel — 한글 제목 헤더 + 영문 본문", () => {
+  it("reducer 가 준 한글 제목을 헤더로 그대로 표시('질문 분석 중')", () => {
     render(
       <ThinkingPanel
-        steps={[reasoning("Clarifying user intent", "본문 텍스트", 0)]}
-        streaming={false}
-      />,
-    );
-    // 완료 상태는 자동 펼침 아님 → 토글 열어야 보임. autoOpen 은
-    // streaming 일 때만이므로, 히스토리 검증은 streaming=true 로.
-    cleanup();
-    render(
-      <ThinkingPanel
-        steps={[reasoning("Clarifying user intent", "본문 텍스트", 0)]}
+        steps={[
+          reasoning("질문 분석 중", "Clarifying user intent body", 0),
+        ]}
         streaming={true}
       />,
     );
-    expect(screen.getByText("Clarifying user intent")).toBeTruthy();
+    expect(screen.getByText("질문 분석 중")).toBeTruthy();
   });
 
-  it("제목이 빈 문자열이면 폴백 제목('사고 정리 중')을 헤더로 표시", () => {
+  it("영문 reasoning 텍스트는 제목이 아니라 본문에 렌더(가공 0)", () => {
     render(
       <ThinkingPanel
-        steps={[reasoning("", "아직 제목 경계 미수신 본문", 0)]}
+        steps={[
+          reasoning("결과 분석 중", "Deciding on the search approach", 0),
+        ]}
         streaming={true}
       />,
     );
-    expect(screen.getByText("사고 정리 중")).toBeTruthy();
+    expect(
+      screen.getByText("Deciding on the search approach"),
+    ).toBeTruthy();
   });
 });
 
-describe("ThinkingPanel — 활성 step 진행 마킹(medigate isActive)", () => {
-  it("스트리밍 중 마지막 reasoning step 제목에 진행 표시(role=status)", () => {
-    render(
+describe("ThinkingPanel — 진행 중 스태틱 '...' (제목이 '… 중' 일 때)", () => {
+  it("'질문 분석 중' → 헤더에 스태틱 '...' 가 텍스트로 붙는다", () => {
+    const { container } = render(
       <ThinkingPanel
-        steps={[reasoning("Deciding approach", "본문", 0)]}
+        steps={[reasoning("질문 분석 중", "본문", 0)]}
         streaming={true}
       />,
     );
-    // 활성 마킹은 접근성 라벨 "진행 중"으로 노출.
-    expect(screen.getByLabelText("진행 중")).toBeTruthy();
+    // 점 애니메이션 컴포넌트(role=status)가 아니라 스태틱 텍스트.
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(container.textContent).toContain("질문 분석 중 ...");
   });
 
-  it("완료(streaming=false) reasoning step 엔 진행 마킹이 없다", () => {
-    render(
+  it("완료 제목('질문 분석')엔 '...' 없음", () => {
+    const { container } = render(
       <ThinkingPanel
-        steps={[reasoning("Done thinking", "본문", 0)]}
+        steps={[reasoning("질문 분석", "본문", 0)]}
         streaming={false}
       />,
     );
-    expect(screen.queryByLabelText("진행 중")).toBeNull();
+    expect(container.textContent).not.toContain("...");
   });
 
-  it("마지막 step 이 tool 이면 reasoning 진행 마킹 없음(도구 실행 중은 별개)", () => {
-    render(
+  it("도구 진행 중 제목('웹 검색 도구 실행 중')에도 스태틱 '...'", () => {
+    const { container } = render(
       <ThinkingPanel
-        steps={[reasoning("분석", "본문", 0), tool(1)]}
+        steps={[tool(1, "웹 검색 도구 실행 중", undefined)]}
         streaming={true}
       />,
     );
-    // liveMode 면 마지막 step(tool)만 노출 → reasoning 진행 마킹 0.
-    expect(screen.queryByLabelText("진행 중")).toBeNull();
+    expect(container.textContent).toContain("웹 검색 도구 실행 중 ...");
+  });
+
+  it("도구 완료 제목('웹 검색 도구 완료')엔 '...' 없음", () => {
+    const { container } = render(
+      <ThinkingPanel
+        steps={[tool(1, "웹 검색 도구 완료", "결과")]}
+        streaming={true}
+      />,
+    );
+    expect(container.textContent).not.toContain("...");
   });
 });

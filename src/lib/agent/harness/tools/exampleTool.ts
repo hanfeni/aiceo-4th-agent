@@ -10,6 +10,14 @@ import { z } from "zod";
  *
  * zod 는 deepagents 와 동일 메이저(^4) — 스키마 타입 호환 (R1/TC-10.6).
  */
+
+/**
+ * 사고 패널 한글 표시명 (medigate-new toolDisplayName 대응 — 우리는
+ * 백엔드가 안 주므로 도구 파일이 직접 선언, FR-08 요소1개=파일1개).
+ * thinkingLabels.toolDisplayName 이 도구명→이 라벨 매핑을 수집한다.
+ */
+export const currentTimeToolDisplayName = "현재 시각";
+
 export const currentTimeTool = tool(
   async ({ timezone }: { timezone?: string }): Promise<string> => {
     const tz = timezone?.trim() || "Asia/Seoul";

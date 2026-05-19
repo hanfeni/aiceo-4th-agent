@@ -49,4 +49,11 @@ export function buildWebSearchOptions(): Parameters<
  * 자체는 수용되는 패턴이며, `@langchain/openai` 를 mock 하는 단위
  * 테스트는 ChatOpenAI 와 함께 `tools` 도 mock 해야 한다(테스트 책임).
  */
+/**
+ * 사고 패널 한글 표시명 (medigate-new toolDisplayName 대응 — 우리는
+ * 백엔드가 안 주므로 도구 파일이 직접 선언, FR-08 요소1개=파일1개).
+ * ServerTool 은 런타임에 `web_search` 라는 name 으로 흐른다(probe).
+ */
+export const webSearchToolDisplayName = "웹 검색";
+
 export const webSearchTool = openaiTools.webSearch(buildWebSearchOptions());

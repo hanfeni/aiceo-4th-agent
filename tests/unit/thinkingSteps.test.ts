@@ -21,105 +21,107 @@ function asTool(s: ThinkingStep) {
   return s;
 }
 
-describe("reduceReasoning — 제목 경계 파싱 & 누적", () => {
-  it("빈 steps + `**Title**\\n\\nbody` → reasoning 1개 {title,content}", () => {
-    const r = reduceReasoning([], "**Title**\n\nbody", 0);
+// Slice F-redo — 영문 **bold** 파싱 폐기. medigate-new useAgentService
+// 규칙: reasoning step 제목은 그 step 이 **몇 번째 reasoning 인지**로
+// 결정('질문 분석 중' / '결과 분석 중'). 영문 reasoning 텍스트는
+// 제목이 아니라 content(본문). tool 이 끼면 다음 reasoning 은 새 step
+// (reasoning 순번 +1 → '결과 분석').
+describe("reduceReasoning — order 기반 한글 제목 + 본문 누적", () => {
+  it("빈 steps + 첫 reasoning 델타 → '질문 분석 중', content=델타원문(가공 0)", () => {
+    const r = reduceReasoning([], "**Clarifying user intent**\n\nbody", 0);
     expect(r).toHaveLength(1);
     expect(asReasoning(r[0])).toMatchObject({
       kind: "reasoning",
-      title: "Title",
-      content: "body",
+      title: "질문 분석 중",
+      content: "**Clarifying user intent**\n\nbody",
       order: 0,
     });
   });
 
-  it("빈 steps + 볼드 없는 plain 델타 → reasoning 1개 {title:'', content:delta}", () => {
-    const r = reduceReasoning([], "그냥 사고 텍스트", 0);
+  it("plain 영문 델타도 그대로 content(번역/파싱 없음), 제목은 '질문 분석 중'", () => {
+    const r = reduceReasoning([], "Deciding on the search approach", 0);
     expect(r).toHaveLength(1);
     expect(asReasoning(r[0])).toMatchObject({
-      title: "",
-      content: "그냥 사고 텍스트",
+      title: "질문 분석 중",
+      content: "Deciding on the search approach",
       order: 0,
     });
   });
 
-  it("스트리밍 제목 분할: `**Chec` → `king Samsung**\\n\\nI need` 가 step 1개로 합쳐진다(제목 버퍼)", () => {
-    const a = reduceReasoning([], "**Chec", 0);
-    // 제목 미완성 — title 빈 버퍼 step.
-    expect(a).toHaveLength(1);
-    expect(asReasoning(a[0])).toMatchObject({ title: "", content: "**Chec" });
-
-    const b = reduceReasoning(a, "king Samsung**\n\nI need", 1);
-    expect(b).toHaveLength(1); // 새 step 생기지 않음 — 같은 step 에 제목 확정
-    const step = asReasoning(b[0]);
-    expect(step.title).toBe("Checking Samsung");
-    expect(step.content.startsWith("I need")).toBe(true);
-    expect(step.content).toBe("I need");
-  });
-
-  it("연속 plain reasoning 델타는 같은 step 의 content 에 누적(새 step 없음)", () => {
-    let r = reduceReasoning([], "**제목**\n\n첫", 0);
-    r = reduceReasoning(r, " 둘째", 1);
-    r = reduceReasoning(r, " 셋째", 1);
+  it("연속 reasoning 델타는 같은(첫) step 에 content 누적, 새 step 0", () => {
+    let r = reduceReasoning([], "첫 ", 0);
+    r = reduceReasoning(r, "둘째 ", 1);
+    r = reduceReasoning(r, "셋째", 2);
     expect(r).toHaveLength(1);
     expect(asReasoning(r[0])).toMatchObject({
-      title: "제목",
+      title: "질문 분석 중",
       content: "첫 둘째 셋째",
       order: 0,
     });
   });
 
-  it("후속 델타에 새 `**Title2**` 등장 → 새 reasoning step 분기(이전 content trim, order 증가)", () => {
-    let r = reduceReasoning([], "**Step1**\n\n본문1 ", 0);
-    r = reduceReasoning(r, "**Step2**\n\n본문2", 1);
-    expect(r).toHaveLength(2);
-    const s0 = asReasoning(r[0]);
-    const s1 = asReasoning(r[1]);
-    expect(s0).toMatchObject({ title: "Step1", order: 0 });
-    expect(s0.content).toBe("본문1"); // 꼬리 공백 trim 됨 (replace(/\s+$/,""))
-    expect(s1).toMatchObject({ title: "Step2", content: "본문2", order: 1 });
+  it("**bold** 가 와도 제목으로 분리하지 않고 content 에 그대로 둔다", () => {
+    let r = reduceReasoning([], "**Step1** 분석", 0);
+    r = reduceReasoning(r, " **Step2** 더", 1);
+    expect(r).toHaveLength(1); // 새 step 분기 없음(bold 파싱 폐기)
+    expect(asReasoning(r[0]).content).toBe("**Step1** 분석 **Step2** 더");
+    expect(asReasoning(r[0]).title).toBe("질문 분석 중");
   });
 
-  it("tool step 뒤 reasoning 델타 → 새 reasoning step 생성(교차: tool→reasoning 머지 안 됨)", () => {
-    const withTool = reduceToolCall([], { id: "t1", name: "web_search", args: "{}" }, 0);
-    const r = reduceReasoning(withTool, "**다음생각**\n\n분석", 1);
-    expect(r).toHaveLength(2);
-    expect(asTool(r[0])).toMatchObject({ kind: "tool", id: "t1" });
-    expect(asReasoning(r[1])).toMatchObject({
+  it("tool step 뒤 reasoning → 새 step, 2번째 reasoning 이라 '결과 분석 중'", () => {
+    let r = reduceReasoning([], "초기 사고", 0);
+    r = reduceToolCall(r, { id: "t1", name: "web_search", args: "{}" }, 1);
+    r = reduceReasoning(r, "검색 결과 해석", 2);
+    expect(r).toHaveLength(3);
+    expect(asReasoning(r[0])).toMatchObject({ title: "질문 분석 중" });
+    expect(asTool(r[1])).toMatchObject({ kind: "tool", id: "t1" });
+    expect(asReasoning(r[2])).toMatchObject({
       kind: "reasoning",
-      title: "다음생각",
-      content: "분석",
-      order: 1,
+      title: "결과 분석 중",
+      content: "검색 결과 해석",
     });
   });
 
-  it("불변성(실제 동작): 빈 steps + '' 델타도 새 배열 + reasoning step 1개 생성한다(same-ref 아님)", () => {
-    // 소스 reduceReasoning 은 마지막 분기에서 항상 steps.concat(...) 하므로
-    // 빈 델타라도 새 배열 + {title:'',content:''} step 을 만든다(same-ref 미반환).
-    const input: ThinkingStep[] = [];
-    const r = reduceReasoning(input, "", 0);
-    expect(r).not.toBe(input);
-    expect(r).toHaveLength(1);
-    expect(asReasoning(r[0])).toMatchObject({ title: "", content: "", order: 0 });
+  it("reasoning→tool→reasoning→tool→reasoning: 3번째 reasoning 도 '결과 분석 중'", () => {
+    let r = reduceReasoning([], "a", 0);
+    r = reduceToolCall(r, { id: "t1", name: "ws", args: "{}" }, 1);
+    r = reduceReasoning(r, "b", 2);
+    r = reduceToolCall(r, { id: "t2", name: "ws", args: "{}" }, 3);
+    r = reduceReasoning(r, "c", 4);
+    const reasonings = r.filter((s) => s.kind === "reasoning");
+    expect(reasonings).toHaveLength(3);
+    expect(asReasoning(reasonings[0]).title).toBe("질문 분석 중");
+    expect(asReasoning(reasonings[1]).title).toBe("결과 분석 중");
+    expect(asReasoning(reasonings[2]).title).toBe("결과 분석 중");
   });
 
   it("불변성: 입력 배열 자체는 변형되지 않는다(새 배열 반환)", () => {
     const input: ThinkingStep[] = [];
-    const r = reduceReasoning(input, "**T**\n\nx", 0);
-    expect(input).toHaveLength(0); // 원본 불변
+    const r = reduceReasoning(input, "x", 0);
+    expect(input).toHaveLength(0);
     expect(r).not.toBe(input);
+  });
+
+  it("빈 델타도 첫 step 생성('질문 분석 중', content='')", () => {
+    const r = reduceReasoning([], "", 0);
+    expect(r).toHaveLength(1);
+    expect(asReasoning(r[0])).toMatchObject({
+      title: "질문 분석 중",
+      content: "",
+      order: 0,
+    });
   });
 });
 
 describe("reduceToolCall — id 매칭 머지 / 조각 누적 / 교차", () => {
-  it("id 있는 델타 → 새 tool step {kind:'tool', id, name, title:name, args}", () => {
+  it("id 있는 델타 → 새 tool step, title 은 한글 안내문구('웹 검색 도구 실행 중')", () => {
     const r = reduceToolCall([], { id: "t1", name: "web_search", args: '{"q":' }, 0);
     expect(r).toHaveLength(1);
     expect(asTool(r[0])).toMatchObject({
       kind: "tool",
       id: "t1",
       name: "web_search",
-      title: "web_search",
+      title: "웹 검색 도구 실행 중",
       args: '{"q":',
       order: 0,
     });
@@ -144,10 +146,13 @@ describe("reduceToolCall — id 매칭 머지 / 조각 누적 / 교차", () => {
   });
 
   it("reasoning step 뒤 tool_call → 새 tool step append(교차 보존, reasoning 불변)", () => {
-    const withR = reduceReasoning([], "**생각**\n\n본문", 0);
+    const withR = reduceReasoning([], "초기 생각 본문", 0);
     const r = reduceToolCall(withR, { id: "t1", name: "current_time", args: "{}" }, 1);
     expect(r).toHaveLength(2);
-    expect(asReasoning(r[0])).toMatchObject({ title: "생각", content: "본문" });
+    expect(asReasoning(r[0])).toMatchObject({
+      title: "질문 분석 중",
+      content: "초기 생각 본문",
+    });
     expect(asTool(r[1])).toMatchObject({
       kind: "tool",
       id: "t1",
@@ -217,25 +222,34 @@ describe("reduceToolResult — id/name 매칭 result 채움", () => {
 });
 
 describe("교차 통합 — 회귀 가드 (사고→도구→사고→도구 순서 보존)", () => {
-  it("reasoning Step1 → tool t1 → result t1 → reasoning Step2 → tool t2 → result t2 순서 그대로", () => {
+  it("reasoning → tool t1 → result t1 → reasoning → tool t2 → result t2 순서 그대로", () => {
     let steps: ThinkingStep[] = [];
-    steps = reduceReasoning(steps, "**Step1**\n\na", 0);
+    steps = reduceReasoning(steps, "a", 0);
     steps = reduceToolCall(steps, { id: "t1", name: "web_search", args: "{}" }, 1);
     steps = reduceToolResult(steps, "web_search", "r1", "t1");
-    steps = reduceReasoning(steps, "**Step2**\n\nb", 2);
+    steps = reduceReasoning(steps, "b", 2);
     steps = reduceToolCall(steps, { id: "t2", name: "current_time", args: "{}" }, 3);
     steps = reduceToolResult(steps, "current_time", "r2", "t2");
 
     expect(steps).toHaveLength(4);
 
     const s0 = asReasoning(steps[0]);
-    expect(s0).toMatchObject({ kind: "reasoning", title: "Step1", content: "a", order: 0 });
+    expect(s0).toMatchObject({
+      kind: "reasoning",
+      title: "질문 분석 중",
+      content: "a",
+      order: 0,
+    });
 
     const s1 = asTool(steps[1]);
     expect(s1).toMatchObject({ kind: "tool", id: "t1", name: "web_search", result: "r1" });
 
     const s2 = asReasoning(steps[2]);
-    expect(s2).toMatchObject({ kind: "reasoning", title: "Step2", content: "b" });
+    expect(s2).toMatchObject({
+      kind: "reasoning",
+      title: "결과 분석 중",
+      content: "b",
+    });
 
     const s3 = asTool(steps[3]);
     expect(s3).toMatchObject({ kind: "tool", id: "t2", name: "current_time", result: "r2" });
@@ -387,7 +401,7 @@ describe("reduceToolCall — 동일 도구도 항상 개별 step (count 제거)"
       1_000,
     );
     steps = reduceToolResult(steps, "ws", "r1", "a1", 1_200);
-    steps = reduceReasoning(steps, "**분석**\n\n중간 사고", 1);
+    steps = reduceReasoning(steps, "중간 사고 본문", 1);
     steps = reduceToolCall(
       steps,
       { id: "a2", name: "ws", args: "{}" },
