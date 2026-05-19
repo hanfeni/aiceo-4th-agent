@@ -137,27 +137,9 @@ function ToolBlock({
           fontWeight: 600,
           color: "var(--text-default)",
           marginBottom: 6,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
         }}
       >
-        <span>{step.title || step.name}</span>
-        {(step.count ?? 1) > 1 && (
-          <span
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "var(--neutral-600)",
-              background: "rgba(156,163,175,0.18)",
-              borderRadius: 4,
-              padding: "1px 5px",
-            }}
-            aria-label={`${step.count}회 호출`}
-          >
-            ×{step.count}
-          </span>
-        )}
+        {step.title || step.name}
       </div>
       <div
         style={{
@@ -292,11 +274,9 @@ export function ThinkingPanel({
         }}
       >
         <span>{label}</span>
-        {streaming && (
-          <span style={{ color: "var(--agent-500)" }}>
-            <DotPulse />
-          </span>
-        )}
+        {/* 점 펄스 색을 헤더 텍스트(--text-subtle)와 통일 — DotPulse 는
+            currentColor 상속이므로 별도 color 오버라이드를 두지 않는다. */}
+        {streaming && <DotPulse />}
         {open ? (
           <ChevronUp size={13} style={{ color: "var(--neutral-600)" }} aria-hidden />
         ) : (

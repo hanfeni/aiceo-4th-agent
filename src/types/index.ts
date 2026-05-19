@@ -13,6 +13,22 @@ export interface ChatMessage {
    * 보존된다(medigate-new thinkingSteps[] 패턴). 사고 패널이 렌더한다.
    */
   thinkingSteps?: ThinkingStep[];
+  /**
+   * web_search 참고 출처 — assistant 만. 답변 본문 하단 References
+   * 패널이 렌더한다(디자인 핸드오프 chat.jsx SourcesPanel — 풋노트
+   * 학술 스타일). 데이터원은 web_search annotations(url_citation):
+   * extractWebSearchCitations 가 만든 텍스트를 parseCitationText 로
+   * 역파싱해 적재한다. 비면 패널 미표시(chat.jsx:502 게이트).
+   */
+  sources?: WebSource[];
+}
+
+/** 참고 출처 1건(References 패널 항목). web_search url_citation 유래. */
+export interface WebSource {
+  /** 출처 제목. 없으면 url 을 제목 자리에 노출(SourcesPanel 폴백). */
+  title: string;
+  /** 원문 URL(절대). "원문 열기 ↗" 가 새 탭으로 연다. */
+  url: string;
 }
 
 /**
@@ -45,13 +61,9 @@ export type ThinkingStep =
       /** 실행 결과(OUT). 미수신 시 undefined(실행 중). */
       result?: string;
       /**
-       * 같은 도구가 연속 호출된 횟수(medigate toolKey 그룹화 모방).
-       * 1 이면 뱃지 미표시, 2 이상이면 `x2` 표기. 기본 1.
-       */
-      count?: number;
-      /**
        * tool_call 수신 시각(ms epoch). 클라이언트 측정 — deepagents/
        * LangGraph 는 서버 elapsed 를 안 주므로 reducer 가 clock 으로 기록.
+       * (Slice E: count 그룹화 폐기 — 동일 도구도 항상 개별 step.)
        */
       startedAt?: number;
       /**

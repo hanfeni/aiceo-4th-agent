@@ -100,10 +100,10 @@ export function reduceReasoning(
  * tool_call 수신 시각을 클라이언트가 startedAt 에 기록한다. 인자로
  * 받아 reducer 의 순수성을 유지(테스트는 고정값 주입 — NFR-11).
  *
- * count 그룹화(medigate toolKey 모방): 직전 step 이 **같은 name 의 완료된
- * tool**(result 수신 끝)이면 새 step 을 만들지 않고 그 step 의 count 를
- * +1 하고 id/args/startedAt 을 새 호출로 갱신(result 는 비워 재실행 표시).
- * reasoning 이 끼거나 직전 도구가 실행 중이면 교차/병렬 보존 우선 → 새 step.
+ * Slice E — 동일 도구도 **항상 개별 step**(count 그룹화 폐기). 사용자
+ * 요구: 반복 web_search 를 ×count 로 묶지 말고 각 검색을 나눠서 보일
+ * 것. 새 id 면 무조건 새 step → 검색마다 독립 IN/OUT/elapsed. 같은 id
+ * 후속 델타만 그 step 에 args 누적(스트리밍 청크 보존).
  */
 export function reduceToolCall(
   steps: ThinkingStep[],
@@ -126,26 +126,8 @@ export function reduceToolCall(
       };
       return steps.slice(0, idx).concat(updated, steps.slice(idx + 1));
     }
-    // 연속 동일 도구 그룹화: 직전 step 이 같은 name + 완료(result 있음).
-    const last = steps[steps.length - 1];
-    if (
-      last &&
-      last.kind === "tool" &&
-      last.name === delta.name &&
-      last.name.length > 0 &&
-      last.result !== undefined
-    ) {
-      const merged: ThinkingStep = {
-        ...last,
-        id: delta.id,
-        args: delta.args,
-        result: undefined,
-        startedAt: now,
-        elapsedMs: undefined,
-        count: (last.count ?? 1) + 1,
-      };
-      return steps.slice(0, -1).concat(merged);
-    }
+    // Slice E — 새 id 는 무조건 새 step(동일 도구 그룹화 폐기).
+    // 검색마다 독립 step → 각자 IN/OUT/elapsed 를 가진다.
     return steps.concat({
       kind: "tool",
       title: delta.name || "tool",

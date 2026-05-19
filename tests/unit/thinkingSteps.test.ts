@@ -324,36 +324,62 @@ describe("reduceToolResult — elapsedMs 계산(now - startedAt)", () => {
   });
 });
 
-// ── Slice A: count — 연속 동일 도구 그룹화 ─────────────────────────
-// medigate toolKey 모방: "직전 step 이 같은 name 인 tool" 일 때만
-// 새 step 을 만들지 않고 그 step 의 count 를 +1. reasoning 이 끼면
-// 새 그룹(교차 보존이 우선 — count 보다 순서가 먼저).
-describe("reduceToolCall — 연속 동일 도구 count 증가", () => {
-  it("같은 name 도구가 연속(직전 step) → 새 step 없이 count 증가, order 보존", () => {
+// ── Slice E: 동일 도구도 항상 개별 step (count 메커니즘 제거) ──────
+// 사용자 요구: "웹검색이 반복되면 곱하기로 표현되는데 개별 검색을
+// 나눠서 보여줘야 한다". medigate 의 toolKey 그룹화(×count)를 폐기.
+// 1-tier flat 구조엔 검색마다 별도 step 이 자연스럽다. 각 호출은
+// 자기 IN/OUT/elapsed 를 독립적으로 가진다.
+describe("reduceToolCall — 동일 도구도 항상 개별 step (count 제거)", () => {
+  it("같은 name 도구가 연속(직전 step 완료) → 새 step 분리, count 미설정", () => {
     let steps = reduceToolCall(
       [],
-      { id: "a1", name: "web_search", args: "{}" },
+      { id: "a1", name: "web_search", args: '{"q":"삼성"}' },
       0,
       1_000,
     );
     steps = reduceToolResult(steps, "web_search", "r1", "a1", 1_500);
     steps = reduceToolCall(
       steps,
-      { id: "a2", name: "web_search", args: "{}" },
+      { id: "a2", name: "web_search", args: '{"q":"LG"}' },
       1,
       2_000,
     );
-    expect(steps).toHaveLength(1);
+    expect(steps).toHaveLength(2);
     expect(asTool(steps[0])).toMatchObject({
-      name: "web_search",
-      count: 2,
+      id: "a1",
+      result: "r1",
+      args: '{"q":"삼성"}',
+    });
+    expect(asTool(steps[1])).toMatchObject({
       id: "a2",
-      result: undefined,
+      args: '{"q":"LG"}',
       startedAt: 2_000,
     });
+    // 새 step 은 result 키 자체가 없다(실행 전 — undefined).
+    expect(asTool(steps[1]).result).toBeUndefined();
+    // 두 검색이 독립 step — 검색어가 각자 보존된다(묶임 0).
+    expect(asTool(steps[0]).args).not.toBe(asTool(steps[1]).args);
   });
 
-  it("중간에 reasoning 이 끼면 새 tool step(교차 보존 우선, count 안 묶임)", () => {
+  it("같은 검색어로 재시도해도 별도 step (완전 동일 호출도 분리)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "a1", name: "web_search", args: '{"q":"삼성"}' },
+      0,
+      1_000,
+    );
+    steps = reduceToolResult(steps, "web_search", "r1", "a1", 1_200);
+    steps = reduceToolCall(
+      steps,
+      { id: "a2", name: "web_search", args: '{"q":"삼성"}' },
+      1,
+      1_300,
+    );
+    expect(steps).toHaveLength(2);
+    expect(steps.every((s) => s.kind === "tool")).toBe(true);
+  });
+
+  it("reasoning 이 끼어도 교차 보존(tool→reasoning→tool)", () => {
     let steps = reduceToolCall(
       [],
       { id: "a1", name: "ws", args: "{}" },
@@ -369,11 +395,9 @@ describe("reduceToolCall — 연속 동일 도구 count 증가", () => {
       2_000,
     );
     expect(steps.map((s) => s.kind)).toEqual(["tool", "reasoning", "tool"]);
-    expect(asTool(steps[0]).count ?? 1).toBe(1);
-    expect(asTool(steps[2]).count ?? 1).toBe(1);
   });
 
-  it("다른 name 도구가 연속 → 새 step(count 안 묶임)", () => {
+  it("다른 name 도구가 연속 → 새 step", () => {
     let steps = reduceToolCall(
       [],
       { id: "a1", name: "web_search", args: "{}" },
@@ -391,14 +415,13 @@ describe("reduceToolCall — 연속 동일 도구 count 증가", () => {
     expect(asTool(steps[1])).toMatchObject({ name: "current_time" });
   });
 
-  it("직전 도구가 아직 result 미수신(실행 중)이면 count 안 묶고 새 step(동시 호출 분리)", () => {
+  it("직전 도구 실행 중(result 미수신)에 같은 도구 호출 → 별도 step(병렬 분리)", () => {
     let steps = reduceToolCall(
       [],
       { id: "a1", name: "ws", args: "{}" },
       0,
       1_000,
     );
-    // result 없이 곧바로 같은 name 다른 id 호출.
     steps = reduceToolCall(
       steps,
       { id: "a2", name: "ws", args: "{}" },
@@ -408,5 +431,22 @@ describe("reduceToolCall — 연속 동일 도구 count 증가", () => {
     expect(steps).toHaveLength(2);
     expect(asTool(steps[0]).id).toBe("a1");
     expect(asTool(steps[1]).id).toBe("a2");
+  });
+
+  it("같은 id 후속 args 조각은 여전히 그 step 에 누적(스트리밍 델타 보존)", () => {
+    let steps = reduceToolCall(
+      [],
+      { id: "a1", name: "ws", args: '{"q":' },
+      0,
+      1_000,
+    );
+    steps = reduceToolCall(
+      steps,
+      { id: "a1", name: "ws", args: '"삼성"}' },
+      0,
+      1_001,
+    );
+    expect(steps).toHaveLength(1);
+    expect(asTool(steps[0]).args).toBe('{"q":"삼성"}');
   });
 });
