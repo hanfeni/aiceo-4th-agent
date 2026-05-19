@@ -257,10 +257,14 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
     // 집합을 구해 JS 필터(배치 UNWIND 와 정합).
     yield { type: "load", phase: "positions", text: `Position 중간 노드 적재(인기 상위 ${POSITION_TOP_N}종목)…` };
     const topCusipRows = (await runCypher(
+      // LIMIT 은 정수만 허용. JS number 를 파라미터로 넘기면
+      // 드라이버가 float('300.0')로 직렬화 → "not a valid value"
+      // 런타임 에러. Cypher 내부 toInteger() 로 강제 정수화
+      // (드라이버 의존 없는 가장 견고한 방식 — 실 HTTP 검증서 발견).
       `MATCH (c:${GRAPH_SCHEMA.companyLabel})
        WHERE c.holder_count IS NOT NULL
        RETURN c.cusip AS cusip
-       ORDER BY c.holder_count DESC LIMIT $n`,
+       ORDER BY c.holder_count DESC LIMIT toInteger($n)`,
       { n: POSITION_TOP_N },
     )) as { cusip: string }[];
     const topSet = new Set(topCusipRows.map((r) => r.cusip));
