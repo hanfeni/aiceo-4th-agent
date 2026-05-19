@@ -13,6 +13,21 @@
 /** 단계 진행 상태 (SseEvent stage.status + 미시작 'idle') */
 export type StageStatus = "idle" | "running" | "done" | "error";
 
+/**
+ * 단계별 누적 입출력 (D14c 노드 클릭 패널 데이터원).
+ *
+ * DartAnalyzeView 가 SseEvent stage 이벤트(start.input + done.output)로
+ * 합성·누적, DartStagePanel 이 선택 stage 의 이 값을 표시. 타입 전용
+ * (이 파일 React 무의존 불변 — interface 는 컴파일타임 소거).
+ */
+export interface StageIO {
+  status: StageStatus;
+  /** 단계 입력 — 우리 산출물(기업명/압축컨텍스트/LLM system+human). */
+  input?: string;
+  /** 단계 출력 — corp_code/길이 또는 LLM 리포트 마크다운. */
+  output?: string;
+}
+
 /** 5단계 노드 정적 메타 */
 export interface DartStageNodeMeta {
   /** SseEvent stage 번호(1..5) — 노드 식별자 겸용 */

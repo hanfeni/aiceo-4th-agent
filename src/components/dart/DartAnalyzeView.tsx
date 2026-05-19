@@ -8,14 +8,14 @@ import {
 } from "react";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { DartPipelineGraph } from "./DartPipelineGraph";
-import type { StageStatus } from "./dartStageNodes";
-
-/** stage 이벤트로 누적하는 단계별 입출력(D14c 노드 클릭 패널용) */
-interface StageIO {
-  status: StageStatus;
-  input?: string;
-  output?: string;
-}
+import { DartStagePanel } from "./DartStagePanel";
+// StageIO 는 dartStageNodes(DART 타입 단일 진실원)에서 import —
+// DartStagePanel 과 공유(D14c, 중복 interface 제거).
+import {
+  DART_STAGE_NODES,
+  type StageStatus,
+  type StageIO,
+} from "./dartStageNodes";
 
 /**
  * DART 기업 펀더멘털 분석 전용 폼 UI (고정흐름 — D12).
@@ -68,6 +68,8 @@ export function DartAnalyzeView(): ReactNode {
   // progress 텍스트 배너 → 노드-엣지 그래프(D14b). stage 이벤트로
   // 단계별 상태+입출력 누적(D14c 노드 클릭 패널이 stageIO 참조).
   const [stageIO, setStageIO] = useState<Record<number, StageIO>>({});
+  // D14c: 노드 클릭 시 선택 stage(입출력 패널 열기). null = 닫힘.
+  const [selectedStage, setSelectedStage] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -241,6 +243,18 @@ export function DartAnalyzeView(): ReactNode {
         stageStates={Object.fromEntries(
           Object.entries(stageIO).map(([k, v]) => [k, v.status]),
         )}
+        onStageClick={setSelectedStage}
+      />
+
+      {/* D14c: 노드 클릭 → 해당 단계 입력 프롬프트 + 출력 패널.
+          LLM(emphasis) 단계는 system+human 프롬프트 원문/마크다운
+          리포트, 비-LLM 은 짧은 산출물 텍스트. stage=null 이면
+          DartStagePanel 이 null 반환(미선택 시 비표시). */}
+      <DartStagePanel
+        stage={selectedStage}
+        meta={DART_STAGE_NODES.find((n) => n.stage === selectedStage)}
+        io={selectedStage !== null ? stageIO[selectedStage] : undefined}
+        onClose={() => setSelectedStage(null)}
       />
 
       {result && (
