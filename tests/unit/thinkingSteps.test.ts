@@ -21,13 +21,14 @@ function asTool(s: ThinkingStep) {
   return s;
 }
 
-// Slice F-redo — 영문 **bold** 파싱 폐기. medigate-new useAgentService
-// 규칙: reasoning step 제목은 그 step 이 **몇 번째 reasoning 인지**로
-// 결정('질문 분석 중' / '결과 분석 중'). 영문 reasoning 텍스트는
-// 제목이 아니라 content(본문). tool 이 끼면 다음 reasoning 은 새 step
-// (reasoning 순번 +1 → '결과 분석').
-describe("reduceReasoning — order 기반 한글 제목 + 본문 누적", () => {
-  it("빈 steps + 첫 reasoning 델타 → '질문 분석 중', content=델타원문(가공 0)", () => {
+// Slice H — `**bold**` 를 step **경계 신호**로 사용(제목으로는 안 씀).
+// OpenAI reasoning summary 는 각 사고 단계를 `**제목**\n\n본문` 으로
+// 준다(경계 메타 이벤트 없음). 새 bold 단락이 등장하면 새 reasoning
+// step 분기 → liveMode 가 단계마다 리플레이스(누적 버그 해소). 단
+// step 제목은 여전히 order 기반 한글('질문 분석 중'/'결과 분석 중'),
+// 영문 bold 텍스트는 제목이 아니라 content(본문)에 그대로 포함.
+describe("reduceReasoning — bold 경계 step 분기 + order 한글 제목", () => {
+  it("빈 steps + 첫 델타(bold 포함) → '질문 분석 중', content=원문(가공 0)", () => {
     const r = reduceReasoning([], "**Clarifying user intent**\n\nbody", 0);
     expect(r).toHaveLength(1);
     expect(asReasoning(r[0])).toMatchObject({
@@ -38,7 +39,7 @@ describe("reduceReasoning — order 기반 한글 제목 + 본문 누적", () =>
     });
   });
 
-  it("plain 영문 델타도 그대로 content(번역/파싱 없음), 제목은 '질문 분석 중'", () => {
+  it("plain 영문 델타도 그대로 content(번역/파싱 없음), 제목 '질문 분석 중'", () => {
     const r = reduceReasoning([], "Deciding on the search approach", 0);
     expect(r).toHaveLength(1);
     expect(asReasoning(r[0])).toMatchObject({
@@ -48,7 +49,7 @@ describe("reduceReasoning — order 기반 한글 제목 + 본문 누적", () =>
     });
   });
 
-  it("연속 reasoning 델타는 같은(첫) step 에 content 누적, 새 step 0", () => {
+  it("같은 단계 내 연속 plain 델타는 같은 step 에 누적(bold 경계 없음)", () => {
     let r = reduceReasoning([], "첫 ", 0);
     r = reduceReasoning(r, "둘째 ", 1);
     r = reduceReasoning(r, "셋째", 2);
@@ -60,15 +61,39 @@ describe("reduceReasoning — order 기반 한글 제목 + 본문 누적", () =>
     });
   });
 
-  it("**bold** 가 와도 제목으로 분리하지 않고 content 에 그대로 둔다", () => {
-    let r = reduceReasoning([], "**Step1** 분석", 0);
-    r = reduceReasoning(r, " **Step2** 더", 1);
-    expect(r).toHaveLength(1); // 새 step 분기 없음(bold 파싱 폐기)
-    expect(asReasoning(r[0]).content).toBe("**Step1** 분석 **Step2** 더");
-    expect(asReasoning(r[0]).title).toBe("질문 분석 중");
+  it("첫 step 본문 누적 후 새 **bold** 단락 → 새 step 분기(핵심 버그 수정)", () => {
+    let r = reduceReasoning([], "**Searching articles**\n\n본문1 진행", 0);
+    r = reduceReasoning(r, " 더 진행", 1); // 같은 단계 누적
+    r = reduceReasoning(r, "\n\n**Structuring risks**\n\n본문2", 2);
+    expect(r).toHaveLength(2); // 새 bold 경계 → 분기
+    const s0 = asReasoning(r[0]);
+    const s1 = asReasoning(r[1]);
+    expect(s0.title).toBe("질문 분석 중");
+    expect(s0.content).toBe("**Searching articles**\n\n본문1 진행 더 진행");
+    // 2번째 reasoning step → '결과 분석 중'(order 기반)
+    expect(s1.title).toBe("결과 분석 중");
+    expect(s1.content).toBe("**Structuring risks**\n\n본문2");
   });
 
-  it("tool step 뒤 reasoning → 새 step, 2번째 reasoning 이라 '결과 분석 중'", () => {
+  it("스트리밍으로 bold 가 쪼개져 와도(`**Struc`/`turing**`) 1회만 분기", () => {
+    let r = reduceReasoning([], "**A**\n\n초기 본문", 0);
+    r = reduceReasoning(r, "\n\n**Struc", 1); // bold 미완성 — 아직 분기 X
+    expect(r).toHaveLength(1);
+    r = reduceReasoning(r, "turing risks**\n\n본문2", 2); // bold 완성 → 분기
+    expect(r).toHaveLength(2);
+    expect(asReasoning(r[0]).title).toBe("질문 분석 중");
+    expect(asReasoning(r[1]).title).toBe("결과 분석 중");
+    expect(asReasoning(r[1]).content).toContain("Structuring risks");
+  });
+
+  it("step 본문이 아직 비어있으면 선두 bold 는 분기 아님(첫 단계 시작)", () => {
+    let r = reduceReasoning([], "", 0); // 빈 step 먼저
+    r = reduceReasoning(r, "**First step**\n\nbody", 1);
+    expect(r).toHaveLength(1); // 본문 없던 step 의 선두 bold → 같은 step
+    expect(asReasoning(r[0]).content).toBe("**First step**\n\nbody");
+  });
+
+  it("tool step 뒤 reasoning → 새 step, 2번째 reasoning '결과 분석 중'", () => {
     let r = reduceReasoning([], "초기 사고", 0);
     r = reduceToolCall(r, { id: "t1", name: "web_search", args: "{}" }, 1);
     r = reduceReasoning(r, "검색 결과 해석", 2);
@@ -82,12 +107,23 @@ describe("reduceReasoning — order 기반 한글 제목 + 본문 누적", () =>
     });
   });
 
-  it("reasoning→tool→reasoning→tool→reasoning: 3번째 reasoning 도 '결과 분석 중'", () => {
+  it("reasoning→tool→reasoning→tool→reasoning: 2·3번째 모두 '결과 분석 중'", () => {
     let r = reduceReasoning([], "a", 0);
     r = reduceToolCall(r, { id: "t1", name: "ws", args: "{}" }, 1);
     r = reduceReasoning(r, "b", 2);
     r = reduceToolCall(r, { id: "t2", name: "ws", args: "{}" }, 3);
     r = reduceReasoning(r, "c", 4);
+    const reasonings = r.filter((s) => s.kind === "reasoning");
+    expect(reasonings).toHaveLength(3);
+    expect(asReasoning(reasonings[0]).title).toBe("질문 분석 중");
+    expect(asReasoning(reasonings[1]).title).toBe("결과 분석 중");
+    expect(asReasoning(reasonings[2]).title).toBe("결과 분석 중");
+  });
+
+  it("bold 경계 분기로 생긴 step 도 reasoning 순번에 포함(order 일관)", () => {
+    let r = reduceReasoning([], "**S1**\n\n본문", 0);
+    r = reduceReasoning(r, "\n\n**S2**\n\n본문", 1); // 분기 → 2번째
+    r = reduceReasoning(r, "\n\n**S3**\n\n본문", 2); // 분기 → 3번째
     const reasonings = r.filter((s) => s.kind === "reasoning");
     expect(reasonings).toHaveLength(3);
     expect(asReasoning(reasonings[0]).title).toBe("질문 분석 중");

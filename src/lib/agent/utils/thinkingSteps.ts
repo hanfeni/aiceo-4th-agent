@@ -28,10 +28,43 @@ function reasoningCount(steps: ThinkingStep[]): number {
 }
 
 /**
+ * 누적 content 에서 **새 bold 단락 경계**의 시작 인덱스를 찾는다.
+ * 경계 = "닫힌 `**...**`" 가 content **선두가 아닌 위치**에서 시작.
+ * (선두 bold 는 그 step 자체의 시작 — 분기 아님.) 닫히지 않은
+ * 미완성 bold(`**Struc` 만)는 -1 반환(아직 보류 → 같은 step 누적,
+ * 닫히는 다음 델타에서 소급 분기).
+ *
+ * trimStart 기준 첫 비공백이 `**` 면 그건 이 step 의 선두 제목이므로
+ * 그 다음 `**...**` 부터가 경계. 그 외엔 첫 `**...**` 가 경계.
+ */
+function findBoldBoundary(content: string): number {
+  const lead = content.length - content.trimStart().length;
+  let searchFrom = lead;
+  // 선두가 bold 면 그 닫는 ** 다음부터 탐색(선두 제목은 경계 아님).
+  if (content.startsWith("**", lead)) {
+    const leadClose = content.indexOf("**", lead + 2);
+    if (leadClose === -1) return -1; // 선두 bold 미완성 — 경계 없음
+    searchFrom = leadClose + 2;
+  }
+  const open = content.indexOf("**", searchFrom);
+  if (open === -1) return -1;
+  // 경계 후보의 닫는 ** 가 있어야 확정(없으면 미완성 → 보류).
+  const close = content.indexOf("**", open + 2);
+  if (close === -1) return -1;
+  return open;
+}
+
+/**
  * reasoning 델타를 step 배열에 머지. 새 배열 반환(불변).
- * 영문 reasoning 은 가공 없이 content 에 누적. 제목은 reasoning 순번
- * 기반 한글 안내문구(medigate-new). 직전이 reasoning 이면 같은 step,
- * 아니면(빈/ tool 뒤) 새 step + 순번 기반 제목.
+ *
+ * Slice H — `**bold**` 를 step **경계 신호**로 사용(제목으로는 안 씀).
+ * OpenAI reasoning summary 는 사고 단계마다 `**제목**\n\n본문` 을 주되
+ * 경계 메타 이벤트가 없다. 직전 reasoning step 본문에 **새 bold 단락**
+ * 이 나타나면 그 지점에서 새 step 으로 분기한다(liveMode 가 단계마다
+ * 리플레이스 — 누적 버그 해소). 분기로 잘린 bold 텍스트는 **제목이
+ * 아니라 새 step 의 content 앞에 그대로 둔다**(제목은 order 기반 한글).
+ *
+ * 직전이 reasoning 이 아니면(빈/ tool 뒤) 새 step + order 한글 제목.
  */
 export function reduceReasoning(
   steps: ThinkingStep[],
@@ -40,9 +73,25 @@ export function reduceReasoning(
 ): ThinkingStep[] {
   const last = steps[steps.length - 1];
 
-  // 직전이 reasoning step → content 에 그대로 누적(제목 불변).
   if (last && last.kind === "reasoning") {
-    const updated: ThinkingStep = { ...last, content: last.content + delta };
+    const merged = last.content + delta;
+    const boundary = findBoldBoundary(merged);
+    // 새 bold 경계 발견 → 그 앞은 기존 step, 뒤는 새 step 으로 분기.
+    if (boundary > 0) {
+      const before = merged.slice(0, boundary).replace(/\s+$/, "");
+      const after = merged.slice(boundary);
+      const kept: ThinkingStep = { ...last, content: before };
+      const head = steps.slice(0, -1).concat(kept);
+      const order = reasoningCount(head); // 새 step 의 reasoning 순번
+      return head.concat({
+        kind: "reasoning",
+        title: reasoningTitle(order, false),
+        content: after,
+        order: nextOrder,
+      });
+    }
+    // 경계 없음(또는 선두 bold) → 같은 step 에 누적(제목 불변).
+    const updated: ThinkingStep = { ...last, content: merged };
     return steps.slice(0, -1).concat(updated);
   }
 
