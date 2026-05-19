@@ -91,6 +91,9 @@ export function IndexLabView(): ReactNode {
     "text-embedding-3-small",
   );
   const [limit, setLimit] = useState<number>(300);
+  // 청크 옵션 — 디폴트 OFF(0). 사용자 결정 2026-05-19.
+  const [chunkSize, setChunkSize] = useState<number>(0);
+  const [chunkOverlap, setChunkOverlap] = useState<number>(100);
   const [total, setTotal] = useState<number | null>(null);
   const [indexing, setIndexing] = useState(false);
   const [indexLog, setIndexLog] = useState<string[]>([]);
@@ -178,6 +181,9 @@ export function IndexLabView(): ReactNode {
           limit,
           decompoundMode: decompound,
           embedModel,
+          // 0 = 청킹 OFF(서버 chunkText 가 전체 1청크 = 기존 동작).
+          chunkSize,
+          ...(chunkSize > 0 ? { chunkOverlap } : {}),
         }),
       });
       if (!res.ok || !res.body) {
@@ -384,6 +390,44 @@ export function IndexLabView(): ReactNode {
               ))}
             </div>
           </div>
+          <div style={{ marginTop: 14 }}>
+            <div style={fieldLabel}>
+              청크 크기 (토큰 · cl100k) — 기본은 청킹 안 함
+            </div>
+            <div style={chipRow}>
+              {CHUNK_SIZES.map((c) => (
+                <button
+                  key={c.v}
+                  type="button"
+                  className="cf-pill"
+                  aria-pressed={chunkSize === c.v}
+                  onClick={() => setChunkSize(c.v)}
+                  disabled={indexing}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {chunkSize > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div style={fieldLabel}>청크 겹침 (overlap · 토큰)</div>
+              <div style={chipRow}>
+                {CHUNK_OVERLAPS.map((o) => (
+                  <button
+                    key={o}
+                    type="button"
+                    className="cf-pill"
+                    aria-pressed={chunkOverlap === o}
+                    onClick={() => setChunkOverlap(o)}
+                    disabled={indexing}
+                  >
+                    {o}토큰
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 실행 버튼 — 설정 카드 밖 독립 줄(설정 ≠ 액션 시각 분리,
