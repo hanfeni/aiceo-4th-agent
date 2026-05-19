@@ -13,6 +13,7 @@ import { useChatStore } from "@/store";
 import { ChatMarkdown } from "@/components/common/ChatMarkdown";
 import { ThinkingPanel } from "@/components/common/BaseChat/ThinkingPanel";
 import { SourcesPanel } from "@/components/common/BaseChat/SourcesPanel";
+import { splitRecQueries } from "@/lib/agent/utils/recQueries";
 import type { ChatMessage } from "@/types";
 
 /**
@@ -284,6 +285,7 @@ function AssistantBubble({
   sources,
   streaming,
   outputting = false,
+  onRecQuery,
 }: {
   content: string;
   thinkingSteps?: ChatMessage["thinkingSteps"];
@@ -291,10 +293,18 @@ function AssistantBubble({
   streaming: boolean;
   /** Slice M — 답변 본문 출력 중(직전 SSE=token). ThinkingPanel 게이트. */
   outputting?: boolean;
+  /** 추천 질문 칩 클릭 → 즉시 전송. */
+  onRecQuery: (text: string) => void;
 }): ReactNode {
+  // 누적 content 에서 [REC_QUERY] 마커 분리(렌더 시점 — store 무변경).
+  // 스트리밍 중에도 splitRecQueries 가 여는 태그/부분 prefix 부터
+  // 본문에서 즉시 절단해 사용자에게 마커가 노출되지 않는다(누출 0).
+  // 닫는 태그가 와야 recQueries 가 채워진다 → 칩은 답변 완료 후 등장.
+  const { body, recQueries } = splitRecQueries(content);
   const onCopy = (): void => {
     // 복사는 trivial+useful — 실제 클립보드 복사 허용(스코프 예외 명시).
-    void navigator.clipboard?.writeText(content);
+    // 마커 제외 본문만 복사(사용자가 보는 것과 일치).
+    void navigator.clipboard?.writeText(body);
   };
   return (
     <div style={{ display: "flex", gap: 12 }}>
@@ -318,21 +328,23 @@ function AssistantBubble({
         {/* 에이전트 라벨 제거 → 사고 패널. 단일 thinkingSteps[](교차
             보존). medigate StreamingView/HistoryView 패턴. 데이터 없고
             비스트리밍이면 패널 자체 미표시. */}
-        {/* Slice M — 출력 중(streaming && outputting)엔 사고 패널
-            컨테이너 자체를 안 그린다(여백까지 제거 — '노출 안 함'
-            요구). 출력 멈추면 다시 표시(동적). */}
-        {((thinkingSteps?.length ?? 0) > 0 || streaming) &&
-          !(streaming && outputting) && (
-            <div style={{ marginBottom: 6 }}>
-              <ThinkingPanel
-                steps={thinkingSteps ?? []}
-                streaming={streaming}
-                outputting={outputting}
-              />
-            </div>
-          )}
+        {/* 사고 패널 — 출력 중에도 컨테이너를 제거하지 않는다(사용자
+            보고: 출력 단계에 패널이 사라졌다 생겼다 반복 → 답변
+            텍스트 레이아웃 시프트). 이전 '!(streaming && outputting)'
+            게이트(컨테이너 통째 제거) 폐기. 출력 중 접힘 고정·토글
+            비활성은 ThinkingPanel 내부가 outputting prop 으로 처리
+            (return null 아님 — 헤더 자리 유지로 시프트 0). */}
+        {((thinkingSteps?.length ?? 0) > 0 || streaming) && (
+          <div style={{ marginBottom: 6 }}>
+            <ThinkingPanel
+              steps={thinkingSteps ?? []}
+              streaming={streaming}
+              outputting={outputting}
+            />
+          </div>
+        )}
         <div style={{ minHeight: 22 }}>
-          <ChatMarkdown content={content} />
+          <ChatMarkdown content={body} />
         </div>
 
         {/* 참고 출처(References) — web_search citation. 스트리밍 종료
@@ -341,8 +353,81 @@ function AssistantBubble({
           <SourcesPanel sources={sources ?? []} />
         )}
 
+        {/* 추천 질문 — LLM [REC_QUERY] 유래. 스트리밍 종료 후 +
+            recQueries 있을 때만(닫는 태그 도착해야 채워짐 → 답변
+            완료 후 등장). 디자인: 답변 본문과 명확히 구분(사용자
+            요청) — 큰 상단 여백(28) + 상단 구분선 + "관련 질문"
+            라벨 + agent 틴트 칩. medigate AgentSuggestedMenu 의
+            pill·클릭형 본질 + 우리 디자인 토큰(보라 아이덴티티).
+            클릭 = 즉시 전송(systemPrompt 인스트럭션과 일관). */}
+        {!streaming && recQueries.length > 0 && (
+          <div
+            style={{
+              marginTop: 28,
+              paddingTop: 18,
+              borderTop: "1px solid var(--t-neutral-12)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text-subtle)",
+                marginBottom: 10,
+                letterSpacing: "0.01em",
+              }}
+            >
+              관련 질문
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              {recQueries.map((q, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onRecQuery(q)}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    maxWidth: "100%",
+                    padding: "8px 15px",
+                    borderRadius: 9999,
+                    // 그레이 계열 + 아웃라인 제거(사용자 요청). 테두리
+                    // 없이도 칩이 면으로 보이게 배경을 한 단계 진한
+                    // t-neutral-8 솔리드로(surface-subtle 은 흰 본문과
+                    // 거의 안 구분 — 직전 실수 방지). 구분선·라벨·여백
+                    // 유지로 답변과의 구분은 그대로.
+                    border: "none",
+                    background: "var(--t-neutral-8)",
+                    color: "var(--text-default)",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    lineHeight: 1.4,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    transition: "background 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--t-neutral-12)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--t-neutral-8)";
+                  }}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 메시지 액션 행 — 시각 전용 mock(미구현). copy 만 실제 동작. */}
-        {!streaming && content.length > 0 && (
+        {!streaming && body.length > 0 && (
           <div
             style={{
               display: "flex",
@@ -398,9 +483,18 @@ function AssistantBubble({
 export interface MessageListProps {
   /** EmptyState 추천칩 클릭 시 입력창에 텍스트 주입(ChatPanel 연결). */
   onPickPrompt: (text: string) => void;
+  /**
+   * 답변 하단 추천 질문 칩 클릭 → 그 질문을 즉시 전송(사용자 결정).
+   * EmptyState 의 onPickPrompt(입력창 주입)와 달리 바로 send 한다
+   * (systemPrompt "클릭해 바로 보낼 수 있는 질문" 인스트럭션과 일관).
+   */
+  onRecQuery: (text: string) => void;
 }
 
-export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
+export function MessageList({
+  onPickPrompt,
+  onRecQuery,
+}: MessageListProps): ReactNode {
   const messages = useChatStore((s) => s.messages);
   const isStreaming = useChatStore((s) => s.isStreaming);
   // Slice M — 직전 SSE 이벤트가 token 이면 답변 본문 출력 중 →
@@ -461,6 +555,7 @@ export function MessageList({ onPickPrompt }: MessageListProps): ReactNode {
                 outputting={
                   outputting && i === messages.length - 1
                 }
+                onRecQuery={onRecQuery}
               />
             ),
           )}
