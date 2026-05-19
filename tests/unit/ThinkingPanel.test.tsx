@@ -215,6 +215,18 @@ describe("ThinkingPanel — 출력 중 접힘 고정(outputting, return null 폐
     expect(screen.queryByText("사고 본문")).toBeNull();
   });
 
+  it("outputting=true → 라벨은 정적 '답변 과정'(순환 문구 미노출)", () => {
+    render(
+      <ThinkingPanel steps={steps} streaming={true} outputting={true} />,
+    );
+    // 답변 토큰 흐름 중엔 사고/도구 미진행 → '뇌 오버클럭 중'
+    // 같은 순환 문구(THINKING_FUN_LABELS — 전부 ' 중' 으로 끝남)가
+    // 아니라 정적 '답변 과정' 버튼이어야 함(사용자 보고).
+    expect(screen.getByText("답변 과정")).toBeTruthy();
+    // 순환 문구는 모두 ' 중' 종료 — 출력 중엔 절대 안 떠야 함.
+    expect(screen.queryByText(/ 중$/)).toBeNull();
+  });
+
   it("outputting=true → 토글 버튼 비활성(열기 불가)", () => {
     render(
       <ThinkingPanel steps={steps} streaming={true} outputting={true} />,

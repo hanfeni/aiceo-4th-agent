@@ -459,12 +459,18 @@ export function ThinkingPanel({
   //  토글 비활성 → 레이아웃 안정. 사용자 요구: '사라지는 게 아니라
   //  폴딩 상태에서 열기 불가'.)
 
-  // 스트리밍 중에는 순환 레이블이 라벨을 대체. 첫 tick 전(훅이
-  // 아직 값 없음)엔 '(진행 중)' 같은 표현이 깜빡이지 않도록
-  // 정적 폴백을 완료 후와 동일 톤 '답변 과정'으로 통일(사용자
-  // 보고 — '(진행 중)' 깜빡임 제거). 훅은 빈 문자열을 절대
-  // 반환 안 하므로(useThinkingLabelCycler) 폴백은 첫 80ms 만.
-  const label = streaming ? cyclingLabel || "답변 과정" : "답변 과정";
+  // 라벨 규칙:
+  //  - 사고/도구 진행 중(streaming && !outputting): 순환 문구
+  //    (cyclingLabel — '뇌 오버클럭 중…' 등 작동 신호).
+  //  - 출력 중(streamOutputting): 정적 '답변 과정'. 답변 토큰이
+  //    흐르는 동안엔 사고/도구가 안 도는데 순환 문구가 뜨면
+  //    어색(사용자 보고). 접힌 헤더는 '답변 과정' 버튼이어야 함.
+  //  - 완료(streaming=false): 정적 '답변 과정'(토글 열람).
+  // 첫 tick 전 폴백도 '답변 과정'으로 통일(깜빡임 0).
+  const label =
+    streaming && !streamOutputting
+      ? cyclingLabel || "답변 과정"
+      : "답변 과정";
 
   return (
     <div style={{ width: "100%" }}>
