@@ -322,13 +322,14 @@ describe("이중 emit 일원화 — web_search tool_outputs 는 단일 채널만
     // ClientTool 채널은 ServerTool 을 절대 잡지 않는다(이중 emit 제거).
     expect(clientCalls).toBeNull();
     // ServerTool 채널만 정확히 1건 — 이전엔 양쪽이 잡아 2건이 됐다.
-    // status='completed' → result='검색 완료'(Slice K — 자기 완료 신호).
+    // Slice N — web_search result=undefined(OUT 은 검색 결과=citations
+    // 가 채운다; status 는 OUT 텍스트 아님 — 사용자 'OUT=검색결과').
     expect(serverOutputs).toEqual([
       {
         id: "ws_dedup",
         name: "web_search",
         args: JSON.stringify({ queries: ["q1", "q2"] }),
-        result: "검색 완료",
+        result: undefined,
       },
     ]);
     expect(serverOutputs).toHaveLength(1);
@@ -367,11 +368,12 @@ describe("이중 emit 일원화 — web_search tool_outputs 는 단일 채널만
 });
 
 describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채널 단독 전담)", () => {
-  // Slice K — web_search status='completed' → result '검색 완료'(각
-  // step 자기 완료 신호, "실행 중…" 잔류 0). 진행 중(in_progress/
-  // searching)은 result=undefined 유지(거짓 완료 방지). 출처는
-  // citations 가 별도로 마지막 step 에 덮어쓴다(reduceToolResult).
-  it("web_search_call status='completed' → result='검색 완료'", () => {
+  // Slice N — web_search 는 status 무관 **항상 result=undefined**.
+  // OUT 표시값은 status('검색 완료')가 아니라 검색 결과(citations)다
+  // (사용자: 'OUT=검색결과, status는 완료판정용'). citations 가 올
+  // 때까지 step 은 '실행 중…'. status='completed' 를 OUT 으로 쓰던
+  // Slice K 를 롤백. (비-web_search ServerTool 은 별도 — 아래 케이스.)
+  it("web_search status='completed' 여도 result=undefined(OUT=결과)", () => {
     const msg = {
       kwargs: {
         additional_kwargs: {
@@ -391,12 +393,12 @@ describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채�
         id: "ws_1",
         name: "web_search",
         args: JSON.stringify({ queries: ["a 검색", "b query"] }),
-        result: "검색 완료",
+        result: undefined,
       },
     ]);
   });
 
-  it("web_search status='in_progress' → result=undefined(진짜 진행 중)", () => {
+  it("web_search status='in_progress' → result=undefined", () => {
     const msg = {
       additional_kwargs: {
         tool_outputs: [
@@ -409,20 +411,7 @@ describe("extractToolOutputs — ServerTool 호출 추출 (FR-09 거울상, 채�
     ]);
   });
 
-  it("web_search status='searching' → result=undefined(진행형)", () => {
-    const msg = {
-      additional_kwargs: {
-        tool_outputs: [
-          { id: "ws_3", type: "web_search_call", status: "searching" },
-        ],
-      },
-    };
-    expect(extractToolOutputs(msg, meta())).toEqual([
-      { id: "ws_3", name: "web_search", args: "", result: undefined },
-    ]);
-  });
-
-  it("web_search status 누락 → result=undefined(불명 = 진행 중 가정)", () => {
+  it("web_search status 누락 → result=undefined", () => {
     const msg = {
       additional_kwargs: {
         tool_outputs: [{ id: "ws_4", type: "web_search_call" }],
@@ -528,11 +517,11 @@ describe("extractToolResult — 도구 실행 결과 추출 (FR-09 거울상)", 
 });
 
 describe("extractToolOutputs — ServerTool(web_search) 호출 추출 (FR-09 거울상)", () => {
-  // Slice K — web_search status='completed' → result='검색 완료'(각
-  // step 자기 완료 신호; 출처(citations)는 별도 청크 N:1 라 안 와도
-  // "실행 중…" 잔류 0). 진행형(running/in_progress)·누락은
-  // result=undefined(거짓 완료 방지 — 진짜 진행 중만 "실행 중…").
-  it("model_request + web_search_call status='completed' → result='검색 완료'", () => {
+  // Slice N — web_search 는 status 무관 result=undefined. OUT 표시값
+  // 은 검색 결과(citations)가 채운다(reduceToolResult). status 를
+  // OUT 으로 쓰던 Slice K 롤백 — 사용자 'OUT=검색결과, status는
+  // 완료판정용'(citations 올 때까지 step 은 '실행 중…').
+  it("model_request + web_search_call status='completed' 여도 result=undefined", () => {
     const msg = {
       kwargs: {
         additional_kwargs: {
@@ -553,7 +542,7 @@ describe("extractToolOutputs — ServerTool(web_search) 호출 추출 (FR-09 거
         id: "ws_1",
         name: "web_search",
         args: JSON.stringify({ queries: ["q1", "q2"] }),
-        result: "검색 완료",
+        result: undefined,
       },
     ]);
   });

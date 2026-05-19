@@ -183,24 +183,41 @@ export function reduceToolResult(
   id?: string,
   now: number = Date.now(),
 ): ThinkingStep[] {
+  // Slice N — web_search citations 다중 채움. citations 는 id 없이
+  // (별도 청크) name="web_search" + "참고 출처…" 패턴으로 1번만
+  // 온다(OpenAI 가 N번 검색을 답변에 종합). web_search OUT 은
+  // status 가 아니라 **검색 결과(citations)** 이므로(사용자 결정),
+  // **모든 web_search step OUT 에 동일 출처**를 채운다. id 명시
+  // citations(드묾)는 그 step 만(아래 단일 경로). 일반 도구/
+  // 일반 result 는 단일 채움 유지.
+  if (
+    !id &&
+    name === "web_search" &&
+    result.startsWith("참고 출처")
+  ) {
+    let touched = false;
+    const next = steps.map((s) => {
+      if (s.kind !== "tool" || s.name !== "web_search") return s;
+      // 동일 출처 재적용은 스킵(멱등 — 불필요 리렌더 방지).
+      if (s.result === result) return s;
+      touched = true;
+      const elapsedMs =
+        s.startedAt !== undefined
+          ? Math.max(0, now - s.startedAt)
+          : s.elapsedMs;
+      return {
+        ...s,
+        result,
+        elapsedMs,
+        title: toolTitle(s.name, true, s.args),
+      };
+    });
+    return touched ? next : steps; // 변경 0 → same-ref(setState 스킵)
+  }
+
   let idx = -1;
   if (id) {
     idx = steps.findIndex((s) => s.kind === "tool" && s.id === id);
-  }
-  // Slice K — web_search citations 덮어쓰기. citations 는 id 없이
-  // (별도 청크) name="web_search" + "참고 출처…" 패턴으로 온다.
-  // status='completed' 로 모든 step 이 이미 완료돼 result===undefined
-  // step 이 없어도, **마지막 web_search step** 에 출처를 덮어쓴다
-  // (N:1 — 출처는 OpenAI 가 답변에 종합해 1번만 옴). 일반 status
-  // result("검색 완료" 등)는 이 패턴이 아니라 기존 name 폴백 유지.
-  if (idx < 0 && name === "web_search" && result.startsWith("참고 출처")) {
-    for (let i = steps.length - 1; i >= 0; i--) {
-      const s = steps[i];
-      if (s.kind === "tool" && s.name === "web_search") {
-        idx = i;
-        break;
-      }
-    }
   }
   if (idx < 0) {
     idx = steps.findIndex(

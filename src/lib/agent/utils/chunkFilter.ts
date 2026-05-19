@@ -353,19 +353,17 @@ export function extractToolOutputs(
     const name = type.replace(/_call$/, ""); // web_search_call → web_search
     const isWebSearch = type === "web_search_call";
     const rawStatus = typeof o.status === "string" ? o.status : "";
-    // Slice K — web_search 완료 신호를 step 자체가 갖게 한다.
-    //  - status==="completed" → "검색 완료"(각 step 즉시 완료;
-    //    출처(citations)는 별도 청크라 N:1 라 안 와도 "실행 중…"
-    //    잔류 0). 진행형(in_progress/searching)·누락은 undefined
-    //    (거짓 완료 방지 — 진짜 진행 중은 "실행 중…" 정상 표시).
-    //  - 비-web_search ServerTool: 기존대로 status(누락 시
-    //    "completed" 기본 — 계약 변경 범위는 web_search 한정).
-    let result: string | undefined;
-    if (isWebSearch) {
-      result = rawStatus === "completed" ? "검색 완료" : undefined;
-    } else {
-      result = rawStatus || "completed";
-    }
+    // Slice N — web_search 의 OUT 표시값은 status('검색 완료')가
+    // 아니라 **검색 결과(citations)** 다(사용자: OUT=검색결과,
+    // status는 완료판정용). 따라서 web_search 는 status 무관 항상
+    // result=undefined → citations 가 올 때까지 '실행 중…',
+    // 도착하면 reduceToolResult 가 모든 web_search step OUT 에
+    // 동일 출처를 채운다. status='completed' 를 OUT 으로 쓰던
+    // Slice K 롤백. 비-web_search ServerTool 은 기존대로 status
+    // (누락 시 "completed" 기본 — 계약 범위 web_search 한정).
+    const result: string | undefined = isWebSearch
+      ? undefined
+      : rawStatus || "completed";
     out.push({
       id: typeof o.id === "string" ? o.id : "",
       name,

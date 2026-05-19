@@ -264,34 +264,49 @@ describe("reduceToolResult — id/name 매칭 result 채움", () => {
 // (result===undefined)은 채울 step 이 없어 출처가 사라짐. 해법:
 // id 없는 web_search citations 는 **마지막 web_search step** result 를
 // '검색 완료 + 출처'로 덮어쓴다(result 유무 무관).
-describe("reduceToolResult — web_search citations 마지막 step 덮어쓰기", () => {
+// Slice N — web_search OUT 은 검색 결과(citations). OpenAI 가 N번
+// 검색을 종합해 출처를 1번만 주므로(id 없음 "참고 출처…"),
+// **모든 web_search step OUT 에 동일 출처를 채운다**(사용자 결정:
+// "3개 step 모두 OUT 에 전체 출처"). status 는 OUT 아님(Part1 롤백)
+// → citations 오기 전 web_search step 은 result=undefined("실행
+// 중…"). 일반 도구/id 매칭은 기존 단일 채움 유지.
+describe("reduceToolResult — web_search citations 모든 step 동일 채움", () => {
   const CITE = "참고 출처 1건:\n• 삼성 (https://s.example)";
 
-  it("status 로 모두 '검색 완료'된 후 citations → 마지막 step 에 출처 덮어씀", () => {
+  it("web_search 2개(둘 다 미완료) + citations(id 없음) → 둘 다 출처", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
-    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
-    s = reduceToolResult(s, "web_search", "검색 완료", "w2");
-    // citations: id 없음 + "참고 출처" 패턴 → 마지막(w2) 덮어쓰기.
+    // status 는 OUT 아님 — 둘 다 result undefined('실행 중…').
+    expect(asTool(s[0]).result).toBeUndefined();
+    expect(asTool(s[1]).result).toBeUndefined();
+    // citations(id 없음 + "참고 출처") → 모든 web_search step 채움.
     s = reduceToolResult(s, "web_search", CITE, "");
-    expect(asTool(s[0]).result).toBe("검색 완료"); // w1 불변
-    expect(asTool(s[1]).result).toBe(CITE); // w2 출처로 덮임
+    expect(asTool(s[0]).result).toBe(CITE);
+    expect(asTool(s[1]).result).toBe(CITE);
   });
 
-  it("web_search step 1개일 때도 citations 가 그 step 에 덮임", () => {
+  it("web_search 3개 → citations 1번에 3개 OUT 전부 동일 출처", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
-    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
+    s = reduceToolCall(s, { id: "w3", name: "web_search", args: "{}" }, 2);
+    s = reduceToolResult(s, "web_search", CITE, "");
+    expect(s.map((x) => asTool(x).result)).toEqual([CITE, CITE, CITE]);
+  });
+
+  it("web_search step 1개 + citations → 그 step OUT 에 출처", () => {
+    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolResult(s, "web_search", CITE, "");
     expect(asTool(s[0]).result).toBe(CITE);
   });
 
-  it("id 없는 일반 result(출처 패턴 아님)는 기존 name 폴백 유지(미완료 step)", () => {
+  it("교차(reasoning 끼임)여도 web_search step 전부에만 출처 채움", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
-    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
-    // "검색 완료"(출처 패턴 아님) + id 없음 → 첫 미완료(w1).
-    s = reduceToolResult(s, "web_search", "검색 완료", "");
-    expect(asTool(s[0]).result).toBe("검색 완료");
-    expect(asTool(s[1]).result).toBeUndefined();
+    s = reduceReasoning(s, "중간 사고", 1);
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 2);
+    s = reduceToolResult(s, "web_search", CITE, "");
+    expect(asTool(s[0]).result).toBe(CITE); // w1
+    expect(s[1].kind).toBe("reasoning"); // reasoning 불변
+    expect(asTool(s[2]).result).toBe(CITE); // w2
   });
 
   it("citations 인데 web_search step 이 하나도 없으면 same-ref(무시)", () => {
@@ -302,54 +317,38 @@ describe("reduceToolResult — web_search citations 마지막 step 덮어쓰기"
     expect(r).toBe(input);
   });
 
-  it("id 있는 citations(드묾)는 id 매칭 우선(덮어쓰기 분기 안 탐)", () => {
+  it("id 있는 citations(드묾)는 id 매칭 우선(단일 step 만 — 다중 분기 안 탐)", () => {
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
     s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
-    s = reduceToolResult(s, "web_search", CITE, "w1"); // id 명시 → w1
+    s = reduceToolResult(s, "web_search", CITE, "w1"); // id 명시 → w1 만
     expect(asTool(s[0]).result).toBe(CITE);
     expect(asTool(s[1]).result).toBeUndefined();
   });
 
-  // Slice L — 순서 의존 버그(사용자 보고 "출처가 안 나옴"): citations
-  // 가 step 에 채워진 뒤 status('검색 완료')가 나중에 와도 출처가
-  // 덮이면 안 된다(citations 우선 — 출처 영속). SSE 도착 순서 무관.
-  it("citations 먼저 → 같은 step 에 나중 status('검색 완료') 와도 출처 보존", () => {
-    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
-    // citations 가 먼저(id 없음 → 마지막 web_search step 덮어쓰기).
-    s = reduceToolResult(s, "web_search", CITE, "");
-    expect(asTool(s[0]).result).toBe(CITE);
-    // 나중에 status('검색 완료')가 같은 step id 로 옴 → 출처 보존.
-    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
-    expect(asTool(s[0]).result).toBe(CITE); // 덮이지 않음
-  });
-
-  it("citations step 에 id 없는 status 폴백도 안 덮음(첫 미완료로 우회)", () => {
-    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
-    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
-    // w1 에 citations(마지막? — w2 가 마지막이므로 w2 에 덮임).
-    s = reduceToolResult(s, "web_search", CITE, "");
-    expect(asTool(s[1]).result).toBe(CITE); // w2 = 출처
-    // id 없는 status('검색 완료') → citations 아닌 일반 → 첫 미완료
-    // (w1, result===undefined)에 채움. w2(citations)는 불변.
-    s = reduceToolResult(s, "web_search", "검색 완료", "");
-    expect(asTool(s[0]).result).toBe("검색 완료"); // w1 완료
-    expect(asTool(s[1]).result).toBe(CITE); // w2 출처 보존
-  });
-
-  it("citations step 에 id 매칭 status 가 와도 출처 우선(명시 id 여도)", () => {
-    let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
-    s = reduceToolResult(s, "web_search", CITE, ""); // w1 = 출처
-    // status 가 같은 id(w1) 로 명시되어 와도 출처 보존.
-    s = reduceToolResult(s, "web_search", "검색 완료", "w1");
-    expect(asTool(s[0]).result).toBe(CITE);
-  });
-
-  it("citations 가 또 와서 갱신은 허용(출처→출처 덮어쓰기 OK)", () => {
+  it("citations 갱신(출처→새 출처)도 모든 web_search step 에 반영", () => {
     const CITE2 = "참고 출처 2건:\n• A (https://a.x)\n• B (https://b.x)";
     let s = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    s = reduceToolCall(s, { id: "w2", name: "web_search", args: "{}" }, 1);
     s = reduceToolResult(s, "web_search", CITE, "");
-    s = reduceToolResult(s, "web_search", CITE2, ""); // 새 출처로 갱신
+    s = reduceToolResult(s, "web_search", CITE2, ""); // 갱신
     expect(asTool(s[0]).result).toBe(CITE2);
+    expect(asTool(s[1]).result).toBe(CITE2);
+  });
+
+  it("citations 다중 채움은 새 배열 반환(불변), 입력 미변형", () => {
+    const base = reduceToolCall([], { id: "w1", name: "web_search", args: "{}" }, 0);
+    const r = reduceToolResult(base, "web_search", CITE, "");
+    expect(r).not.toBe(base);
+    expect(asTool(base[0]).result).toBeUndefined(); // 원본 불변
+  });
+
+  it("비-web_search 도구는 다중 분기 안 탐(기존 단일 name 폴백)", () => {
+    let s = reduceToolCall([], { id: "c1", name: "current_time", args: "{}" }, 0);
+    s = reduceToolCall(s, { id: "c2", name: "current_time", args: "{}" }, 1);
+    // current_time 결과(출처 패턴 아님) id 없음 → 첫 미완료(c1)만.
+    s = reduceToolResult(s, "current_time", "2026-05-19", "");
+    expect(asTool(s[0]).result).toBe("2026-05-19");
+    expect(asTool(s[1]).result).toBeUndefined();
   });
 });
 
