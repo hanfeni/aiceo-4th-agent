@@ -8,6 +8,7 @@ import {
 import {
   reduceReasoning,
   reduceToolCall,
+  finalizeProgressTitles,
 } from "@/lib/agent/utils/thinkingSteps";
 
 /**
@@ -100,7 +101,12 @@ function replayAssistant(msg: unknown): ChatMessage {
   //  트레이드오프 — 신규 대화는 정상).)
 
   const out: ChatMessage = { role: "assistant", content };
-  if (steps.length > 0) out.thinkingSteps = steps;
+  if (steps.length > 0) {
+    // 히스토리는 끝난 대화 — 진행형 제목('질문 분석 중' 등)을 완료형
+    // 으로 정규화(사용자 요구: 히스토리에선 '질문 분석 완료'). 라이브
+    // reducer 무손상(replay 전용 후처리).
+    out.thinkingSteps = finalizeProgressTitles(steps);
+  }
   return out;
 }
 

@@ -151,9 +151,22 @@ function FoldableValue({ raw }: { raw: string }): ReactNode {
   const summary = ioSummary(raw);
   const foldable = needsFold(raw);
 
+  // 접힌 요약은 패널 폭에 맞춰 무조건 1줄 + 말줄임(…). ioSummary 가
+  // 120자에서 자르지만 패널 폭은 가변이라 CSS 로 한 줄 강제(사용자
+  // 요구: "폴딩 전 I/O 각각 한 줄, 길어지면 말줄임").
+  const oneLine: React.CSSProperties = {
+    display: "block",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  };
+
   if (!foldable) {
     return (
-      <span style={{ fontSize: 12, color: "var(--neutral-600)" }}>
+      <span
+        style={{ ...oneLine, fontSize: 12, color: "var(--neutral-600)" }}
+      >
         {summary}
       </span>
     );
@@ -174,17 +187,33 @@ function FoldableValue({ raw }: { raw: string }): ReactNode {
           fontSize: 12,
           color: "var(--neutral-600)",
           cursor: "pointer",
-          display: "block",
+          display: "flex",
+          alignItems: "baseline",
+          gap: 4,
+          minWidth: 0,
         }}
         aria-expanded={open}
       >
-        {summary}
+        {/* 요약 텍스트만 한 줄+말줄임(…), ▼ 아이콘은 고정폭 분리.
+            펼침(open) 시엔 전체 <pre> 가 따로 나오므로 요약은 항상
+            1줄 유지(사용자 요구: 폴딩 전 한 줄). */}
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {summary}
+        </span>
         <span
           aria-hidden
           style={{
+            flexShrink: 0,
             fontSize: 10,
             color: "var(--neutral-600)",
-            marginLeft: 4,
             opacity: 0.7,
           }}
         >
@@ -240,14 +269,34 @@ function ToolBlock({
     <div>
       <div
         style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 8,
           fontSize: 12.5,
           fontWeight: 600,
           color: "var(--text-default)",
           marginBottom: 6,
         }}
       >
-        {step.title || step.name}
-        {isInProgress(step.title) && <span aria-hidden> ...</span>}
+        <span style={{ minWidth: 0, flex: 1 }}>
+          {step.title || step.name}
+          {isInProgress(step.title) && <span aria-hidden> ...</span>}
+        </span>
+        {/* 소요시간 — 제목 줄 우측정렬 배지(OUT 칸 (n초) 대체).
+            완료된 step 만 표시(진행 중엔 elapsed 미확정). */}
+        {step.result !== undefined && step.elapsedMs !== undefined && (
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: 11,
+              fontWeight: 500,
+              color: "var(--neutral-600)",
+              opacity: 0.75,
+            }}
+          >
+            {formatDuration(step.elapsedMs)}
+          </span>
+        )}
       </div>
       <div
         style={{
@@ -280,7 +329,8 @@ function ToolBlock({
               // 펼침. web_search 는 ClientTool 로 교체되어 정제 string
               // (■ 수행한 검색 / ■ 본문 / ■ 참고 출처 섹션)이 OUT 으로
               // 와 FoldableValue 가 그대로 표시(구조화 가시성 유지 —
-              // dartTool 동형, 특수 렌더 불요).
+              // dartTool 동형, 특수 렌더 불요). 소요시간(n초)은 제목
+              // 줄 우측 배지로 이동(OUT 칸 중복 제거).
               <FoldableValue raw={step.result} />
             ) : (
               <span
@@ -294,19 +344,6 @@ function ToolBlock({
                 실행 중…
               </span>
             )}
-            {step.result !== undefined &&
-              step.elapsedMs !== undefined && (
-                <span
-                  style={{
-                    marginLeft: 6,
-                    fontSize: 11,
-                    color: "var(--neutral-600)",
-                    opacity: 0.75,
-                  }}
-                >
-                  ({formatDuration(step.elapsedMs)})
-                </span>
-              )}
           </span>
         </div>
       </div>

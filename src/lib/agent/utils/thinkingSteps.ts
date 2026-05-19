@@ -2,6 +2,7 @@ import type { ThinkingStep } from "@/types";
 import {
   reasoningTitle,
   toolTitle,
+  isInProgress,
 } from "@/lib/agent/utils/thinkingLabels";
 
 /**
@@ -228,4 +229,44 @@ export function reduceToolResult(
     title: toolTitle(s.name, true, s.args),
   };
   return steps.slice(0, idx).concat(updated, steps.slice(idx + 1));
+}
+
+/**
+ * 진행형 제목('… 중')을 완료형으로 정규화 (순수 — NFR-11).
+ *
+ * 히스토리 복원(replay) 전용: 끝난 대화의 step 은 reasoning/tool
+ * 모두 이미 완료 상태다. 그러나 reduceReasoning 은 항상 '질문 분석
+ * 중'으로 만들고(완료 전환 트리거 없음 — tool 은 reduceToolResult
+ * 가 완료 전환하지만 reasoning 은 OUT 개념 없음), 복원 시 '분석 중'
+ * 으로 남아 어색하다(사용자 보고: "히스토리에선 '질문 분석 완료'
+ * 여야 말이 됨"). isInProgress 인 title 만 ' 중' 접미사를 떼어
+ * 완료형으로(reasoningTitle/toolTitle 의 done=true 결과와 동일).
+ *
+ * 볼드 제목(reduceReasoning bold 분기로 title 이 사고 본문 텍스트)
+ * 은 ' 중'으로 안 끝나 isInProgress=false → 자동 보존(파괴 0).
+ * tool 의 '실행 중' 도 동일 규칙으로 '완료' 화(라이브 reducer
+ * 무손상 — 이 함수는 replay 만 호출, 스트리밍 경로 미사용).
+ *
+ * 변경 없으면 입력 배열 참조 그대로(불변 — store reducer 동형).
+ */
+export function finalizeProgressTitles(
+  steps: ThinkingStep[],
+): ThinkingStep[] {
+  let touched = false;
+  const next = steps.map((s) => {
+    if (!isInProgress(s.title)) return s;
+    touched = true;
+    // ' 중' 접미사 제거 = done 형태. '… 실행 중' → '… 실행' 이 아니라
+    // toolTitle/reasoningTitle 의 done 어휘와 맞춰야 한다:
+    //   reasoning '질문 분석 중' → '질문 분석'(접미사만 제거 = 일치)
+    //   tool '… 도구 실행 중' → '… 도구 완료', '… 에이전트 실행 중'
+    //        → '… 에이전트 완료', '지침 적용 중' → '지침 적용 완료'
+    if (s.kind === "tool") {
+      return { ...s, title: toolTitle(s.name, true, s.args) };
+    }
+    // reasoning: '질문 분석 중'/'결과 분석 중' → 접미사 제거가 곧
+    // reasoningTitle(order,true)(= '질문 분석'/'결과 분석').
+    return { ...s, title: s.title.replace(/ 중$/, "") };
+  });
+  return touched ? next : steps;
 }

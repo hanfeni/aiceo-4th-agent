@@ -3,6 +3,7 @@ import {
   reduceReasoning,
   reduceToolCall,
   reduceToolResult,
+  finalizeProgressTitles,
 } from "@/lib/agent/utils/thinkingSteps";
 import type { ThinkingStep } from "@/types";
 
@@ -622,5 +623,63 @@ describe("reduceToolCall — 동일 도구도 항상 개별 step (count 제거, 
     );
     expect(steps).toHaveLength(1);
     expect(asTool(steps[0]).args).toBe('{"q":"삼성"}');
+  });
+});
+
+// 히스토리 복원 진행형→완료형 정규화 (사용자 요구: 히스토리에선
+// '질문 분석 완료'). replay 전용 — 라이브 reducer 무손상.
+describe("finalizeProgressTitles — 히스토리 진행형 제목 완료화", () => {
+  it("reasoning '질문 분석 중' → '질문 분석'(접미사 제거 = 완료형)", () => {
+    let s = reduceReasoning([], "사고 본문", 0);
+    expect(asReasoning(s[0]).title).toBe("질문 분석 중");
+    s = finalizeProgressTitles(s);
+    expect(asReasoning(s[0]).title).toBe("질문 분석");
+  });
+
+  it("reasoning order≥1 '결과 분석 중' → '결과 분석'", () => {
+    let s = reduceReasoning([], "a", 0);
+    s = reduceToolCall(s, { id: "t1", name: "current_time", args: "{}" }, 1);
+    s = reduceReasoning(s, "b", 2); // tool 끼임 → 결과 분석
+    const r = s.find((x) => x.kind === "reasoning" && x.title.startsWith("결과"));
+    expect(r && r.kind === "reasoning" && r.title).toBe("결과 분석 중");
+    s = finalizeProgressTitles(s);
+    const r2 = s.find((x) => x.kind === "reasoning" && x.order === 2);
+    expect(r2 && r2.kind === "reasoning" && r2.title).toBe("결과 분석");
+  });
+
+  it("tool '… 도구 실행 중' → '… 도구 완료'(toolTitle done 어휘)", () => {
+    let s = reduceToolCall([], { id: "t1", name: "web_search", args: "{}" }, 0);
+    expect(asTool(s[0]).title).toContain("실행 중");
+    s = finalizeProgressTitles(s);
+    expect(asTool(s[0]).title).toContain("완료");
+    expect(asTool(s[0]).title).not.toContain("실행 중");
+  });
+
+  it("이미 완료된 tool(OUT 채워짐)은 무손상", () => {
+    let s = reduceToolCall([], { id: "t1", name: "current_time", args: "{}" }, 0);
+    s = reduceToolResult(s, "current_time", "2026-05-19", "t1");
+    const before = asTool(s[0]).title;
+    s = finalizeProgressTitles(s);
+    expect(asTool(s[0]).title).toBe(before); // 이미 완료 — 변화 0
+  });
+
+  it("볼드 제목(' 중' 미종료)인 reasoning 은 파괴 0 (보존)", () => {
+    const steps: ThinkingStep[] = [
+      { kind: "reasoning", title: "Searching Samsung stock", content: "x", order: 0 },
+    ];
+    const r = finalizeProgressTitles(steps);
+    expect(asReasoning(r[0]).title).toBe("Searching Samsung stock");
+    expect(r).toBe(steps); // 변경 0 → 입력 참조 그대로(불변 규약)
+  });
+
+  it("진행형 0개면 입력 배열 참조 그대로 반환(불변 — 리렌더 억제)", () => {
+    const steps: ThinkingStep[] = [
+      { kind: "reasoning", title: "질문 분석", content: "c", order: 0 },
+    ];
+    expect(finalizeProgressTitles(steps)).toBe(steps);
+  });
+
+  it("빈 배열 → 빈 배열(크래시 0)", () => {
+    expect(finalizeProgressTitles([])).toEqual([]);
   });
 });
