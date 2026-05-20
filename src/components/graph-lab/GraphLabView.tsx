@@ -10,6 +10,7 @@ import {
 import { ComparePanels, type PanelState, emptyPanels } from "./ComparePanels";
 import { GraphExploreModal } from "./GraphExploreModal";
 import { GRAPH_DATASETS } from "@/lib/graphlab/config";
+import type { LoadedDataset } from "@/lib/graphlab/load";
 
 /**
  * GraphLabView — 온톨로지 / GraphRAG 실습 (client).
@@ -52,9 +53,9 @@ const sectionTitle: CSSProperties = {
 
 export function GraphLabView(): ReactNode {
   const [stats, setStats] = useState<GraphStats | null>(null);
-  // 현재 Neo4j 에 공존 적재된 데이터셋 id 목록(라벨 분리 — 여러 개
-  // 동시 적재 가능). 어느 데이터셋이 이미 구축됐는지 칩에 표시.
-  const [loaded, setLoaded] = useState<string[]>([]);
+  // 현재 Neo4j 에 공존 적재된 데이터셋 목록(라벨 분리 — 여러 개 동시
+  // 적재). {id, subjects, objects}. 리스트·개별 삭제·적재 판정에 사용.
+  const [loaded, setLoaded] = useState<LoadedDataset[]>([]);
   const [building, setBuilding] = useState(false);
   const [buildLog, setBuildLog] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -69,8 +70,9 @@ export function GraphLabView(): ReactNode {
   const [datasetId, setDatasetId] = useState<string>(GRAPH_DATASETS[0].id);
   const activeDataset =
     GRAPH_DATASETS.find((d) => d.id === datasetId) ?? GRAPH_DATASETS[0];
-  // 그래프 삭제 확인 모달(오클릭 방지 — index-lab 동형 패턴)
-  const [confirmDel, setConfirmDel] = useState(false);
+  // 그래프 삭제 확인 모달 — 삭제할 데이터셋 id(null=닫힘). 공존이라
+  // 데이터셋별 개별 삭제(index-lab 인덱스별 삭제 동형 패턴).
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   // DB 구조 보기 모달(인터랙티브 그래프 탐색 — 사용자 결정)
   const [showExplore, setShowExplore] = useState(false);
@@ -246,23 +248,28 @@ export function GraphLabView(): ReactNode {
     }
   }
 
-  async function runDelete(): Promise<void> {
-    setConfirmDel(false);
+  // 특정 데이터셋 삭제(confirmDel 에 담긴 id). 공존이라 그 데이터셋
+  // 라벨 노드만 삭제(다른 데이터셋 보존 — reset 라우트가 처리).
+  async function runDelete(delId: string): Promise<void> {
+    setConfirmDel(null);
     setDeleting(true);
     setErr(null);
     try {
       const r = await fetch("/api/graph-lab/reset", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ datasetId }),
+        body: JSON.stringify({ datasetId: delId }),
       });
       const d = await r.json();
       if (!r.ok) {
         setErr(d.error ?? `삭제 실패 (HTTP ${r.status})`);
         return;
       }
-      setBuildLog([]);
-      setPanels(emptyPanels());
+      // 현재 선택 데이터셋을 삭제했으면 비교 패널·로그도 초기화.
+      if (delId === datasetId) {
+        setBuildLog([]);
+        setPanels(emptyPanels());
+      }
       await loadStatus(datasetId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "네트워크 오류");
@@ -273,10 +280,11 @@ export function GraphLabView(): ReactNode {
 
   // 이 데이터셋이 적재됐는지(공존 — loaded 목록 기반). 비교·탐색은
   // 적재된 경우에만. built = 선택 데이터셋 stats 존재(= 적재됨).
-  const isLoaded = loaded.includes(datasetId);
+  const isLoaded = loaded.some((l) => l.id === datasetId);
   const built = stats !== null && isLoaded;
-  // 모달·표시용 — 선택 데이터셋 기준(공존이라 선택=표시 대상).
-  const loadedLabel = activeDataset.label;
+  // 삭제 확인 모달에 표시할 데이터셋 라벨.
+  const confirmLabel =
+    GRAPH_DATASETS.find((d) => d.id === confirmDel)?.label ?? confirmDel;
 
   return (
     <div
@@ -453,7 +461,7 @@ export function GraphLabView(): ReactNode {
             {built && (
               <button
                 type="button"
-                onClick={() => setConfirmDel(true)}
+                onClick={() => setConfirmDel(datasetId)}
                 disabled={building || deleting}
                 className="cf-btn"
               >
@@ -559,6 +567,65 @@ export function GraphLabView(): ReactNode {
         )}
 
         <ComparePanels panels={panels} />
+
+        {/* 적재된 데이터셋 (실습용) — 공존 목록 + 개별 삭제.
+            다른 메뉴(색인된 인덱스·적재된 테이블)와 동형 패턴. */}
+        <div style={card}>
+          <div style={sectionTitle}>적재된 데이터셋 (실습용)</div>
+          {loaded.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+              아직 적재된 데이터셋이 없습니다. 위에서 데이터셋을 골라
+              ① 그래프 구축을 실행하세요.
+            </div>
+          ) : (
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: 8 }}
+            >
+              {loaded.map((l) => {
+                const ds = GRAPH_DATASETS.find((d) => d.id === l.id);
+                const label = ds?.label ?? l.id;
+                return (
+                  <div
+                    key={l.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      border: "1px solid var(--t-neutral-8)",
+                      borderRadius: "var(--r-md, 8px)",
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <span style={{ color: "var(--text-default)" }}>
+                      <strong>{label}</strong>
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          color: "var(--text-subtle)",
+                        }}
+                      >
+                        {ds?.slots.subject ?? "주체"}{" "}
+                        {l.subjects.toLocaleString()} ·{" "}
+                        {ds?.slots.object ?? "대상"}{" "}
+                        {l.objects.toLocaleString()}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="cf-btn"
+                      style={{ height: 28, padding: "0 12px", fontSize: 12 }}
+                      disabled={deleting}
+                      onClick={() => setConfirmDel(l.id)}
+                    >
+                      삭제
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 그래프 삭제 확인 모달 (오클릭 방지 — index-lab 동형) */}
@@ -573,7 +640,7 @@ export function GraphLabView(): ReactNode {
             justifyContent: "center",
             zIndex: 1000,
           }}
-          onClick={() => setConfirmDel(false)}
+          onClick={() => setConfirmDel(null)}
         >
           <div
             style={{ ...card, maxWidth: 400, margin: 0 }}
@@ -588,9 +655,9 @@ export function GraphLabView(): ReactNode {
                 marginBottom: 16,
               }}
             >
-              Neo4j 의 모든 노드·관계를 삭제합니다(기관·종목·보유엣지
-              전체). 3방식 비교를 다시 하려면 그래프를 재구축해야
-              합니다. 계속할까요?
+              <strong>{confirmLabel}</strong> 데이터셋의 노드·관계를
+              삭제합니다(다른 데이터셋은 보존). 이 데이터셋으로 다시
+              비교·탐색하려면 재구축해야 합니다. 계속할까요?
             </p>
             <div
               style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}
@@ -598,14 +665,14 @@ export function GraphLabView(): ReactNode {
               <button
                 type="button"
                 className="cf-btn"
-                onClick={() => setConfirmDel(false)}
+                onClick={() => setConfirmDel(null)}
               >
                 취소
               </button>
               <button
                 type="button"
                 className="cf-btn cf-btn--primary"
-                onClick={() => void runDelete()}
+                onClick={() => confirmDel && void runDelete(confirmDel)}
               >
                 삭제
               </button>

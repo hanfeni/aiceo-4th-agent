@@ -395,18 +395,29 @@ export async function graphStats(
   }
 }
 
-/** 현재 Neo4j 에 적재된 데이터셋 id 목록(공존 — UI 가 어느 데이터셋이
- *  이미 구축됐는지 표시). 각 데이터셋 주체 라벨 노드 존재로 판정. */
-export async function loadedDatasetIds(): Promise<string[]> {
+/** 적재된 데이터셋 1건의 요약(리스트·삭제 UI 용). */
+export interface LoadedDataset {
+  id: string;
+  /** 주체 노드 수(기관/배우/저자). */
+  subjects: number;
+  /** 대상 노드 수(종목/영화/논문). */
+  objects: number;
+}
+
+/** 현재 Neo4j 에 적재된 데이터셋 목록(공존 — UI 가 어느 데이터셋이
+ *  이미 구축됐는지 + 노드 수 표시). 주체 라벨 노드 존재로 판정. */
+export async function loadedDatasetIds(): Promise<LoadedDataset[]> {
   try {
     const driver = getNeo4jDriver();
     await driver.verifyConnectivity();
-    const loaded: string[] = [];
+    const loaded: LoadedDataset[] = [];
     for (const ds of GRAPH_DATASETS) {
-      const [{ n = 0 } = {}] = (await runCypher(
-        `MATCH (m:${ds.cypher.subjectLabel}) RETURN count(m) AS n`,
-      )) as { n?: number }[];
-      if (n > 0) loaded.push(ds.id);
+      const [{ subjects = 0, objects = 0 } = {}] = (await runCypher(
+        `CALL { MATCH (m:${ds.cypher.subjectLabel}) RETURN count(m) AS subjects }
+         CALL { MATCH (c:${ds.cypher.objectLabel}) RETURN count(c) AS objects }
+         RETURN subjects, objects`,
+      )) as { subjects?: number; objects?: number }[];
+      if (subjects > 0) loaded.push({ id: ds.id, subjects, objects });
     }
     return loaded;
   } catch {
