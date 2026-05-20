@@ -13,6 +13,7 @@
 
 import { ensureNeo4j } from "@/lib/graphlab/ensure-infra";
 import { loadGraph } from "@/lib/graphlab/load";
+import { GRAPH_DATASET_IDS, DEFAULT_DATASET_ID } from "@/lib/graphlab/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +22,22 @@ function encodeSse(ev: unknown): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(ev)}\n\n`);
 }
 
-export async function POST(): Promise<Response> {
+export async function POST(req: Request): Promise<Response> {
+  // 본문에서 datasetId 수신(미지정/형식오류=기본 SEC EDGAR — 회귀 0).
+  // 화이트리스트 검증(임의 문자열 차단). 본문 없으면 기본값.
+  let datasetId = DEFAULT_DATASET_ID;
+  try {
+    const body = (await req.json()) as { datasetId?: unknown };
+    if (
+      typeof body?.datasetId === "string" &&
+      GRAPH_DATASET_IDS.includes(body.datasetId)
+    ) {
+      datasetId = body.datasetId;
+    }
+  } catch {
+    // 본문 없음/파싱 실패 → 기본 데이터셋(graceful)
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
@@ -51,7 +67,7 @@ export async function POST(): Promise<Response> {
         }
 
         // 2) 데이터 적재 — load* 이벤트를 그대로 흘려보낸다.
-        for await (const ev of loadGraph()) {
+        for await (const ev of loadGraph(datasetId)) {
           controller.enqueue(encodeSse(ev));
         }
       } catch (e) {

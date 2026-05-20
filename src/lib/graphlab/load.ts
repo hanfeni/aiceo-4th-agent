@@ -11,7 +11,13 @@
  */
 
 import { runCypher, getNeo4jDriver } from "./client";
-import { subsetUrl, GRAPH_SCHEMA, POSITION_TOP_N } from "./config";
+import {
+  subsetUrl,
+  GRAPH_SCHEMA,
+  POSITION_TOP_N,
+  DEFAULT_DATASET_ID,
+  getDataset,
+} from "./config";
 
 export type LoadEvent =
   | { type: "load"; phase: string; text: string }
@@ -66,8 +72,13 @@ export interface TopIssuerRow {
 }
 
 /** 인메모리 보관소 — SQL/RAG 패널이 그래프와 같은 데이터를 쓰도록.
- *  globalThis 고정(HMR·요청 간 재사용, 매번 재fetch 방지). */
+ *  globalThis 고정(HMR·요청 간 재사용, 매번 재fetch 방지).
+ *
+ *  데이터셋 SSOT 화: 단일 보관소 → datasetId 별 보관소(Neo4j 는 한
+ *  번에 한 데이터셋만 적재되므로 활성 데이터셋 1개만 유효하나, 어느
+ *  데이터셋이 적재됐는지 식별하려 datasetId 를 함께 보관). */
 interface MemStore {
+  datasetId: string;
   holdings: HoldingRow[];
   managers: ManagerRow[];
   loadedAt: number;
@@ -122,13 +133,14 @@ function parseCsv(text: string): string[][] {
 
 async function fetchCsv(
   file: "holdings" | "managers" | "topIssuers",
+  datasetId: string,
 ): Promise<string[][]> {
-  const url = subsetUrl(file);
+  const url = subsetUrl(file, datasetId);
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(
-      `[${file}] SEC 서브셋 fetch 실패 (HTTP ${res.status}) — ${url}\n` +
-        `→ aiceo-4th-training main 에 poc/data/sec-edgar 서브셋이 ` +
+      `[${file}] 데이터셋(${datasetId}) 서브셋 fetch 실패 (HTTP ${res.status}) — ${url}\n` +
+        `→ aiceo-4th-training main 에 해당 데이터셋 서브셋 CSV 가 ` +
         `공개돼 있는지 확인.`,
     );
   }
@@ -138,16 +150,22 @@ async function fetchCsv(
 /**
  * 메인 적재 제너레이터 — API route 가 SSE 로 직렬화.
  * Neo4j 가 이미 떠 있다고 가정(ensureNeo4j 가 선행).
+ *
+ * @param datasetId 적재할 데이터셋(미지정=기본 SEC EDGAR, 회귀 0).
+ *   노드/관계 골격은 데이터셋 공통(GRAPH_SCHEMA) — rawBase·라벨만 다름.
  */
-export async function* loadGraph(): AsyncGenerator<LoadEvent> {
+export async function* loadGraph(
+  datasetId: string = DEFAULT_DATASET_ID,
+): AsyncGenerator<LoadEvent> {
+  const ds = getDataset(datasetId);
   // ── #1 서브셋 fetch ──────────────────────────────────
-  yield { type: "load", phase: "fetch", text: "SEC EDGAR 서브셋 다운로드 중 (GitHub raw)…" };
+  yield { type: "load", phase: "fetch", text: `${ds.label} 서브셋 다운로드 중 (GitHub raw)…` };
   let mgrRows: string[][];
   let holdRows: string[][];
   try {
     [mgrRows, holdRows] = await Promise.all([
-      fetchCsv("managers"),
-      fetchCsv("holdings"),
+      fetchCsv("managers", ds.id),
+      fetchCsv("holdings", ds.id),
     ]);
   } catch (e) {
     yield { type: "load_error", message: e instanceof Error ? e.message : String(e) };
@@ -230,9 +248,9 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
     // Company 는 위 OWNS 적재에서 이미 MERGE 됨 → MATCH(없으면
     // skip, 유령 노드 생성 방지). top_issuers 가 서브셋이라
     // holdings 에 없을 수도 있어 MERGE 가 아니라 MATCH.
-    yield { type: "load", phase: "crowding", text: "종목 인기도(crowding) 속성 적재…" };
+    yield { type: "load", phase: "crowding", text: `${ds.slots.object} 인기도(crowding) 속성 적재…` };
     // top_issuers: cusip,name_of_issuer,n_filer_managers,total_value_usd_thousands
-    const tiRows = await fetchCsv("topIssuers");
+    const tiRows = await fetchCsv("topIssuers", ds.id);
     // r[3] 컬럼명 total_value_usd_thousands 지만 실단위 USD.
     const topIssuers: TopIssuerRow[] = tiRows.slice(1).map((r) => ({
       cusip: r[0],
@@ -255,7 +273,7 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
     // holder_count 상위 N종목만(데이터량↓, 노드 종류 유지).
     // crowding 속성이 그래프 진실원 → Neo4j 에서 상위 cusip
     // 집합을 구해 JS 필터(배치 UNWIND 와 정합).
-    yield { type: "load", phase: "positions", text: `Position 중간 노드 적재(인기 상위 ${POSITION_TOP_N}종목)…` };
+    yield { type: "load", phase: "positions", text: `Position 중간 노드 적재(인기 상위 ${POSITION_TOP_N}${ds.slots.object})…` };
     const topCusipRows = (await runCypher(
       // LIMIT 은 정수만 허용. JS number 를 파라미터로 넘기면
       // 드라이버가 float('300.0')로 직렬화 → "not a valid value"
@@ -299,7 +317,7 @@ export async function* loadGraph(): AsyncGenerator<LoadEvent> {
   }
 
   // ── #3 인메모리 보관 (SQL/RAG 패널 대조군) ───────────
-  setMemStore({ holdings, managers, loadedAt: Date.now() });
+  setMemStore({ datasetId: ds.id, holdings, managers, loadedAt: Date.now() });
 
   const [{ companies = 0 } = {}] = (await runCypher(
     `MATCH (c:${GRAPH_SCHEMA.companyLabel}) RETURN count(c) AS companies`,

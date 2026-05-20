@@ -9,6 +9,7 @@ import {
 } from "react";
 import { ComparePanels, type PanelState, emptyPanels } from "./ComparePanels";
 import { GraphExploreModal } from "./GraphExploreModal";
+import { GRAPH_DATASETS } from "@/lib/graphlab/config";
 
 /**
  * GraphLabView — 온톨로지 / GraphRAG 실습 (client).
@@ -30,62 +31,10 @@ interface GraphStats {
   positions: number;
 }
 
-// 추천 질의 — 라벨 끝 표식으로 "어느 방식이 유리한가"를 암시해
-// 학생이 3패널 결과를 보기 전에 가설을 세우게 한다(교육 설계).
-//   🟦=GraphRAG 압승(멀티홉) · 🟨=SQL도 가능(대조) · ⚪=RAG 한계 노출
-const DEMO_QUERIES = [
-  {
-    label: "공동보유 2홉 🟦",
-    query:
-      "마이크로소프트와 엔비디아를 둘 다 보유한 유명 기관은 어디인가? 그 기관들이 함께 보유한 다른 종목은?",
-  },
-  {
-    label: "포트폴리오 유사도 🟦",
-    query:
-      "버크셔 해서웨이와 보유 종목이 가장 많이 겹치는 다른 유명 기관 상위 3곳은?",
-  },
-  {
-    label: "3홉 연쇄 🟦",
-    query:
-      "버크셔가 보유한 종목을 함께 보유한 다른 기관들이, 버크셔는 안 가졌지만 공통으로 많이 보유한 종목 상위 5개는?",
-  },
-  {
-    label: "교집합 경로 🟦",
-    query:
-      "애플·마이크로소프트·아마존 세 종목을 모두 보유한 기관은 어디이며, 그 기관들의 다른 공통 보유 종목은?",
-  },
-  {
-    label: "유사 기관 군집 🟦",
-    query:
-      "블랙록과 뱅가드 중 어느 쪽이 버크셔와 포트폴리오가 더 비슷한가? 겹치는 종목 수로 비교해 줘.",
-  },
-  {
-    // 웹 사례: common ownership / 반독점 — "경쟁사를 같이 보유한
-    // 기관" 탐지. 섹터 데이터 없어 사용자가 경쟁쌍을 명시(정직).
-    label: "경쟁사 공동보유(반독점) 🟦",
-    query:
-      "코카콜라와 펩시(경쟁사)를 둘 다 보유한 유명 기관은 어디인가? 같은 기관이 두 경쟁사를 동시 보유하면 어떤 의미가 있는지(common ownership)도 설명해 줘.",
-  },
-  {
-    label: "허브 종목 🟨",
-    query: "가장 많은 유명 기관이 공통으로 보유한 종목 상위 10개는?",
-  },
-  {
-    label: "최대 보유가치 🟨",
-    query: "보유 가치(value) 합계가 가장 큰 종목 상위 10개는?",
-  },
-  {
-    // Position 노드 활용 — put_call 속성으로만 답 가능(OWNS 불가).
-    label: "옵션 포지션 🟦",
-    query:
-      "옵션(Call 또는 Put)으로 보유한 포지션이 가장 많은 기관 상위 5곳과, 각각 어떤 종목에 옵션을 걸었는지 알려줘.",
-  },
-  {
-    label: "기관 설명 질의 ⚪",
-    query:
-      "버크셔 해서웨이는 어떤 투자 철학을 가진 기관인가? 보유 내역으로 설명해 줘.",
-  },
-] as const;
+// 추천 질의는 데이터셋별 config.demoQueries SSOT 에서 가져온다
+// (activeDataset.demoQueries). 라벨 끝 표식(🟦=GraphRAG 압승 ·
+// 🟨=SQL도 가능 · ⚪=RAG 한계)으로 학생이 3패널 결과 전 가설을
+// 세우게 한다(교육 설계).
 
 const card: CSSProperties = {
   background: "var(--surface-default)",
@@ -112,6 +61,11 @@ export function GraphLabView(): ReactNode {
   const [panels, setPanels] = useState<Record<string, PanelState>>(
     emptyPanels(),
   );
+  // 선택된 그래프 데이터셋(기본=첫 번째 SEC EDGAR). build/compare
+  // 요청에 실어 보내고 데모 질의·라벨도 이 데이터셋 기준으로 표시.
+  const [datasetId, setDatasetId] = useState<string>(GRAPH_DATASETS[0].id);
+  const activeDataset =
+    GRAPH_DATASETS.find((d) => d.id === datasetId) ?? GRAPH_DATASETS[0];
   // 그래프 삭제 확인 모달(오클릭 방지 — index-lab 동형 패턴)
   const [confirmDel, setConfirmDel] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -173,9 +127,13 @@ export function GraphLabView(): ReactNode {
     if (building) return;
     setBuilding(true);
     setErr(null);
-    setBuildLog(["▶ 그래프 구축 시작 (Neo4j 보장 → SEC 서브셋 적재)…"]);
+    setBuildLog([`▶ 그래프 구축 시작 (Neo4j 보장 → ${activeDataset.label} 서브셋 적재)…`]);
     try {
-      const res = await fetch("/api/graph-lab/build", { method: "POST" });
+      const res = await fetch("/api/graph-lab/build", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ datasetId }),
+      });
       if (!res.ok || !res.body) {
         setErr(`구축 실패 (HTTP ${res.status})`);
         return;
@@ -230,7 +188,7 @@ export function GraphLabView(): ReactNode {
       const res = await fetch("/api/graph-lab/compare", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: q }),
+        body: JSON.stringify({ query: q, datasetId }),
       });
       if (!res.ok || !res.body) {
         setErr(`비교 실패 (HTTP ${res.status})`);
@@ -311,15 +269,69 @@ export function GraphLabView(): ReactNode {
             marginBottom: 20,
           }}
         >
-          SEC EDGAR 13F(미국 기관투자자 보유내역) 유명기관 서브셋을
-          Neo4j 그래프로 적재하고, <strong>같은 질문</strong>을 세
-          방식으로 돌려 결과·한계를 나란히 비교합니다. 기관-종목 보유는
-          멀티홉 추론이라 GraphRAG 우월성이 선명히 드러납니다.
+          유명 온톨로지 케이스 데이터셋을 Neo4j 그래프로 적재하고,{" "}
+          <strong>같은 질문</strong>을 세 방식으로 돌려 결과·한계를
+          나란히 비교합니다. {activeDataset.slots.subject}-
+          {activeDataset.slots.object} {activeDataset.slots.relation}{" "}
+          관계는 멀티홉 추론이라 GraphRAG 우월성이 선명히 드러납니다.
         </p>
+
+        {/* 데이터셋 선택 — 같은 비교 흐름에 데이터 소스만 교체 */}
+        <div style={card}>
+          <div style={sectionTitle}>데이터셋 선택</div>
+          <div
+            style={{
+              fontSize: 11.5,
+              color: "var(--text-subtle)",
+              marginBottom: 10,
+            }}
+          >
+            {activeDataset.blurb}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {GRAPH_DATASETS.map((d) => {
+              const on = d.id === datasetId;
+              return (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => {
+                    if (building || comparing) return;
+                    setDatasetId(d.id);
+                    // 데이터셋 바꾸면 기존 비교 패널·로그 초기화
+                    // (다른 데이터 적재 전까지 stale 결과 방지).
+                    setPanels(emptyPanels());
+                    setQuery("");
+                  }}
+                  disabled={building || comparing}
+                  title={d.blurb}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: on
+                      ? "1.5px solid var(--blue-500)"
+                      : "1px solid var(--t-neutral-8)",
+                    background: on
+                      ? "color-mix(in srgb, var(--blue-500) 10%, transparent)"
+                      : "var(--surface-default)",
+                    color: on ? "var(--blue-500)" : "var(--text-default)",
+                    fontSize: 12.5,
+                    fontWeight: on ? 700 : 500,
+                    cursor: building || comparing ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {d.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* ① 그래프 구축 */}
         <div style={card}>
-          <div style={sectionTitle}>① 그래프 구축 (SEC EDGAR → Neo4j)</div>
+          <div style={sectionTitle}>
+            ① 그래프 구축 ({activeDataset.label} → Neo4j)
+          </div>
           <div
             style={{
               fontSize: 11.5,
@@ -417,7 +429,7 @@ export function GraphLabView(): ReactNode {
         <div style={card}>
           <div style={sectionTitle}>② 같은 질문, 3방식 비교</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-            {DEMO_QUERIES.map((d) => (
+            {activeDataset.demoQueries.map((d) => (
               <button
                 key={d.label}
                 type="button"

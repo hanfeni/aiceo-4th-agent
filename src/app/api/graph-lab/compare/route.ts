@@ -7,12 +7,15 @@
 
 import { z } from "zod";
 import { runCompare } from "@/lib/graphlab/compare";
+import { GRAPH_DATASET_IDS } from "@/lib/graphlab/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
   query: z.string().min(2).max(2000),
+  // 데이터셋 선택(미지정=기본 SEC EDGAR). 화이트리스트 enum 검증.
+  datasetId: z.enum(GRAPH_DATASET_IDS as [string, ...string[]]).optional(),
 });
 
 function encodeSse(ev: unknown): Uint8Array {
@@ -40,7 +43,7 @@ export async function POST(req: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const ev of runCompare(parsed.data.query)) {
+        for await (const ev of runCompare(parsed.data.query, parsed.data.datasetId)) {
           controller.enqueue(encodeSse(ev));
         }
       } catch (e) {

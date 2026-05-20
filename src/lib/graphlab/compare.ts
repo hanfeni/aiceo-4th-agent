@@ -20,6 +20,7 @@ import { createModel, type ModelEnv } from "@/lib/agent/harness/model";
 import { extractContentText } from "@/lib/agent/utils/chunkFilter";
 import { runCypher } from "./client";
 import { getMemStore, type HoldingRow } from "./load";
+import { getDataset, DEFAULT_DATASET_ID } from "./config";
 
 export type CompareMethod = "rag" | "sql" | "graphrag";
 
@@ -71,7 +72,9 @@ function stripFence(s: string): string {
 // 품질 자랑이 아니라 "관계를 못 잇는다"를 보이는 것. 최속·무과금).
 async function* runRagPanel(
   query: string,
+  datasetId: string,
 ): AsyncGenerator<CompareEvent> {
+  const ds = getDataset(datasetId);
   yield { type: "method_start", method: "rag" };
   const store = getMemStore();
   if (!store) {
@@ -110,7 +113,7 @@ async function* runRagPanel(
   };
   const sys =
     "당신은 검색 근거만으로 답하는 RAG 어시스턴트입니다. 근거에 " +
-    "'어느 기관이 무엇을 보유'하는 관계 정보가 없으면 그 한계를 " +
+    `'어느 ${ds.slots.subject}이(가) 무엇을 ${ds.slots.relation}'하는 관계 정보가 없으면 그 한계를 ` +
     "솔직히 밝히세요. 3~5문장 한국어.";
   const usr =
     `질문: ${query}\n\n근거(텍스트 매칭된 종목명 목록):\n` +
@@ -168,7 +171,9 @@ function evalSimpleSql(
 
 async function* runSqlPanel(
   query: string,
+  datasetId: string,
 ): AsyncGenerator<CompareEvent> {
+  const ds = getDataset(datasetId);
   yield { type: "method_start", method: "sql" };
   const store = getMemStore();
   if (!store) {
@@ -176,22 +181,14 @@ async function* runSqlPanel(
     return;
   }
   // 공정 비교(사용자 결정): SQL 도 '제대로 했을 때'의 결과를 내게
-  // 한다. ETF 오답·기관 식별 누락은 SQL 의 본질 한계가 아니라
-  // 프롬프트 부실 탓 → 가이드를 명시해 SQL 의 최선을 끌어낸 뒤
-  // GraphRAG 와 비교해야 "구조적으로 멀티홉이 SQL 에 안 맞는다"가
-  // 설득력을 가진다(SQL 이 멍청해서 진 게 아님을 보이는 것).
+  // 한다. 오답·식별 누락은 SQL 의 본질 한계가 아니라 프롬프트 부실
+  // 탓 → 가이드를 명시해 SQL 의 최선을 끌어낸 뒤 GraphRAG 와
+  // 비교해야 "구조적으로 멀티홉이 SQL 에 안 맞는다"가 설득력을
+  // 가진다. 데이터셋별 규칙은 config.sqlPrompt SSOT.
   const sys =
-    "당신은 숙련된 Text-to-SQL 어시스턴트입니다. 테이블은 holdings" +
-    "(accession, cusip, issuer, value_usd, shares, put_call) " +
-    "하나뿐입니다. value_usd=보유가치(USD). put_call: ''=현물 / " +
-    "'Call' / 'Put'.\n" +
-    "규칙:\n" +
-    "- 기관은 accession 으로 식별합니다(1 accession = 1 기관 신고).\n" +
-    "- '기관'을 물으면 issuer(종목)가 아니라 accession 기준으로 집계하세요.\n" +
-    "- ETF·인덱스펀드(issuer 에 'ETF','TRUST','INDEX','SPDR'," +
-    "'ISHARES' 등 포함)는 운용기관이 아니므로 '기관' 답에서 제외하세요.\n" +
-    "- 포트폴리오 유사도는 두 accession 이 공유하는 cusip 수로 계산하세요.\n" +
-    "- 가능한 한 정확한 SQL 을 작성하되, 단일 테이블로 표현이 불가능한 " +
+    "당신은 숙련된 Text-to-SQL 어시스턴트입니다. " +
+    ds.sqlPrompt +
+    "\n- 가능한 한 정확한 SQL 을 작성하되, 단일 테이블로 표현이 불가능한 " +
     "부분이 있으면 주석(-- )으로 한 줄 남기세요.\n" +
     "질문을 풀 SQL 을 ```sql``` 코드펜스로만 출력하세요. 설명 금지.";
   let sql = "";
@@ -232,30 +229,18 @@ async function* runSqlPanel(
 // 한 줄 MATCH 로 풀린다 = GraphRAG 우월성의 실물 증거.
 async function* runGraphRagPanel(
   query: string,
+  datasetId: string,
 ): AsyncGenerator<CompareEvent> {
+  const ds = getDataset(datasetId);
   yield { type: "method_start", method: "graphrag" };
-  // 스키마 설명은 LLM 이 새 노드/속성을 알아야 활용함(누락 시
-  // 죽은 스키마). Slice1·2 진화 반영: Company crowding 속성 +
-  // Position 중간 노드(Neo4j 공식 패턴). 두 경로 병존을 명시해
-  // LLM 이 질문 성격에 맞게 고르게 한다.
+  // 스키마 설명은 LLM 이 노드/속성/관계 의미를 알아야 활용함(누락
+  // 시 죽은 스키마). 노드 골격은 데이터셋 공통(Manager/Company/
+  // Position)이지만 의미·라벨은 데이터셋별 → config.schemaPrompt
+  // SSOT 가 데이터셋별 의미를 LLM 에 서술한다.
   const sys =
     "당신은 Cypher 생성 어시스턴트입니다. Neo4j 그래프 스키마:\n" +
-    "(:Manager {accession, cik, name, city, state})\n" +
-    "(:Company {cusip, name, holder_count, total_value_usd})\n" +
-    "  └ holder_count = 이 종목을 보유한 13F 기관 수(인기/crowding " +
-    "지표 — '허브 종목·인기 종목'은 count() 대신 이 속성 직조회).\n" +
-    "  └ total_value_usd = 전체 보유가치 합계(USD).\n" +
-    "(:Position {accession, cusip, value_usd, shares, put_call})\n" +
-    "  └ value_usd = 보유가치(USD). put_call: ''=현물 / 'Call' / " +
-    "'Put' (옵션 포지션 질의용).\n" +
-    "관계(두 경로 병존 — 질문에 맞게 선택):\n" +
-    "(:Manager)-[:OWNS {value_usd, shares}]->(:Company)\n" +
-    "  └ 단순 보유 관계. 공동보유·교집합 멀티홉에 적합.\n" +
-    "(:Manager)-[:HOLDS]->(:Position)-[:OF]->(:Company)\n" +
-    "  └ 포지션 매개. 옵션/현물 구분, 포지션 단위 질의에 적합.\n" +
-    "  (Position 은 인기 상위 종목만 적재 — 옵션 질문이 아니면 " +
-    "OWNS 경로를 우선 쓰세요.)\n" +
-    "질문을 푸는 읽기 전용 Cypher 를 ```cypher``` 코드펜스로만 " +
+    ds.schemaPrompt +
+    "\n질문을 푸는 읽기 전용 Cypher 를 ```cypher``` 코드펜스로만 " +
     "출력하세요. 멀티홉 경로를 적극 활용하고 LIMIT 25 이하로 " +
     "제한하세요. 설명 금지.";
   let cy = "";
@@ -334,11 +319,12 @@ async function* mergeParallel<T>(
  */
 export async function* runCompare(
   query: string,
+  datasetId: string = DEFAULT_DATASET_ID,
 ): AsyncGenerator<CompareEvent> {
   yield* mergeParallel<CompareEvent>([
-    runRagPanel(query),
-    runSqlPanel(query),
-    runGraphRagPanel(query),
+    runRagPanel(query, datasetId),
+    runSqlPanel(query, datasetId),
+    runGraphRagPanel(query, datasetId),
   ]);
   yield { type: "all_done" };
 }
