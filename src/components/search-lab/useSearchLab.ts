@@ -109,6 +109,12 @@ export function useSearchLab() {
   const [showDocs, setShowDocs] = useState(false);
   const [taskMode, setTaskMode] = useState<string>("search");
   const [hits, setHits] = useState<Hit[]>([]);
+  // 검색 모드 3방식 비교 — 렉시컬·벡터·하이브리드를 각각 별도 호출해
+  // 서로 다른 결과를 3-pane 에 표시(시안 "3방식 동시 비교" 의도).
+  // null = 미검색(3-pane 빈 상태 안내).
+  const [cmpLexical, setCmpLexical] = useState<Hit[] | null>(null);
+  const [cmpVector, setCmpVector] = useState<Hit[] | null>(null);
+  const [cmpHybrid, setCmpHybrid] = useState<Hit[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // RAG 전용 상태
@@ -234,31 +240,53 @@ export function useSearchLab() {
         ]
       : [...DOMAINS];
 
+  // 단일 방식 검색 — 3방식 비교(runSearch)에서 병렬로 3번 호출.
+  // 실패 시 에러 메시지를 throw(상위에서 표면화).
+  async function searchOne(
+    q: string,
+    m: "lexical" | "vector" | "hybrid",
+  ): Promise<Hit[]> {
+    const res = await fetch("/api/search-lab", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        domain,
+        query: q,
+        mode: m,
+        topK,
+        ...(m === "hybrid" ? { hybridMethod } : {}),
+        ...(m === "lexical" ? { lexicalPreset } : {}),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error ?? `검색 실패 (HTTP ${res.status})`);
+    }
+    return (data.hits ?? []) as Hit[];
+  }
+
+  // 검색 모드: 렉시컬·벡터·하이브리드를 동시(병렬) 검색해 3-pane 에
+  // 각각 다른 결과를 표시(시안 "3방식 동시 비교"). hits(단일)도 현
+  // 선택 방식 결과로 채워 펼친 리스트와 호환 유지.
   async function runSearch(): Promise<void> {
     const q = query.trim();
     if (!q || loading) return;
     setLoading(true);
     setErr(null);
+    setCmpLexical(null);
+    setCmpVector(null);
+    setCmpHybrid(null);
     try {
-      const res = await fetch("/api/search-lab", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          domain,
-          query: q,
-          mode,
-          topK,
-          ...(mode === "hybrid" ? { hybridMethod } : {}),
-          ...(mode === "lexical" ? { lexicalPreset } : {}),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErr(data.error ?? `검색 실패 (HTTP ${res.status})`);
-        setHits([]);
-        return;
-      }
-      setHits(data.hits ?? []);
+      const [lex, vec, hyb] = await Promise.all([
+        searchOne(q, "lexical"),
+        searchOne(q, "vector"),
+        searchOne(q, "hybrid"),
+      ]);
+      setCmpLexical(lex);
+      setCmpVector(vec);
+      setCmpHybrid(hyb);
+      // 펼친 리스트(일반 검색)는 현재 선택 방식 결과를 사용.
+      setHits(mode === "lexical" ? lex : mode === "vector" ? vec : hyb);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "네트워크 오류");
       setHits([]);
@@ -650,6 +678,10 @@ export function useSearchLab() {
     setTaskMode,
     // 결과·진행 상태
     hits,
+    // 검색 모드 3방식 비교 결과(각 방식 별도 검색).
+    cmpLexical,
+    cmpVector,
+    cmpHybrid,
     loading,
     err,
     ragSystem,

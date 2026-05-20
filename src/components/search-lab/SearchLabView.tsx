@@ -48,6 +48,9 @@ export function SearchLabView(): ReactNode {
     taskMode,
     setTaskMode,
     hits,
+    cmpLexical,
+    cmpVector,
+    cmpHybrid,
     loading,
     err,
     ragSystem,
@@ -533,17 +536,17 @@ export function SearchLabView(): ReactNode {
               >
                 <CompareCol
                   label="렉시컬 · BM25"
-                  hits={hits}
+                  hits={taskMode === "search" ? (cmpLexical ?? []) : hits}
                   hint="Nori 토크나이즈 기반 키워드 정합"
                 />
                 <CompareCol
                   label="벡터 · 3-small"
-                  hits={hits}
+                  hits={taskMode === "search" ? (cmpVector ?? []) : hits}
                   hint="1536d 코사인 유사도"
                 />
                 <CompareCol
                   label="하이브리드 · 가중 결합"
-                  hits={hits}
+                  hits={taskMode === "search" ? (cmpHybrid ?? []) : hits}
                   hint="α=0.6 (BM25:벡터)"
                   highlight
                 />
