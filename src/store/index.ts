@@ -14,6 +14,7 @@ import {
 } from "@/lib/agent/utils/thinkingSteps";
 import { parseSseStream } from "@/lib/agent/utils/sseStreamParser";
 import { parseCitationText } from "@/lib/agent/utils/chunkFilter";
+import type { HarnessOverrides } from "@/lib/agent/harness/profiles";
 
 /**
  * 마지막으로 도착한 스트림 이벤트 종류(Slice M — 사고 패널 동적
@@ -59,6 +60,18 @@ export interface ChatState {
    * 로 동봉해 서버 그래프가 그 워크스페이스 차단 정책을 적용·격리한다.
    */
   profileId: string | null;
+  /**
+   * 하네스 토글 오버라이드(에이전트 패널 4요소 토글 상태). 키 있으면
+   * 그 값으로 서버 env 위에 강제. 빈 객체=오버라이드 0(env 디폴트).
+   * 에이전트 store 가 마운트 시 프로필 defaults 로 시드, 사용자가 토글.
+   * startStream 이 body.overrides 로 동봉(비어있지 않을 때만).
+   */
+  harnessOverrides: HarnessOverrides;
+  /**
+   * 선택된 시스템 인스트럭션 id(하네스 관리에서 만든 것 중). null=
+   * default 본문(body 미동봉, 회귀 0). 에이전트 패널에서 선택.
+   */
+  instructionId: string | null;
 }
 
 export interface ChatActions {
@@ -146,6 +159,13 @@ export interface ChatActions {
   /** 워크스페이스 프로필 id 설정(null=기존 챗). 워크스페이스
    *  store 인스턴스가 마운트 시 1회 호출(이후 불변). */
   setProfileId: (profileId: string | null) => void;
+  /** 하네스 토글 1개 설정(에이전트 패널). 호출처가 변경 직후
+   *  resetChat 으로 세션 리프레시(서버 그래프 재빌드). */
+  setHarnessOverride: (element: keyof HarnessOverrides, value: boolean) => void;
+  /** 전체 오버라이드 교체(마운트 시 프로필 defaults 시드용). */
+  setHarnessOverrides: (overrides: HarnessOverrides) => void;
+  /** 시스템 인스트럭션 선택(null=default). 변경 직후 resetChat. */
+  setInstructionId: (instructionId: string | null) => void;
   finalizeLastAssistant: () => void;
   setError: (error: string | null) => void;
   resetChat: () => void;
@@ -165,6 +185,8 @@ const initialState: ChatState = {
   sqlDomain: null,
   graphDataset: null,
   profileId: null,
+  harnessOverrides: {},
+  instructionId: null,
 };
 
 /**
@@ -331,6 +353,12 @@ export function createChatStore(): StoreApi<ChatStore> {
     setSqlDomain: (sqlDomain) => set({ sqlDomain }),
     setGraphDataset: (graphDataset) => set({ graphDataset }),
     setProfileId: (profileId) => set({ profileId }),
+    setHarnessOverride: (element, value) =>
+      set((state) => ({
+        harnessOverrides: { ...state.harnessOverrides, [element]: value },
+      })),
+    setHarnessOverrides: (harnessOverrides) => set({ harnessOverrides }),
+    setInstructionId: (instructionId) => set({ instructionId }),
 
     // 스트림 종료 마커. 현재는 부수효과 없음(메시지 내용 보존, 멱등).
     // useChat 의 finally 입력-잠금-해제 회귀 가드 지점(TC-20.4).
@@ -353,8 +381,11 @@ export function createChatStore(): StoreApi<ChatStore> {
         idxDomain: state.idxDomain,
         sqlDomain: state.sqlDomain,
         graphDataset: state.graphDataset,
-        // profileId 보존 — 워크스페이스 정체성은 새 대화에도 불변.
+        // profileId·하네스 토글·인스트럭션 보존 — 에이전트 정체성과
+        // 사용자가 고른 토글/인스트럭션은 새 대화에도 불변(model 동일 정책).
         profileId: state.profileId,
+        harnessOverrides: state.harnessOverrides,
+        instructionId: state.instructionId,
       })),
 
     // 과거 대화 복원 (C1). resetChat 과 대칭 — 단일 set 원자 커밋으로
@@ -413,6 +444,8 @@ export function createChatStore(): StoreApi<ChatStore> {
           sqlDomain,
           graphDataset,
           profileId,
+          harnessOverrides,
+          instructionId,
         } = get();
         const body: {
           query: string;
@@ -423,6 +456,8 @@ export function createChatStore(): StoreApi<ChatStore> {
           sqlDomain?: string;
           graphDataset?: string;
           profileId?: string;
+          overrides?: HarnessOverrides;
+          instructionId?: string;
         } = { query };
         if (conversationId) body.conversationId = conversationId;
         if (model) body.model = model;
@@ -432,9 +467,14 @@ export function createChatStore(): StoreApi<ChatStore> {
         if (idxDomain) body.idxDomain = idxDomain;
         if (sqlDomain) body.sqlDomain = sqlDomain;
         if (graphDataset) body.graphDataset = graphDataset;
-        // 워크스페이스 진입 시에만 동봉 — null(기존 /chat)이면 미수신
-        // → 차단 없는 기존 챗(회귀 0). 서버 zod enum SSOT.
+        // 에이전트 진입 시에만 동봉 — null(기존 /chat)이면 미수신
+        // → 기존 챗(회귀 0). 서버 zod enum SSOT.
         if (profileId) body.profileId = profileId;
+        // 토글 오버라이드 — 키가 1개라도 있을 때만 동봉(빈 객체=env
+        // 디폴트=회귀 0). 인스트럭션도 선택 시에만 동봉.
+        if (harnessOverrides && Object.keys(harnessOverrides).length > 0)
+          body.overrides = harnessOverrides;
+        if (instructionId) body.instructionId = instructionId;
 
         const res = await fetch("/api/chat", {
           method: "POST",

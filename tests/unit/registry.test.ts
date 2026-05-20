@@ -222,55 +222,71 @@ describe("buildHarnessConfig — 하네스 조립 레지스트리 (AD-2 순수�
 
 // 워크스페이스 하네스 프로필 차단 레이어 — buildHarnessConfig(env, _, _, profile)
 // 가 env 토글 위에 profile.blocked 요소를 강제 off 하는지(R2 단일 지점) 검증.
-describe("buildHarnessConfig — 워크스페이스 프로필 차단 레이어 (R2)", () => {
+describe("buildHarnessConfig — 요청별 하네스 토글 오버라이드 (R2)", () => {
   const baseEnv = { LLM_PROVIDER: "anthropic", LLM_MODEL: "claude" } as const;
 
-  it("profile 미지정이면 env 토글 그대로(차단 없음 — 기존 /chat 회귀 0)", () => {
+  it("overrides 미지정이면 env 토글 그대로(기존 /chat 회귀 0)", () => {
     const cfg = buildHarnessConfig({ ...baseEnv });
     // env 기본 true → subagents 비어있지 않고 skills 활성(기본 sources 존재).
     expect(cfg.subagents.length).toBeGreaterThan(0);
     expect(cfg.skills.enabled).toBe(true);
-  });
-
-  it("blocked=[skills] → env 가 켜져 있어도 skills 강제 off, subagents 는 유지", () => {
-    const cfg = buildHarnessConfig(
-      { ...baseEnv, HARNESS_SKILLS: "true", HARNESS_SUBAGENTS: "true" },
-      undefined,
-      undefined,
-      { id: "workspace2", label: "", description: "", blocked: ["skills"] },
-    );
-    expect(cfg.skills.enabled).toBe(false);
-    expect(cfg.skills.sources).toEqual([]);
-    expect(cfg.subagents.length).toBeGreaterThan(0); // 차단 대상 아님 — 유지
-  });
-
-  it("blocked=[skills,subagents] → 둘 다 강제 off (env on 무시)", () => {
-    const cfg = buildHarnessConfig(
-      { ...baseEnv, HARNESS_SKILLS: "true", HARNESS_SUBAGENTS: "true" },
-      undefined,
-      undefined,
-      {
-        id: "workspace3",
-        label: "",
-        description: "",
-        blocked: ["skills", "subagents"],
-      },
-    );
-    expect(cfg.skills.enabled).toBe(false);
-    expect(cfg.subagents).toEqual([]);
-    // planning/filesystem 은 차단 대상 아님 — env 기본(true) 유지.
     expect(cfg.planning.enabled).toBe(true);
     expect(cfg.filesystem.enabled).toBe(true);
   });
 
-  it("blocked=[] (workspace1) → 차단 없음 = env 토글 그대로", () => {
-    const cfg = buildHarnessConfig({ ...baseEnv }, undefined, undefined, {
-      id: "workspace1",
-      label: "",
-      description: "",
-      blocked: [],
-    });
+  it("overrides {skills:false} → env 가 켜져 있어도 skills off, subagents 유지", () => {
+    const cfg = buildHarnessConfig(
+      { ...baseEnv, HARNESS_SKILLS: "true", HARNESS_SUBAGENTS: "true" },
+      undefined,
+      undefined,
+      { skills: false },
+    );
+    expect(cfg.skills.enabled).toBe(false);
+    expect(cfg.skills.sources).toEqual([]);
+    expect(cfg.subagents.length).toBeGreaterThan(0); // 오버라이드 없음 — env 유지
+  });
+
+  it("overrides {skills:false,subagents:false} → 둘 다 off (env on 무시)", () => {
+    const cfg = buildHarnessConfig(
+      { ...baseEnv, HARNESS_SKILLS: "true", HARNESS_SUBAGENTS: "true" },
+      undefined,
+      undefined,
+      { skills: false, subagents: false },
+    );
+    expect(cfg.skills.enabled).toBe(false);
+    expect(cfg.subagents).toEqual([]);
+    // planning/filesystem 은 오버라이드 없음 — env 기본(true) 유지.
+    expect(cfg.planning.enabled).toBe(true);
+    expect(cfg.filesystem.enabled).toBe(true);
+  });
+
+  it("overrides {planning:false,filesystem:false} → 4요소 전부 토글 가능 확인", () => {
+    const cfg = buildHarnessConfig(
+      { ...baseEnv },
+      undefined,
+      undefined,
+      { planning: false, filesystem: false },
+    );
+    expect(cfg.planning.enabled).toBe(false);
+    expect(cfg.filesystem.enabled).toBe(false);
+    // subagents/skills 는 오버라이드 없음 — env 기본 유지.
     expect(cfg.subagents.length).toBeGreaterThan(0);
+  });
+
+  it("overrides {} (빈 객체) → env 토글 그대로(오버라이드 0)", () => {
+    const cfg = buildHarnessConfig({ ...baseEnv }, undefined, undefined, {});
+    expect(cfg.subagents.length).toBeGreaterThan(0);
+    expect(cfg.skills.enabled).toBe(true);
+  });
+
+  it("override true 가 env off 를 덮어쓴다(끔→켬 가능)", () => {
+    const cfg = buildHarnessConfig(
+      { ...baseEnv, HARNESS_SKILLS: "false" },
+      undefined,
+      undefined,
+      { skills: true },
+    );
+    // env 는 off 지만 override true → skills 활성(filesystem 기본 on 이라 sources 존재).
     expect(cfg.skills.enabled).toBe(true);
   });
 });

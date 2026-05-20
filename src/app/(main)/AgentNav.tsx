@@ -71,14 +71,20 @@ const NAV_GROUPS: NavGroup[] = [
         label: "DART 기업분석",
         href: "/dart",
       },
-      // 챗 에이전트 복제 워크스페이스 3개(메뉴별 하네스 필터). 라벨은
-      // 프로필 SSOT(profiles.ts)에서 단일 소스로 가져온다 — 라벨 드리프트 0.
-      ...WORKSPACE_IDS.map((id) => ({
-        icon: <Bot size={14} aria-hidden />,
-        label: HARNESS_PROFILES[id].label,
-        href: `/workspace/${id}`,
-      })),
     ],
+  },
+  {
+    // 챗 에이전트 복제본(에이전트 A/B/C) — 별도 메뉴 그룹(사용자 결정
+    // 2026-05-20). 세 에이전트 기능 동일(4요소 하네스 토글 + 인스트럭션
+    // 선택), 정체성만 분리. 라벨은 프로필 SSOT(profiles.ts)에서 단일
+    // 소스로 가져온다 — 라벨 드리프트 0.
+    title: "에이전트 실습 (A·B·C)",
+    accent: AGENT_ACCENT,
+    items: WORKSPACE_IDS.map((id) => ({
+      icon: <Bot size={14} aria-hidden />,
+      label: HARNESS_PROFILES[id].label,
+      href: `/workspace/${id}`,
+    })),
   },
   {
     title: "검색·라벨링 실습",

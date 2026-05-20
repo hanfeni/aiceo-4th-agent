@@ -11,8 +11,9 @@ import { makeSqlQueryTool } from "./tools/sqlQueryTool";
 import type { SqlDomain } from "@/lib/sqllab/domains";
 import { makeGraphQueryTool } from "./tools/graphQueryTool";
 import { HARNESS_SUBAGENTS } from "./subagents";
+import { listCustomSubagentSpecs } from "./subagents/subagentStore";
 import { SKILL_SOURCES, createSkillsBackend } from "./skills";
-import type { HarnessProfile } from "./profiles";
+import type { HarnessOverrides } from "./profiles";
 
 /**
  * 하네스 요소 토글의 단일 지점 (CLAUDE.md R2 / FR-08,11 / AD-2).
@@ -122,11 +123,12 @@ export function buildHarnessConfig(
   // 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립 — 둘 다
   // 선택하면 두 도구 모두 부여. 미지정이면 미포함(회귀 0).
   sqlDomain?: SqlDomain,
-  // 워크스페이스 하네스 프로필(메뉴별 차단 레이어). 미지정이면 차단
-  // 없음 → 기존 /chat 과 100% 동일 경로(회귀 0). 지정 시 profile.blocked
-  // 에 든 요소만 env 토글 결과 위에 강제 off 한다(R2 — 차단 분기는 이
-  // 함수 안에만 격리, 하류는 토글 off 와 동일 경로).
-  profile?: HarnessProfile,
+  // 요청별 하네스 토글 오버라이드(에이전트 패널의 4요소 토글 상태).
+  // 미지정이면 오버라이드 0 → env 디폴트 그대로(기존 /chat 100% 동일,
+  // 회귀 0). 키가 있으면 그 boolean 을 env 토글 위에 강제 적용한다.
+  // 사용자 결정 2026-05-20: blocked 고정차단 → 요청별 자유 토글로 전환.
+  // env 자체는 미변형 — 다른 경로(/chat·다른 에이전트)는 영향 0.
+  overrides?: HarnessOverrides,
   // 온톨로지 조회(graph) 도구 세션 데이터셋(챗 그래프 드롭다운).
   // idx/sqlDomain 과 독립 — 지정 시 그 데이터셋 바인딩 graph_query
   // 도구 포함(수업1·3 연결: GRAPH_DATASETS SSOT 가 드롭다운·도구
@@ -136,23 +138,37 @@ export function buildHarnessConfig(
   // 잘못된 provider 를 은폐하지 않는다(무음 폴백 0 — AC-4). LLM 호출 아님.
   resolveProvider(env);
 
-  // 프로필 차단 집합 — 빠른 조회. 미지정이면 빈 집합(차단 0 = 회귀 0).
-  const blocked = new Set(profile?.blocked ?? []);
+  // env 토글 → 오버라이드 순으로 최종 enabled 결정(단일 지점 — R2).
+  // override 키가 명시되면(boolean) 그 값을 쓰고, 없으면(undefined)
+  // env 디폴트(parseToggle)를 따른다. 4요소 전부 동일 규칙.
+  const resolve = (
+    raw: string | undefined,
+    override: boolean | undefined,
+  ): boolean =>
+    override !== undefined ? override : parseToggle(raw, true);
 
-  // env 토글 위에 프로필 차단을 AND 로 합성한다. blocked 에 든 요소는
-  // env 가 켜져 있어도 강제 off(메뉴별 필터). env 자체는 미변형 —
-  // 다른 경로(/chat·다른 워크스페이스)는 영향 0.
-  const subagentsEnabled =
-    parseToggle(env.HARNESS_SUBAGENTS, true) && !blocked.has("subagents");
-  const filesystemEnabled = parseToggle(env.HARNESS_FILESYSTEM, true);
-  const skillsToggle =
-    parseToggle(env.HARNESS_SKILLS, true) && !blocked.has("skills");
+  const planningEnabled = resolve(env.HARNESS_PLANNING, overrides?.planning);
+  const subagentsEnabled = resolve(env.HARNESS_SUBAGENTS, overrides?.subagents);
+  const filesystemEnabled = resolve(
+    env.HARNESS_FILESYSTEM,
+    overrides?.filesystem,
+  );
+  const skillsToggle = resolve(env.HARNESS_SKILLS, overrides?.skills);
   const skillSources = resolveSkillSources(skillsToggle, filesystemEnabled);
 
+  // 서브에이전트 = 내장(HARNESS_SUBAGENTS) + 사용자가 하네스 관리에서
+  // 만든 커스텀(.data/subagents.json, subagentStore 캐시). subagents
+  // 토글이 켜졌을 때만 합성(꺼지면 []). listCustomSubagentSpecs 는
+  // globalThis 캐시 우선이라 매 호출 디스크 접근 0(SQL/graph 도구가
+  // getSchema/getDataset 로 메모리 조회하는 것과 동일 사상).
+  const allSubagents = subagentsEnabled
+    ? [...HARNESS_SUBAGENTS, ...listCustomSubagentSpecs()]
+    : [];
+
   return {
-    planning: { enabled: parseToggle(env.HARNESS_PLANNING, true) },
+    planning: { enabled: planningEnabled },
     filesystem: { enabled: filesystemEnabled },
-    subagents: subagentsEnabled ? HARNESS_SUBAGENTS : [],
+    subagents: allSubagents,
     // idx/sql 도메인 있으면 그 도메인 바인딩 도구를 합성(도메인은
     // 세션 정체성 — 변경 시 agent.ts 가 그래프 재빌드). 둘 다
     // 미지정이면 정적 HARNESS_TOOLS 그대로(기존 챗 회귀 0). 둘

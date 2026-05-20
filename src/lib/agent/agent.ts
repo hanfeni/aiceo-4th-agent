@@ -1,13 +1,16 @@
 import { createDeepAgent } from "deepagents";
 import type { SseEvent } from "@/types";
 import { buildHarnessConfig, type HarnessEnv } from "./harness/registry";
-import { getProfile, type WorkspaceId } from "./harness/profiles";
+import {
+  type WorkspaceId,
+  type HarnessOverrides,
+} from "./harness/profiles";
 import type { SearchDomain } from "@/lib/searchlab/domains";
 import type { SqlDomain } from "@/lib/sqllab/domains";
 import { tableInfo } from "@/lib/sqllab/db";
 import { buildAgentOptions } from "./harness/buildAgentOptions";
 import { createModel } from "./harness/model";
-import { getSystemPrompt } from "./prompts/systemPrompt";
+import { getSystemPromptBody } from "./prompts/instructions";
 import {
   filterChunk,
   extractThinking,
@@ -99,29 +102,51 @@ function buildGraph(
   sqlDomain?: SqlDomain,
   profileId?: WorkspaceId,
   graphDataset?: string,
+  overrides?: HarnessOverrides,
+  instructionId?: string,
 ): DeepAgentGraph {
   const env = process.env as unknown as HarnessEnv;
   // HarnessConfig.tools/checkpointer 는 R8 에 따라 느슨한 계약(unknown[]/
   // unknown)이다. deepagents 의 정밀 타입으로의 narrowing 은 이 단일 호출
   // 경계에서만 일어난다(model.ts 의 `as unknown as` 선례와 동일 패턴).
-  // idx/sqlDomain/graphDataset 은 registry 가 흡수(미지정=기존 도구셋 —
-  // R2 0줄 유지). profileId → 워크스페이스 하네스 프로필. registry 가
-  // 차단을 흡수(미지정=차단 없음). 이 파일엔 if(blocked) 0줄.
+  // idx/sqlDomain/graphDataset/overrides 는 registry 가 흡수(미지정=기존
+  // 도구셋·env 디폴트 — R2 0줄 유지). 이 파일엔 if(toggle) 0줄.
+  // instructionId → 동적 시스템 인스트럭션 본문 선택(미지정=default).
   const options = buildAgentOptions(
     buildHarnessConfig(
       env,
       idxDomain,
       sqlDomain,
-      profileId ? getProfile(profileId) : undefined,
+      overrides,
       graphDataset,
     ),
     createModel(env, model),
-    getSystemPrompt(),
-    // profileSig — 워크스페이스별 차단 정책 시그니처(같은 모델 키에 서로
-    // 다른 GP 정책 재등록 허용). profileId 자체가 안정적 unique signature.
-    profileId,
+    getSystemPromptBody(instructionId),
+    // profileSig — 같은 모델 키에 서로 다른 GP 정책 재등록 허용. 토글이
+    // 요청별이라 profileId+overrides 시그니처를 합쳐 unique signature 로.
+    graphSig(profileId, overrides, instructionId),
   ) as unknown as Parameters<typeof createDeepAgent>[0];
   return createDeepAgent(options) as unknown as DeepAgentGraph;
+}
+
+/** profileId + 토글 오버라이드 + 인스트럭션을 안정적 시그니처 문자열로
+ *  (그래프 캐시 키·GP 재등록 sig 공용). 키 정렬로 결정성 보장. */
+function graphSig(
+  profileId?: WorkspaceId,
+  overrides?: HarnessOverrides,
+  instructionId?: string,
+): string {
+  const ov = overrides
+    ? Object.keys(overrides)
+        .sort()
+        .map((k) => `${k}:${overrides[k as keyof HarnessOverrides] ? 1 : 0}`)
+        .join(",")
+    : "";
+  return (
+    (profileId ?? "") +
+    (ov ? `|ov:${ov}` : "") +
+    (instructionId ? `|in:${instructionId}` : "")
+  );
 }
 
 /**
@@ -138,30 +163,43 @@ function getGraph(
   // 잔존 결함 해소(사용자 결정 2026-05-19). 행수 아닌 boolean —
   // 재적재(행수 변화)는 스키마 불변이라 그래프 재빌드 불필요.
   sqlLoaded?: boolean,
-  // 워크스페이스 하네스 프로필 id. 미지정=기존 /chat(차단 없음 — 키
-  // 접미사 0 → 기존 키와 동일, 회귀 0). 지정 시 워크스페이스별 별도
-  // 그래프(차단 정책 박힌)를 캐시·격리한다.
+  // 에이전트 프로필 id(A/B/C). 미지정=기존 /chat. 그래프 격리·thread
+  // 정체성용(토글 자체는 overrides 가 결정). 지정 시 에이전트별 별도 그래프.
   profileId?: WorkspaceId,
   // 온톨로지 조회 도구 세션 데이터셋. 미지정=도구 없음(키 접미사 0,
   // 회귀 0). 지정 시 그 데이터셋 스키마 박힌 graph_query 도구 포함.
   graphDataset?: string,
+  // 요청별 하네스 토글 오버라이드(에이전트 패널 4요소). 미지정=env
+  // 디폴트(키 접미사 0, 회귀 0). 토글이 바뀌면 다른 키 → 새 그래프.
+  overrides?: HarnessOverrides,
+  // 동적 시스템 인스트럭션 id. 미지정=default. 변경 시 다른 키=새 그래프.
+  instructionId?: string,
 ): Promise<DeepAgentGraph> {
   if (!g.__agent) g.__agent = {};
   if (!g.__agent.graphByModel) g.__agent.graphByModel = new Map();
   // 캐시 키에 idx/sqlDomain(+sql 적재상태) + profileId + graphDataset
-  // 합성 — 도메인·프로필·데이터셋이 곧 세션/워크스페이스 정체성. 변경
-  // 시 다른 키 → 새 createDeepAgent= 세션 리프레시. 모두 없으면 키가
-  // 기존과 동일(기존 챗 회귀 0). bound: 화이트리스트 — 무한증가 0.
+  // + overrides 시그니처 + instructionId 합성 — 변경 시 다른 키 → 새
+  // createDeepAgent= 세션 리프레시. 모두 없으면 키가 기존과 동일(기존
+  // 챗 회귀 0). bound: 토글 조합 유한(화이트리스트 — 무한증가 0).
+  const sig = graphSig(profileId, overrides, instructionId);
   const key =
     (model ?? ENV_KEY) +
     (idxDomain ? `|idx:${idxDomain}` : "") +
     (sqlDomain ? `|sql:${sqlDomain}|sl:${sqlLoaded ? 1 : 0}` : "") +
-    (profileId ? `|ws:${profileId}` : "") +
-    (graphDataset ? `|gr:${graphDataset}` : "");
+    (graphDataset ? `|gr:${graphDataset}` : "") +
+    (sig ? `|sig:${sig}` : "");
   const cached = g.__agent.graphByModel.get(key);
   if (cached) return cached;
   const built = Promise.resolve().then(() =>
-    buildGraph(model, idxDomain, sqlDomain, profileId, graphDataset),
+    buildGraph(
+      model,
+      idxDomain,
+      sqlDomain,
+      profileId,
+      graphDataset,
+      overrides,
+      instructionId,
+    ),
   );
   g.__agent.graphByModel.set(key, built);
   return built;
@@ -192,10 +230,8 @@ export interface CreateStreamArgs {
    */
   sqlDomain?: SqlDomain;
   /**
-   * 워크스페이스 하네스 프로필 id(workspace1|2|3). 지정 시 그
-   * 프로필의 차단 정책(skills/subagents)이 그래프에 강제 적용되고
-   * 워크스페이스별 그래프가 격리된다. 미지정=기존 /chat(차단 없음,
-   * 회귀 0). 검증 SSOT 는 route zod enum.
+   * 에이전트 프로필 id(workspace1|2|3 = 에이전트 A/B/C). 그래프 격리·
+   * thread 정체성용. 미지정=기존 /chat(회귀 0). 검증 SSOT 는 route zod.
    */
   profileId?: WorkspaceId;
   /**
@@ -205,6 +241,17 @@ export interface CreateStreamArgs {
    * 수업1·3 연결: GRAPH_DATASETS SSOT 가 드롭다운·도구 단일 소스.
    */
   graphDataset?: string;
+  /**
+   * 요청별 하네스 토글 오버라이드(에이전트 패널 4요소 토글 상태).
+   * 키 있으면 그 boolean 을 env 위에 강제. 미지정=env 디폴트(회귀 0).
+   * 클라이언트가 현재 토글 상태를 채워 보낸다(사용자 결정 2026-05-20).
+   */
+  overrides?: HarnessOverrides;
+  /**
+   * 동적 시스템 인스트럭션 id(하네스 관리에서 만든 인스트럭션 선택).
+   * 미지정=default 본문. 변경 시 캐시 키 변경=세션 리프레시.
+   */
+  instructionId?: string;
 }
 
 /**
@@ -222,6 +269,8 @@ export async function createStream({
   sqlDomain,
   profileId,
   graphDataset,
+  overrides,
+  instructionId,
 }: CreateStreamArgs): Promise<AsyncGenerator<SseEvent>> {
   // SQL 도메인 선택 시 현재 적재 상태를 읽어 그래프 캐시 키에
   // 반영(미적재→적재 전환=다른 키=새 그래프=스키마 박힌 도구).
@@ -234,7 +283,16 @@ export async function createStream({
       sqlLoaded = false; // 조회 실패 시 미적재 취급(graceful)
     }
   }
-  const graph = await getGraph(model, idxDomain, sqlDomain, sqlLoaded, profileId, graphDataset);
+  const graph = await getGraph(
+    model,
+    idxDomain,
+    sqlDomain,
+    sqlLoaded,
+    profileId,
+    graphDataset,
+    overrides,
+    instructionId,
+  );
 
   // 이미지 있으면 LangChain v1 블록배열, 없으면 string(무회귀). 이미지
   // 누적은 checkpointer 가 자동 보존(R3) — route zod 가 턴당 개수·크기를

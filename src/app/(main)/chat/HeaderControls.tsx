@@ -31,13 +31,23 @@ const GRAPH_OPTIONS: { value: string | null; label: string }[] = [
 ];
 
 // 인덱스검색 드롭다운 옵션 — 맨 앞 "안함"(도구 없음=기존 챗).
-const IDX_OPTIONS: { value: string | null; label: string }[] = [
+// custom 슬롯은 정적 항목에서 제외하고(등록 시에만 동적 라벨로 추가)
+// render 에서 buildIdxOptions(customLabel) 로 합친다(SQL 과 동일 사상).
+const IDX_STATIC_OPTIONS: { value: string | null; label: string }[] = [
   { value: null, label: "인덱스검색 안함" },
-  ...SEARCH_DOMAINS.map((d) => ({
-    value: d,
+  ...SEARCH_DOMAINS.filter((d) => d !== "custom").map((d) => ({
+    value: d as string,
     label: DOMAIN_SPEC[d].label,
   })),
 ];
+
+/** 정적 옵션 + (색인된 경우) 동적 custom 옵션을 합친다. */
+function buildIdxOptions(
+  customLabel: string | null,
+): { value: string | null; label: string }[] {
+  if (!customLabel) return IDX_STATIC_OPTIONS;
+  return [...IDX_STATIC_OPTIONS, { value: "custom", label: customLabel }];
+}
 
 // 데이터 조회(SQL) 드롭다운 옵션 — 맨 앞 "안함"(도구 없음).
 // custom 슬롯은 정적 항목에서 제외하고(등록 시에만 동적 라벨로 추가)
@@ -163,6 +173,9 @@ export function HeaderControls({
   // 동적 custom 도메인 라벨(업로드 시 결정 — tables API 가 반환).
   // null = 미등록(드롭다운에서 custom 숨김).
   const [customLabel, setCustomLabel] = useState<string | null>(null);
+  // 인덱스검색(검색) 측 동적 custom 라벨 — SQL custom 과 독립 슬롯.
+  // null = 미색인(인덱스검색 드롭다운에서 custom 숨김).
+  const [idxCustomLabel, setIdxCustomLabel] = useState<string | null>(null);
 
   // 인덱스검색 드롭다운 — 로컬 open 상태(모델 픽커와 동형).
   const [idxOpen, setIdxOpen] = useState(false);
@@ -180,19 +193,24 @@ export function HeaderControls({
     try {
       const r = await fetch("/api/search-lab/indices");
       const d = (await r.json()) as {
-        indices?: { index: string }[];
+        indices?: { index: string; domain?: string; label?: string }[];
       };
       // 인덱스명(searchlab-<domain>) → domain 역매핑.
       const avail = new Set<string>();
+      let idxCustom: string | null = null;
       for (const it of d.indices ?? []) {
         const dom = SEARCH_DOMAINS.find(
           (sd) => DOMAIN_SPEC[sd].index === it.index,
         );
         if (dom) avail.add(dom);
+        // custom 인덱스가 색인돼 있으면 그 동적 라벨을 드롭다운에 노출.
+        if (dom === "custom") idxCustom = it.label ?? "내 데이터 (업로드)";
       }
       setIdxAvail(avail);
+      setIdxCustomLabel(idxCustom);
     } catch {
       setIdxAvail(new Set()); // 안전 폴백 — 전부 disable
+      setIdxCustomLabel(null);
     }
   };
 
@@ -213,9 +231,11 @@ export function HeaderControls({
       setCustomLabel(null);
     }
   };
+  const idxOptions = buildIdxOptions(idxCustomLabel);
   const idxLabel =
-    IDX_OPTIONS.find((o) => o.value === storeIdxDomain)?.label ??
-    "인덱스검색 안함";
+    idxOptions.find((o) => o.value === storeIdxDomain)?.label ??
+    // custom 선택 상태인데 아직 라벨 미조회면 임시 표기.
+    (storeIdxDomain === "custom" ? "내 데이터" : "인덱스검색 안함");
 
   const handleSelectIdx = (v: string | null): void => {
     const st = storeApi.getState();
@@ -508,7 +528,7 @@ export function HeaderControls({
               gap: 2,
             }}
           >
-            {IDX_OPTIONS.map((o) => {
+            {idxOptions.map((o) => {
               const active = o.value === storeIdxDomain;
               // "안함"(value=null)은 항상 가용. 도메인은 색인된 것만
               // enable. 미조회(idxAvail=null) 중엔 disable 안 함
