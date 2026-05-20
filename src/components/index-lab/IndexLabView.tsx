@@ -9,19 +9,24 @@ import {
   type ReactNode,
 } from "react";
 import { CorpusModal, type CorpusDocItem } from "./CorpusModal";
-import { pickFormat, extractTextFromFile } from "@/lib/files/extractText";
+import {
+  pickFormat,
+  extractTextFromFile,
+  extractPdfPages,
+} from "@/lib/files/extractText";
 
 /**
  * 업로드 파일을 색인용 jsonl File 로 정규화한다.
  *  - .jsonl: 그대로(한 줄 = 한 JSON 문서, 서버 parseJsonl 이 처리).
- *  - pdf/docx/hwpx/txt 등: 클라이언트에서 텍스트 추출 → 문서 1건짜리
- *    jsonl({doc_id,title:"",body}) 로 감싸 동일 업로드 경로로 보낸다
- *    (서버 무변경 — search-lab/upload 가 .jsonl 만 받으므로).
+ *  - pdf: 페이지마다 jsonl 1줄(페이지=문서 1건). doc_id=파일명#p{N},
+ *    page=N 메타 보존. 검색 정밀도↑·"몇 페이지" 추적(사용자 결정).
+ *  - docx/hwpx/txt: 페이지 개념이 없어 문서 1건(기존 동작).
+ *    각 줄은 {doc_id,title:"",body} — 서버가 title 빈 줄마다 nano 로
+ *    제목 추출(PDF 는 페이지 수만큼 호출, 사용자 결정).
  *
  * title 은 **빈 문자열**로 둔다 — 파일명은 의미 없을 수 있어(scan_001.pdf)
  * title BM25 가중(^3~^6)을 낭비한다. 서버 upload 가 title 빈 doc 을
- * gpt-5.4-nano 로 본문에서 추출해 채우고, 실패 시 파일명(doc_id)으로
- * 폴백한다. 파일명은 doc_id 로 보존(폴백·식별용).
+ * gpt-5.4-nano 로 본문에서 추출해 채우고, 실패 시 doc_id 로 폴백한다.
  */
 async function toIndexJsonlFile(file: File): Promise<File> {
   if (/\.jsonl$/i.test(file.name)) return file;
@@ -32,14 +37,41 @@ async function toIndexJsonlFile(file: File): Promise<File> {
         `(.jsonl / 텍스트 / .pdf / .docx / .hwpx 만 가능)`,
     );
   }
+  const base = file.name.replace(/\.[^.]+$/, "");
+
+  // PDF — 페이지 단위로 쪼개 페이지마다 문서 1건. 빈 페이지는 건너뜀
+  // (이미지·표지). 전 페이지가 비면(스캔 PDF) throw.
+  if (fmt === "pdf") {
+    const pages = await extractPdfPages(file);
+    const lines = pages
+      .map((body, i) => ({ body: body.trim(), page: i + 1 }))
+      .filter((p) => p.body.length > 0)
+      .map((p) =>
+        JSON.stringify({
+          doc_id: `${base}#p${p.page}`,
+          title: "",
+          body: p.body,
+          page: p.page,
+        }),
+      );
+    if (lines.length === 0) {
+      throw new Error(
+        `${file.name} 에서 추출된 텍스트가 없습니다 ` +
+          `(이미지 기반 스캔 PDF 일 수 있습니다).`,
+      );
+    }
+    return new File([lines.join("\n") + "\n"], `${base}.jsonl`, {
+      type: "application/x-ndjson",
+    });
+  }
+
+  // docx/hwpx/텍스트 — 페이지 개념 없음 → 문서 1건.
   const text = await extractTextFromFile(file);
   if (!text.trim()) {
     throw new Error(
-      `${file.name} 에서 추출된 텍스트가 없습니다 ` +
-        `(빈 문서이거나 이미지 기반 PDF 일 수 있습니다).`,
+      `${file.name} 에서 추출된 텍스트가 없습니다 (빈 문서일 수 있습니다).`,
     );
   }
-  const base = file.name.replace(/\.[^.]+$/, "");
   const doc = { doc_id: base, title: "", body: text };
   return new File([JSON.stringify(doc) + "\n"], `${base}.jsonl`, {
     type: "application/x-ndjson",

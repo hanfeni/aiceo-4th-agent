@@ -84,8 +84,12 @@ function readAsText(file: File): Promise<string> {
   });
 }
 
-/** PDF — pdfjs-dist 동적 import(SSR/prod 번들 제외). */
-async function readPdf(file: File): Promise<string> {
+/**
+ * PDF — 페이지별 텍스트 배열로 추출(pdfjs-dist 동적 import, prod 번들 제외).
+ * 인덱스 메뉴가 "페이지=문서 1건" 으로 색인하려고 페이지 경계를 보존한다.
+ * 빈 페이지(텍스트 없음)는 빈 문자열로 자리만 유지(페이지 번호 = index+1).
+ */
+export async function extractPdfPages(file: File): Promise<string[]> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   // worker 버전은 pdfjs-dist 와 정확히 일치해야 함(R8 실측). 번들러가
   // worker 자산을 emit 하도록 URL 로 지정.
@@ -95,17 +99,24 @@ async function readPdf(file: File): Promise<string> {
   ).toString();
   const data = new Uint8Array(await file.arrayBuffer());
   const doc = await pdfjs.getDocument({ data }).promise;
-  const parts: string[] = [];
+  const pages: string[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const content = await page.getTextContent();
-    parts.push(
+    pages.push(
       content.items
         .map((it) => ("str" in it ? it.str : ""))
-        .join(" "),
+        .join(" ")
+        .trim(),
     );
   }
-  return parts.join("\n").trim();
+  return pages;
+}
+
+/** PDF — 전체 본문 합본(챗 첨부 등 단일 텍스트가 필요한 경로). */
+async function readPdf(file: File): Promise<string> {
+  const pages = await extractPdfPages(file);
+  return pages.join("\n").trim();
 }
 
 /** DOCX — mammoth 브라우저 진입점 동적 import. */
