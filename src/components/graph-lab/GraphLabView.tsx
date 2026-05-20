@@ -621,25 +621,9 @@ export function GraphLabView(): ReactNode {
                 </div>
               )}
 
-              {/* 3패널 비교(데이터·실행 로직 보존 — ComparePanels). 패널이
-                  하나라도 활성일 때만 렌더, 아니면 안내. */}
-              {Object.values(panels).some((p) => p.status !== "idle") ? (
-                <ComparePanels panels={panels} />
-              ) : (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "var(--text-subtle)",
-                    padding: "20px 0",
-                    textAlign: "center",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  좌측에서 데이터셋·질의를 고르고{" "}
-                  <strong>3방식 동시 실행</strong>을 누르면 GraphRAG · RAG ·
-                  Text-to-SQL 결과가 여기에 나란히 흐릅니다.
-                </div>
-              )}
+              {/* 3패널 비교(데이터·실행 로직 보존 — ComparePanels).
+                  시안 B: 실행 전에도 3-pane 틀을 항상 노출(빈 상태 안내). */}
+              <ComparePanels panels={panels} />
             </div>
 
             {/* 02 · 적재된 데이터셋 인벤토리 (공존 목록 + 개별 삭제). */}

@@ -291,6 +291,21 @@ function Panel({
           ⚠️ {st.error}
         </div>
       )}
+
+      {/* idle 빈 상태 — 패널 틀은 항상 보이고 본문만 안내(시안 B:
+          실행 전에도 3-pane 비교 구조가 노출됨). */}
+      {st.status === "idle" && !st.code && (
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--text-subtle)",
+            lineHeight: 1.5,
+            padding: "8px 0",
+          }}
+        >
+          실행하면 결과가 표시됩니다.
+        </div>
+      )}
     </div>
   );
 }
@@ -300,8 +315,7 @@ export function ComparePanels({
 }: {
   panels: Record<string, PanelState>;
 }): ReactNode {
-  const any = Object.values(panels).some((p) => p.status !== "idle");
-  if (!any) return null;
+  // 시안 B: 실행 전에도 3-pane 패널 틀을 항상 노출(빈 상태 안내).
   return (
     <div
       style={{
