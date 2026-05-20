@@ -119,9 +119,12 @@ function AgentStat({
 function AsidePanel({
   view,
   counts,
+  instructionCount,
 }: {
   view: HarnessViewData;
   counts: { tools: number; subagents: number; skills: number };
+  /** 인스트럭션 변형 수(InstructionManager 보고분). 미보고 시 undefined → "기본" 표기. */
+  instructionCount?: number;
 }): ReactNode {
   // 시안 HARNESS_TOGGLES — 실제 값은 view.toggles(읽기 전용).
   const toggles: { key: keyof HarnessViewData["toggles"]; label: string; sub: string }[] = [
@@ -156,17 +159,6 @@ function AsidePanel({
           }}
         >
           요소 토글
-          <span
-            style={{
-              fontWeight: 500,
-              textTransform: "none",
-              letterSpacing: 0,
-              color: "var(--text-subtle)",
-              marginLeft: 6,
-            }}
-          >
-            HARNESS_* 환경변수 · 읽기 전용
-          </span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {toggles.map((t) => {
@@ -181,8 +173,9 @@ function AsidePanel({
                   gap: 10,
                   padding: "8px 10px",
                   background: "var(--surface-default)",
-                  border: "1px solid",
-                  borderColor: on ? "var(--lab-agent-border)" : "var(--t-neutral-8)",
+                  // 레퍼런스: 토글 행은 옅은 보더로 통일(활성도 보라 보더
+                  // 아님 — 또렷한 아웃라인 제거). 활성 구분은 라벨 색으로만.
+                  border: "1px solid var(--t-neutral-8)",
                   borderRadius: 8,
                 }}
               >
@@ -226,9 +219,20 @@ function AsidePanel({
           >
             현재 메인 에이전트
           </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text-default)",
+              fontFamily: "var(--font-mono)",
+              fontWeight: 700,
+              marginBottom: 4,
+            }}
+          >
+            gpt-4o
+          </div>
           <div style={{ fontSize: 10.5, color: "var(--text-subtle)" }}>
             인스트럭션:{" "}
-            <strong style={{ color: "var(--agent-700)" }}>기본 (정적 상수)</strong>
+            <strong style={{ color: "var(--agent-700)" }}>기본</strong>
           </div>
           <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 2 }}>
             도구 {counts.tools}개 · 서브에이전트 {counts.subagents}개
@@ -256,9 +260,9 @@ function AsidePanel({
             sub={view.toggles.skills ? "활성" : "비활성"}
           />
           <AgentStat
-            label="토글"
-            value={`${Object.values(view.toggles).filter(Boolean).length}/4`}
-            sub="활성"
+            label="인스트럭션"
+            value={instructionCount ?? "기본"}
+            sub="기본 활성"
           />
         </div>
       </div>
@@ -459,6 +463,9 @@ export function BenchHeader({
 export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
   const [tab, setTab] = useState<TabKey>("tools");
   const [showTool, setShowTool] = useState<ToolView | null>(null);
+  // 인스트럭션 변형 수 — InstructionManager 가 로드 후 보고(통계 타일 정직값).
+  // 탭 전환으로 매니저가 언마운트돼도 마지막 보고값을 유지.
+  const [instructionCount, setInstructionCount] = useState<number | undefined>(undefined);
 
   const counts = {
     tools: view.tools.length,
@@ -524,7 +531,7 @@ export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
 
         <div className="il-bench">
           {/* ─── 좌측: 토글 · 메타 · 통계 ─── */}
-          <AsidePanel view={view} counts={counts} />
+          <AsidePanel view={view} counts={counts} instructionCount={instructionCount} />
 
           {/* ─── 우측: 탭 워크벤치 ─── */}
           <div style={{ minWidth: 0 }}>
@@ -602,7 +609,10 @@ export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
             {/* instruction 탭 — InstructionManager(실제 CRUD · 시스템 프롬프트). */}
             {tab === "instruction" && (
               <div className="harness-tab-body">
-                <InstructionManager systemPrompt={view.systemPrompt} />
+                <InstructionManager
+                  systemPrompt={view.systemPrompt}
+                  onCount={setInstructionCount}
+                />
               </div>
             )}
           </div>

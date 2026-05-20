@@ -13,15 +13,11 @@ import {
   sectionDesc,
   itemName,
   builtinChip,
-  btnGhost,
-  btnPrimary,
-  btnDisabled,
   input,
   textarea,
   fieldLabel,
   field,
   messageStyle,
-  actionRow,
   benchAction,
   benchPrimarySolid,
   benchModalGhost,
@@ -31,9 +27,9 @@ import {
   rowBtn,
   rowBtnDanger,
   rowBtnDisabled,
-  formWrap,
 } from "./managerStyles";
 import { ContentModal } from "./ContentModal";
+import { AiGenerateField } from "./AiGenerateField";
 import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 
 interface Skill {
@@ -183,65 +179,6 @@ export function SkillManager(): ReactNode {
         </div>
 
         {msg && <div style={messageStyle(msg.ok)}>{msg.text}</div>}
-
-        {/* 편집 폼 */}
-        {form && (
-          <div style={formWrap}>
-            <div style={field}>
-              <label style={fieldLabel}>이름 (slug)</label>
-              <input
-                style={{
-                  ...input,
-                  ...(form.editing ? { background: "var(--t-neutral-6)", cursor: "not-allowed" } : {}),
-                  fontFamily: "var(--font-mono)",
-                }}
-                value={form.name}
-                maxLength={64}
-                disabled={form.editing}
-                placeholder="예: invoice-parser"
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-              {form.editing && (
-                <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 4 }}>
-                  이름(폴더명)은 변경할 수 없습니다.
-                </div>
-              )}
-            </div>
-            <div style={field}>
-              <label style={fieldLabel}>설명 (description)</label>
-              <input
-                style={input}
-                value={form.description}
-                maxLength={MAX_DESC_LEN}
-                placeholder="LLM 이 스킬 사용 시점을 판단하는 근거"
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-            <div style={field}>
-              <label style={fieldLabel}>SKILL.md 본문</label>
-              <textarea
-                style={textarea}
-                value={form.body}
-                maxLength={MAX_BODY_LEN}
-                placeholder="스킬 사용 가이드(에이전트가 read_file 로 읽는 본문)"
-                onChange={(e) => setForm({ ...form, body: e.target.value })}
-              />
-            </div>
-            <div style={actionRow}>
-              <button
-                type="button"
-                style={saving ? btnDisabled : btnPrimary}
-                disabled={saving}
-                onClick={() => void save()}
-              >
-                {saving ? "저장 중…" : "저장"}
-              </button>
-              <button type="button" style={btnGhost} onClick={cancel}>
-                취소
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* 목록 — 시안 행 리스트(name + source[mono] + 편집/삭제). 행 클릭 → 모달 */}
         {loading ? (
@@ -394,6 +331,109 @@ export function SkillManager(): ReactNode {
           )}
         </ContentModal>
       )}
+
+      {/* 생성·편집 폼 모달 — 인라인 폼 대신 ContentModal(footer 취소/삭제/저장).
+          상단에 AiGenerateField 통합. 내장 스킬은 본문 편집만 가능(삭제 차단). */}
+      {form && (() => {
+        const editingSource = form.editing ? items.find((s) => s.name === form.name) : undefined;
+        const isBuiltin = !!editingSource?.builtin;
+        return (
+          <ContentModal
+            title={form.editing ? `스킬 편집 — ${form.name}` : "새 스킬"}
+            subtitle="skills/<이름>/SKILL.md — frontmatter(설명) + 본문(에이전트가 read_file 로 읽음)"
+            onClose={cancel}
+            width={820}
+            headerExtra={<span style={benchModalBadge}>SKILL.md</span>}
+            footer={
+              <>
+                <button type="button" style={benchModalGhost} onClick={cancel}>
+                  취소
+                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {form.editing && !isBuiltin && editingSource && (
+                    <button
+                      type="button"
+                      style={benchModalDanger}
+                      onClick={() => void remove(editingSource)}
+                    >
+                      삭제
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    style={
+                      saving ? { ...benchPrimarySolid, opacity: 0.6, cursor: "not-allowed" } : benchPrimarySolid
+                    }
+                    disabled={saving}
+                    onClick={() => void save()}
+                  >
+                    {saving ? "저장 중…" : "저장"}
+                  </button>
+                </div>
+              </>
+            }
+          >
+            {/* AI 생성 — 한 줄 요청으로 name/description/body 자동 입력 */}
+            <AiGenerateField
+              kind="skill"
+              placeholder="예: PDF 표 추출 스킬"
+              onResult={(r) =>
+                setForm((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        // 편집 모드에선 이름(폴더명) 보존, 신규는 생성 slug 반영.
+                        name: prev.editing ? prev.name : (r.name ?? prev.name),
+                        description: r.description ?? prev.description,
+                        body: r.body ?? prev.body,
+                      }
+                    : prev,
+                )
+              }
+            />
+            <div style={field}>
+              <label style={fieldLabel}>이름 (slug)</label>
+              <input
+                style={{
+                  ...input,
+                  ...(form.editing ? { background: "var(--t-neutral-6)", cursor: "not-allowed" } : {}),
+                  fontFamily: "var(--font-mono)",
+                }}
+                value={form.name}
+                maxLength={64}
+                disabled={form.editing}
+                placeholder="예: invoice-parser"
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+              {form.editing && (
+                <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 4 }}>
+                  이름(폴더명)은 변경할 수 없습니다.
+                </div>
+              )}
+            </div>
+            <div style={field}>
+              <label style={fieldLabel}>설명 (description)</label>
+              <input
+                style={input}
+                value={form.description}
+                maxLength={MAX_DESC_LEN}
+                placeholder="LLM 이 스킬 사용 시점을 판단하는 근거"
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+            </div>
+            <div style={{ ...field, marginBottom: 0 }}>
+              <label style={fieldLabel}>SKILL.md 본문</label>
+              <textarea
+                style={{ ...textarea, minHeight: 200 }}
+                value={form.body}
+                maxLength={MAX_BODY_LEN}
+                placeholder="스킬 사용 가이드(에이전트가 read_file 로 읽는 본문)"
+                onChange={(e) => setForm({ ...form, body: e.target.value })}
+              />
+            </div>
+          </ContentModal>
+        );
+      })()}
     </>
   );
 }

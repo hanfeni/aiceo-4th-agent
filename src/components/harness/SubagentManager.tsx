@@ -11,15 +11,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   sectionDesc,
-  btnGhost,
-  btnPrimary,
-  btnDisabled,
   input,
   textarea,
   fieldLabel,
   field,
   messageStyle,
-  actionRow,
   benchAction,
   benchPrimarySolid,
   benchModalGhost,
@@ -30,9 +26,9 @@ import {
   subagentCardName,
   subagentCardDesc,
   subagentCardMeta,
-  formWrap,
 } from "./managerStyles";
 import { ContentModal } from "./ContentModal";
+import { AiGenerateField } from "./AiGenerateField";
 import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 
 interface Subagent {
@@ -187,65 +183,6 @@ export function SubagentManager(): ReactNode {
 
         {msg && <div style={messageStyle(msg.ok)}>{msg.text}</div>}
 
-        {/* 편집 폼 */}
-        {form && (
-          <div style={formWrap}>
-            <div style={field}>
-              <label style={fieldLabel}>이름 (slug)</label>
-              <input
-                style={{
-                  ...input,
-                  ...(form.editing ? { background: "var(--t-neutral-6)", cursor: "not-allowed" } : {}),
-                  fontFamily: "var(--font-mono)",
-                }}
-                value={form.name}
-                maxLength={64}
-                disabled={form.editing}
-                placeholder="예: contract-reviewer"
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-              {form.editing && (
-                <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 4 }}>
-                  이름(식별자)은 변경할 수 없습니다.
-                </div>
-              )}
-            </div>
-            <div style={field}>
-              <label style={fieldLabel}>설명 (description)</label>
-              <input
-                style={input}
-                value={form.description}
-                maxLength={MAX_DESC_LEN}
-                placeholder="메인이 언제 이 서브에이전트에 위임할지 판단하는 근거"
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-              />
-            </div>
-            <div style={field}>
-              <label style={fieldLabel}>systemPrompt</label>
-              <textarea
-                style={textarea}
-                value={form.systemPrompt}
-                maxLength={MAX_PROMPT_LEN}
-                placeholder="이 서브에이전트의 역할·지침 전문"
-                onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
-              />
-            </div>
-            <div style={actionRow}>
-              <button
-                type="button"
-                style={saving ? btnDisabled : btnPrimary}
-                disabled={saving}
-                onClick={() => void save()}
-              >
-                {saving ? "저장 중…" : "저장"}
-              </button>
-              <button type="button" style={btnGhost} onClick={cancel}>
-                취소
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* 목록 — 시안 2열 카드 그리드(카드 클릭 → 상세 모달) */}
         {loading ? (
           <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>불러오는 중…</div>
@@ -342,6 +279,109 @@ export function SubagentManager(): ReactNode {
           <pre className="il-code" style={{ maxHeight: 360, overflowY: "auto" }}>
             {modal.systemPrompt}
           </pre>
+        </ContentModal>
+      )}
+
+      {/* 생성·편집 폼 모달 — 인라인 폼 대신 ContentModal(footer 취소/삭제/저장).
+          상단에 AiGenerateField(한 줄 요청 → 폼 자동 입력) 통합. */}
+      {form && (
+        <ContentModal
+          title={form.editing ? `서브에이전트 편집 — ${form.name}` : "새 서브에이전트"}
+          subtitle="task 도구로 위임할 일꾼 에이전트를 선언형으로 만듭니다(코드 불필요)."
+          onClose={cancel}
+          width={820}
+          headerExtra={<span style={benchModalBadge}>SUBAGENT</span>}
+          footer={
+            <>
+              <button type="button" style={benchModalGhost} onClick={cancel}>
+                취소
+              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                {form.editing && (
+                  <button
+                    type="button"
+                    style={benchModalDanger}
+                    onClick={() => {
+                      const target = items.find((s) => s.name === form.name);
+                      if (!target) return;
+                      void remove(target);
+                    }}
+                  >
+                    삭제
+                  </button>
+                )}
+                <button
+                  type="button"
+                  style={
+                    saving ? { ...benchPrimarySolid, opacity: 0.6, cursor: "not-allowed" } : benchPrimarySolid
+                  }
+                  disabled={saving}
+                  onClick={() => void save()}
+                >
+                  {saving ? "저장 중…" : "저장"}
+                </button>
+              </div>
+            </>
+          }
+        >
+          {/* AI 생성 — 한 줄 요청으로 name/description/systemPrompt 자동 입력 */}
+          <AiGenerateField
+            kind="subagent"
+            placeholder="예: 계약서 검토 서브에이전트"
+            onResult={(r) =>
+              setForm((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      // 편집 모드에선 이름(식별자) 보존, 신규는 생성 slug 반영.
+                      name: prev.editing ? prev.name : (r.name ?? prev.name),
+                      description: r.description ?? prev.description,
+                      systemPrompt: r.systemPrompt ?? prev.systemPrompt,
+                    }
+                  : prev,
+              )
+            }
+          />
+          <div style={field}>
+            <label style={fieldLabel}>이름 (slug)</label>
+            <input
+              style={{
+                ...input,
+                ...(form.editing ? { background: "var(--t-neutral-6)", cursor: "not-allowed" } : {}),
+                fontFamily: "var(--font-mono)",
+              }}
+              value={form.name}
+              maxLength={64}
+              disabled={form.editing}
+              placeholder="예: contract-reviewer"
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+            {form.editing && (
+              <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 4 }}>
+                이름(식별자)은 변경할 수 없습니다.
+              </div>
+            )}
+          </div>
+          <div style={field}>
+            <label style={fieldLabel}>설명 (description)</label>
+            <input
+              style={input}
+              value={form.description}
+              maxLength={MAX_DESC_LEN}
+              placeholder="메인이 언제 이 서브에이전트에 위임할지 판단하는 근거"
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+            />
+          </div>
+          <div style={{ ...field, marginBottom: 0 }}>
+            <label style={fieldLabel}>systemPrompt</label>
+            <textarea
+              style={{ ...textarea, minHeight: 200 }}
+              value={form.systemPrompt}
+              maxLength={MAX_PROMPT_LEN}
+              placeholder="이 서브에이전트의 역할·지침 전문"
+              onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
+            />
+          </div>
         </ContentModal>
       )}
     </>
