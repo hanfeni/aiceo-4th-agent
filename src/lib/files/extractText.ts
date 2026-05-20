@@ -12,6 +12,9 @@
  *    (모듈 top-level 금지). legacy 빌드 + GlobalWorkerOptions.workerSrc.
  *  - DOCX: mammoth. Node 전제 main 이라 **브라우저 진입점 명시**
  *    (`mammoth/mammoth.browser`) + 동적 import.
+ *  - HWPX: 한글 최신 포맷 = ZIP+XML 컨테이너. jszip(이미 의존)으로
+ *    Contents/section*.xml 을 풀어 <hp:t> 텍스트 노드만 모은다. 별도
+ *    HWPX 파서 의존 0 — over-engineering 회피.
  *
  * 동적 import 이유(Plan Critic D1): pdfjs/mammoth 가 모듈 top-level 에
  * 없어야 prod 번들에서 물리적으로 빠진다(NODE_ENV dev 전용 노출 +
@@ -19,7 +22,7 @@
  * 로드 없이 평가되는 순수 함수라 단위 테스트가 가볍다.
  */
 
-export type FileFormat = "text" | "pdf" | "docx";
+export type FileFormat = "text" | "pdf" | "docx" | "hwpx";
 
 /** FileReader.readAsText 로 처리하는 텍스트 계열 확장자. */
 export const SUPPORTED_TEXT_EXT = [
@@ -62,6 +65,7 @@ export function pickFormat(filename: string): FileFormat | null {
   if ((SUPPORTED_TEXT_EXT as readonly string[]).includes(ext)) return "text";
   if (ext === "pdf") return "pdf";
   if (ext === "docx") return "docx";
+  if (ext === "hwpx") return "hwpx";
   return null;
 }
 
@@ -112,20 +116,63 @@ async function readDocx(file: File): Promise<string> {
   return result.value.trim();
 }
 
+/** HWPX(한글) — ZIP 컨테이너에서 본문 XML 의 텍스트만 추출. */
+async function readHwpx(file: File): Promise<string> {
+  const { default: JSZip } = await import("jszip");
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  // 본문은 Contents/section0.xml, section1.xml … 순서대로. 정렬해 순서 보존.
+  const sectionPaths = Object.keys(zip.files)
+    .filter((p) => /^Contents\/section\d+\.xml$/i.test(p))
+    .sort((a, b) => {
+      const na = Number(a.match(/section(\d+)/i)?.[1] ?? 0);
+      const nb = Number(b.match(/section(\d+)/i)?.[1] ?? 0);
+      return na - nb;
+    });
+  if (sectionPaths.length === 0) {
+    throw new Error(
+      `HWPX 본문(Contents/section*.xml)을 찾지 못했습니다: ${file.name} ` +
+        `(한글 2014 이상에서 저장한 .hwpx 인지 확인하세요)`,
+    );
+  }
+  const parts: string[] = [];
+  for (const p of sectionPaths) {
+    const xml = await zip.files[p].async("string");
+    // <hp:t> 텍스트 노드만 모은다(서식·메타 태그 무시). 네임스페이스
+    // 접두사가 다를 수 있어 :t 로 매칭. 단락 경계는 줄바꿈으로 보존.
+    const matches = xml.match(/<[^>]*:t>([\s\S]*?)<\/[^>]*:t>/g) ?? [];
+    for (const m of matches) {
+      const inner = m.replace(/<[^>]+>/g, "");
+      parts.push(decodeXmlEntities(inner));
+    }
+  }
+  return parts.join("\n").trim();
+}
+
+/** XML 엔티티 디코드(hwpx 본문 텍스트용 최소 집합). */
+function decodeXmlEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
 /**
  * 파일에서 텍스트를 추출한다. 미지원 확장자는 명확히 throw(무음 실패 0).
- * pdf/docx 추출 실패(암호화·손상)는 라이브러리 reject 가 그대로 전파되어
- * 호출부(UI)가 사용자에게 표면화한다(Plan Critic E3).
+ * pdf/docx/hwpx 추출 실패(암호화·손상)는 라이브러리 reject 가 그대로
+ * 전파되어 호출부(UI)가 사용자에게 표면화한다(Plan Critic E3).
  */
 export async function extractTextFromFile(file: File): Promise<string> {
   const fmt = pickFormat(file.name);
   if (fmt === null) {
     throw new Error(
       `지원하지 않는 파일 형식입니다: ${file.name} ` +
-        `(텍스트 계열 / .pdf / .docx 만 가능)`,
+        `(텍스트 계열 / .pdf / .docx / .hwpx 만 가능)`,
     );
   }
   if (fmt === "text") return readAsText(file);
   if (fmt === "pdf") return readPdf(file);
+  if (fmt === "hwpx") return readHwpx(file);
   return readDocx(file);
 }
