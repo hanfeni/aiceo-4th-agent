@@ -188,6 +188,10 @@ export function SearchLabView(): ReactNode {
   // 인덱스(status)와 별개 소스(사용자 지적: 모드가 소스를 결정).
   // /api/sql-lab/tables 가 [{domain,loaded,rowCount}] 반환.
   const [dbStatus, setDbStatus] = useState<Record<string, number>>({});
+  // 업로드 색인된 custom 도메인의 동적 라벨(indices API). null=미색인.
+  // 색인 메뉴(IndexLabView)와 동일 패턴 — 검색 메뉴에도 "내 데이터"
+  // 도메인이 칩으로 등장하게 한다(고정 5개 + custom).
+  const [customLabel, setCustomLabel] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -215,6 +219,18 @@ export function SearchLabView(): ReactNode {
         setDbStatus(m);
       })
       .catch(() => {});
+    // 업로드 색인된 custom 도메인 라벨 로드(검색 칩에 "내 데이터" 등장).
+    fetch("/api/search-lab/indices")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive || !Array.isArray(d.indices)) return;
+        const row = d.indices.find(
+          (ix: { index: string; label?: string }) =>
+            ix.index === "searchlab-custom",
+        );
+        setCustomLabel(row?.label ?? null);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -233,7 +249,15 @@ export function SearchLabView(): ReactNode {
         ? (dbStatus[id] ?? 0) > 0
         : typeof status[id] === "number";
     if (ok(domain)) return;
-    const firstOk = DOMAINS.find((d) => ok(d.id));
+    // custom 포함 동적 목록에서 가용 도메인 탐색(customLabel 의존 —
+    // 아래 deps 에 추가). custom 색인 후에도 자동 보정이 작동.
+    const pool = customLabel
+      ? [
+          ...DOMAINS,
+          { id: "custom", label: customLabel, audience: "사용자 업로드" },
+        ]
+      : DOMAINS;
+    const firstOk = pool.find((d) => ok(d.id));
     if (!firstOk) return;
     // effect 본문 동기 setState 금지(코드베이스 컨벤션 —
     // cascading render). 마이크로태스크 경계 뒤로 미룬다.
@@ -244,7 +268,17 @@ export function SearchLabView(): ReactNode {
     return () => {
       alive = false;
     };
-  }, [taskMode, status, dbStatus, domain]);
+  }, [taskMode, status, dbStatus, domain, customLabel]);
+
+  // 고정 5개 + (색인됐으면) custom — 색인 메뉴(IndexLabView allDomains)와
+  // 동일 사상. custom 라벨은 업로드 시 결정되므로 indices API 에서 로드.
+  const allDomains: { id: string; label: string; audience: string }[] =
+    customLabel
+      ? [
+          ...DOMAINS,
+          { id: "custom", label: customLabel, audience: "사용자 업로드" },
+        ]
+      : [...DOMAINS];
 
   async function runSearch(): Promise<void> {
     const q = query.trim();
@@ -653,7 +687,7 @@ export function SearchLabView(): ReactNode {
           수 없습니다(모드를 바꾸면 가용 도메인이 달라집니다).
         </div>
         <div style={chipRow}>
-          {DOMAINS.map((d) => {
+          {allDomains.map((d) => {
             // 가용성은 taskMode 가 결정한 소스종류 기준(사용자
             // 지적). db 계열=테이블 적재행수, index 계열=색인 건수.
             const avail = domainAvailable(d.id);
@@ -1515,7 +1549,7 @@ export function SearchLabView(): ReactNode {
           key={domain}
           domain={domain}
           domainLabel={
-            DOMAINS.find((d) => d.id === domain)?.label ?? domain
+            allDomains.find((d) => d.id === domain)?.label ?? domain
           }
           onClose={() => setShowDocs(false)}
         />

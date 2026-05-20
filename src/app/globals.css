@@ -348,3 +348,307 @@
 .cf-meta-fade {
   animation: cfMetaFade 0.35s ease-out;
 }
+
+/* ============================================================
+   index-lab 워크벤치 (도메인 색인 — 실험 시안 B 적용, 2026-05-20)
+   Lab Design.html / index-lab.jsx 시안의 좌(설정)·우(워크벤치)
+   레이아웃을 il-* 프리픽스로 격리(다른 메뉴 무영향). 토큰은 기존
+   medicnc + cf 체계 재사용, 시안 전용 보강분만 아래 추가.
+   ============================================================ */
+:root {
+  /* 시안 보강 blue 스케일(없던 단계만) */
+  --blue-100: #e3f1fd;
+  --blue-200: #c8def3;
+  --blue-300: #9ccbf0;
+  --blue-600: #1e88e0;
+  /* 시안 옅은 blue tint */
+  --lab-blue-bg: #f4f9fe;
+  --lab-blue-bg-2: #ebf3fb;
+  --lab-blue-border: #c8def3;
+  /* 상태색 */
+  --lab-success-text: #0a7a73;
+  --lab-success-bg: #e6f6f4;
+  --lab-success-border: #b6e3dc;
+  /* 진행 로그 터미널 */
+  --lab-term-bg: #0d1218;
+  --lab-term-fg: #c8d4e3;
+  --lab-term-dim: #6a7b8f;
+  --lab-term-accent: #4ea4f2;
+  --lab-term-success: #4ad19a;
+  --lab-term-warn: #f4c167;
+  /* mono 폰트(시안 JetBrains Mono → 시스템 mono 폴백) */
+  --lab-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+}
+
+.il-mono {
+  font-family: var(--lab-font-mono);
+  font-feature-settings: "liga" 0;
+}
+
+/* 좌(설정 320px) · 우(워크벤치 1fr) split */
+.il-bench {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.il-bench-aside {
+  position: sticky;
+  top: 16px;
+}
+@media (max-width: 900px) {
+  .il-bench {
+    grid-template-columns: 1fr;
+  }
+  .il-bench-aside {
+    position: static;
+  }
+}
+
+/* 카드 베이스 */
+.il-card {
+  background: var(--surface-default);
+  border: 1px solid var(--t-neutral-8);
+  border-radius: var(--r-lg);
+  padding: 16px;
+}
+
+/* 좌측 설정 패널(blue gradient) */
+.il-config {
+  border-color: var(--lab-blue-border);
+  background: linear-gradient(180deg, var(--surface-default), var(--lab-blue-bg) 100%);
+}
+.il-config-title {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--blue-700);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* 필드 라벨(시안 FieldLabel) */
+.il-flabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-default);
+  letter-spacing: 0.01em;
+  margin-bottom: 6px;
+}
+.il-flabel-hint {
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-subtle);
+  margin-top: 2px;
+}
+
+/* 워크벤치 카드 헤더 라벨(01/02) */
+.il-bench-label {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  background: var(--medi-gray-100);
+  padding: 3px 7px;
+  border-radius: 4px;
+}
+
+/* 진행 메트릭 타일 */
+.il-metric {
+  padding: 10px 12px;
+  background: var(--medi-gray-50);
+  border: 1px solid var(--t-neutral-8);
+  border-radius: 8px;
+}
+.il-metric--hl {
+  background: var(--lab-blue-bg);
+  border-color: var(--blue-200);
+}
+.il-metric-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.il-metric-value {
+  font-size: 17px;
+  font-weight: 800;
+  font-family: var(--lab-font-mono);
+  color: var(--text-default);
+  margin-top: 2px;
+  letter-spacing: -0.02em;
+}
+.il-metric--hl .il-metric-value {
+  color: var(--blue-700);
+}
+.il-metric-unit {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-subtle);
+  margin-left: 3px;
+}
+
+/* 진행률 바 */
+.il-progress {
+  height: 6px;
+  background: var(--medi-gray-100);
+  border-radius: 99px;
+  overflow: hidden;
+}
+.il-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue-400), var(--blue-600));
+  border-radius: 99px;
+  transition: width 0.3s ease;
+}
+
+/* 상태 pill */
+.il-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.il-status::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.il-status--idle {
+  background: var(--medi-gray-100);
+  color: var(--neutral-600);
+}
+.il-status--run {
+  background: var(--lab-blue-bg-2);
+  color: var(--blue-700);
+}
+.il-status--run::before {
+  animation: ilPulse 1.2s ease-in-out infinite;
+}
+.il-status--done {
+  background: var(--lab-success-bg);
+  color: var(--lab-success-text);
+}
+@keyframes ilPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.4);
+  }
+}
+
+/* 진행 로그 터미널 */
+.il-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--lab-term-bg);
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #1d2733;
+}
+.il-term-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.il-term {
+  background: var(--lab-term-bg);
+  color: var(--lab-term-fg);
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+  padding: 14px 16px;
+  font-family: var(--lab-font-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #1d2733;
+  border-top: none;
+  margin: 0;
+}
+
+/* 인덱스명 미리보기 코드 */
+.il-name-preview {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--t-neutral-12);
+  font-size: 10.5px;
+  color: var(--text-subtle);
+  line-height: 1.6;
+}
+.il-name-preview code {
+  color: var(--blue-700);
+  font-size: 10.5px;
+  font-family: var(--lab-font-mono);
+}
+
+/* 인덱스 인벤토리 행 */
+.il-ix-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--surface-default);
+  border: 1px solid var(--t-neutral-8);
+  border-radius: 8px;
+}
+.il-ix-name {
+  font-size: 12px;
+  font-family: var(--lab-font-mono);
+  color: var(--text-default);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.il-ix-count {
+  font-size: 11px;
+  color: var(--blue-700);
+  font-weight: 700;
+  background: var(--lab-blue-bg);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-family: var(--lab-font-mono);
+}
+
+/* 업로드 접힘 영역(좌측 패널 하단) */
+.il-upload-zone {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--medi-gray-50);
+  border-radius: 10px;
+  border: 1.5px dashed var(--t-neutral-16);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 에러 배너 */
+.il-error {
+  background: var(--lab-danger-bg, #fdecec);
+  border: 1px solid #f3c2c2;
+  color: var(--red-500);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 12px;
+}

@@ -101,31 +101,45 @@ interface IndexInfo {
 /** custom 슬롯 고정 인덱스명(domains.ts CUSTOM_SEARCH_INDEX 와 동일). */
 const CUSTOM_INDEX = "searchlab-custom";
 
-const card: CSSProperties = {
+// embed 모델 → 인덱스명 약칭(서버 인덱스명 규칙과 동일: 3-small/3-large).
+const EMBED_SHORT: Record<string, string> = {
+  "text-embedding-3-small": "3small",
+  "text-embedding-3-large": "3large",
+};
+
+// 진행 로그에서 "  N/M 색인 중…" 의 N·M 을 뽑아 진행률(%)·수치를 추론.
+// done 라인이 있으면 100%. 시안 B 의 진행 메트릭·진행바 데이터원.
+function parseProgress(log: string[]): {
+  indexed: number | null;
+  total: number | null;
+  pct: number;
+  done: boolean;
+} {
+  let indexed: number | null = null;
+  let total: number | null = null;
+  let done = false;
+  for (const line of log) {
+    const m = line.match(/(\d+)\s*\/\s*(\d+)\s*색인 중/);
+    if (m) {
+      indexed = Number(m[1]);
+      total = Number(m[2]);
+    }
+    if (line.startsWith("✓")) done = true;
+  }
+  const pct =
+    done && total ? 100 : indexed && total ? (indexed / total) * 100 : 0;
+  return { indexed, total, pct: Math.min(100, pct), done };
+}
+
+// 삭제 확인 모달 카드(시안 ModalShell 톤).
+const modalCard: CSSProperties = {
   background: "var(--surface-default)",
   border: "1px solid var(--t-neutral-8)",
   borderRadius: "var(--r-lg)",
   padding: 20,
-  marginBottom: 16,
+  maxWidth: 380,
 };
-const sectionTitle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "var(--text-default)",
-  marginBottom: 10,
-};
-const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8 };
-const btnRow: CSSProperties = {
-  marginTop: 16,
-  display: "flex",
-  justifyContent: "flex-end", // 버튼 우측 정렬(사용자 요청)
-};
-const fieldLabel: CSSProperties = {
-  fontSize: 11.5,
-  fontWeight: 600,
-  color: "var(--text-subtle)",
-  marginBottom: 6,
-};
+const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 6 };
 
 export function IndexLabView(): ReactNode {
   const [domain, setDomain] = useState<string>("sangkwon");
@@ -405,379 +419,475 @@ export function IndexLabView(): ReactNode {
     }
   }
 
+  const cur = allDomains.find((d) => d.id === domain);
+  const prog = parseProgress(indexLog);
+  const embedDim = embedModel === "text-embedding-3-small" ? "1536" : "3072";
+  // 시안 인덱스명 미리보기 — 서버 규칙(searchlab-<domain>-<decompound>-<embedShort>).
+  const namePreview =
+    domain === "custom"
+      ? CUSTOM_INDEX
+      : `searchlab-${domain}-${decompound}-${EMBED_SHORT[embedModel] ?? "3small"}`;
+  const benchStatus = indexing || uploading ? "run" : prog.done ? "done" : "idle";
+
   return (
     <div
       className="thin-scroll"
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px" }}>
-        <h1
-          style={{
-            fontSize: 18,
-            fontWeight: 800,
-            color: "var(--text-default)",
-            marginBottom: 4,
-          }}
-        >
-          도메인 색인 — 검색 데이터 준비
-        </h1>
-        <p
-          style={{
-            fontSize: 12.5,
-            color: "var(--text-subtle)",
-            marginBottom: 20,
-          }}
-        >
-          GitHub public 문서를 받아 OpenSearch 에 색인합니다(검색 전 1회).
-          토크나이저·임베딩·문서 수를 골라 색인 방식을 비교해 보세요.
-        </p>
-
-        <div style={card}>
-          <div style={sectionTitle}>① 색인할 도메인 선택</div>
-          <div style={chipRow}>
-            {allDomains.map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                className="cf-pill"
-                aria-pressed={domain === d.id}
-                onClick={() => setDomain(d.id)}
-                title={d.audience}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
-          <div
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 64px" }}>
+        {/* 헤더(시안 LabPage) — accent 칩 + 타이틀 + 서브타이틀 */}
+        <div style={{ marginBottom: 24 }}>
+          <span
             style={{
-              marginTop: 10,
-              fontSize: 11.5,
-              color: "var(--text-subtle)",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              color: "var(--blue-600)",
+              textTransform: "uppercase",
+              background: "var(--lab-blue-bg-2)",
+              padding: "3px 8px",
+              borderRadius: 4,
             }}
           >
-            {domain === "custom" ? (
-              <span>
-                업로드 도메인 — 아래 ③ 에서 문서를 올려 색인합니다
-                (GitHub 원본 없음).
-              </span>
-            ) : (
-              <>
-                <span>
-                  원본 문서 총{" "}
-                  <strong style={{ color: "var(--cf-soft-text)" }}>
-                    {total === null
-                      ? "조회 중…"
-                      : `${total.toLocaleString()}개`}
-                  </strong>
-                  {total !== null &&
-                    total < limit &&
-                    " (선택 수보다 적어 전체 색인)"}
-                </span>
-                <button
-                  type="button"
-                  className="cf-btn"
-                  style={{ height: 26, padding: "0 12px", fontSize: 11.5 }}
-                  onClick={openCorpus}
-                  disabled={total === null}
-                >
-                  문서 원본 보기
-                </button>
-              </>
-            )}
-          </div>
+            ① 검색 · 라벨링 실습
+          </span>
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 800,
+              color: "var(--text-default)",
+              margin: "8px 0 0",
+              letterSpacing: "-0.015em",
+            }}
+          >
+            도메인 색인
+          </h1>
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-subtle)",
+              margin: "6px 0 0",
+              lineHeight: 1.55,
+              maxWidth: 680,
+            }}
+          >
+            좌측 패널에서 설정 → 워크벤치에서 실행·관찰. 실행마다 새 인덱스가
+            인벤토리에 누적됩니다. GitHub public 문서를 받아 OpenSearch 에
+            색인합니다.
+          </p>
         </div>
 
-        <div style={card}>
-          <div style={sectionTitle}>② 색인 파라미터</div>
-          <div
-            style={{
-              display: "flex",
-              gap: 16,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ flex: "1 1 240px" }}>
-              <div style={fieldLabel}>Nori 복합어 분해 (토크나이저)</div>
+        <div className="il-bench">
+          {/* ─── 좌측: 설정 패널 (sticky) ─── */}
+          <div className="il-bench-aside">
+            <div className="il-card il-config">
+              <div className="il-config-title">색인 파라미터</div>
+
+              <div className="il-flabel">도메인</div>
               <select
                 className="cf-field cf-select"
-                style={{ width: "100%" }}
-                value={decompound}
-                onChange={(e) => setDecompound(e.target.value)}
-                disabled={indexing}
+                style={{ width: "100%", marginBottom: 12 }}
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                disabled={indexing || uploading}
               >
+                {allDomains.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                    {d.id !== "custom" && total !== null && domain === d.id
+                      ? ` (${total.toLocaleString()}건)`
+                      : ""}
+                  </option>
+                ))}
+              </select>
+
+              <div className="il-flabel">Nori 분해</div>
+              <div style={{ ...chipRow, marginBottom: 12 }}>
                 {DECOMPOUND.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ flex: "1 1 240px" }}>
-              <div style={fieldLabel}>임베딩 모델</div>
-              <select
-                className="cf-field cf-select"
-                style={{ width: "100%" }}
-                value={embedModel}
-                onChange={(e) => setEmbedModel(e.target.value)}
-                disabled={indexing}
-              >
-                {EMBED.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <div style={fieldLabel}>색인할 문서 수 (상한)</div>
-            <div style={chipRow}>
-              {DOC_COUNTS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className="cf-pill"
-                  aria-pressed={limit === c}
-                  onClick={() => setLimit(c)}
-                  disabled={indexing}
-                >
-                  {c.toLocaleString()}건
-                </button>
-              ))}
-            </div>
-          </div>
-          <div style={{ marginTop: 14 }}>
-            <div style={fieldLabel}>
-              청크 크기 (토큰 · cl100k) — 기본은 청킹 안 함
-            </div>
-            <div style={chipRow}>
-              {CHUNK_SIZES.map((c) => (
-                <button
-                  key={c.v}
-                  type="button"
-                  className="cf-pill"
-                  aria-pressed={chunkSize === c.v}
-                  onClick={() => setChunkSize(c.v)}
-                  disabled={indexing}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {chunkSize > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div style={fieldLabel}>청크 겹침 (overlap · 토큰)</div>
-              <div style={chipRow}>
-                {CHUNK_OVERLAPS.map((o) => (
                   <button
-                    key={o}
+                    key={o.id}
                     type="button"
                     className="cf-pill"
-                    aria-pressed={chunkOverlap === o}
-                    onClick={() => setChunkOverlap(o)}
-                    disabled={indexing}
+                    aria-pressed={decompound === o.id}
+                    onClick={() => setDecompound(o.id)}
+                    disabled={indexing || uploading}
+                    title={o.label}
                   >
-                    {o}토큰
+                    <span className="il-mono" style={{ fontSize: 10.5 }}>
+                      {o.id}
+                    </span>
                   </button>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
 
-        {/* 실행 버튼 — 설정 카드 밖 독립 줄(설정 ≠ 액션 시각 분리,
-            사용자 요청). 우측 정렬 유지. custom 은 GitHub 색인 대상이
-            아니라 업로드 색인(아래 ③) — 버튼 비활성. */}
-        <div style={{ ...btnRow, marginBottom: 16 }}>
-          <button
-            type="button"
-            onClick={runIndex}
-            disabled={indexing || domain === "custom"}
-            title={
-              domain === "custom"
-                ? "내 데이터(custom)는 아래 ③ 문서 업로드로 색인합니다"
-                : undefined
-            }
-            className="cf-btn cf-btn--primary"
-          >
-            {indexing ? "색인 중…" : "이 도메인 색인 시작"}
-          </button>
-        </div>
+              <div className="il-flabel">임베딩</div>
+              <div style={{ ...chipRow, marginBottom: 12 }}>
+                {EMBED.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    className="cf-pill"
+                    aria-pressed={embedModel === o.id}
+                    onClick={() => setEmbedModel(o.id)}
+                    disabled={indexing || uploading}
+                    title={o.label}
+                  >
+                    <span className="il-mono" style={{ fontSize: 10.5 }}>
+                      {o.id.replace("text-embedding-", "")}
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-        {/* 로컬 jsonl 업로드 — 동적 "내 데이터(custom)" 도메인 추가.
-            고정 5개와 별개로 사용자가 직접 고른 jsonl 을 색인한다.
-            색인 후 검색 실습·챗(인덱스검색 드롭다운)에 "내 데이터" 등장.
-            위 ② 색인 파라미터(토크나이저·임베딩·청크·문서 수)가 함께
-            적용된다. */}
-        <div style={card}>
-          <div style={sectionTitle}>③ 내 문서 업로드 (선택)</div>
-          <div style={fieldLabel}>
-            로컬 문서(<strong>PDF · Word(.docx) · 한글(.hwpx) · 텍스트</strong>{" "}
-            또는 jsonl)를 올리면 6번째 “내 데이터” 도메인으로 OpenSearch 에
-            색인되어, 검색 실습과 챗(인덱스검색 드롭다운)에서 바로 검색할 수
-            있습니다. PDF·Word·한글은 본문 텍스트가 자동 추출되어 한 문서로
-            색인되며, 문서 제목은 gpt-5.4-nano 가 본문에서 자동 추출합니다.
-            위 ② 색인 파라미터가 함께 적용됩니다.
-          </div>
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: 10 }}
-          >
-            {/* 네이티브 file input 은 숨기고(브라우저 기본 "파일 선택"
-                글자가 작아 버튼처럼 안 보임 — 사용자 혼란), 명확한 버튼이
-                트리거. 선택된 파일명은 옆에 표시. */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".jsonl,.pdf,.docx,.hwpx,.txt,.md,.csv,.json"
-              disabled={uploading || indexing}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                setUploadFile(f);
-                if (f && !uploadLabel)
-                  setUploadLabel(f.name.replace(/\.[^.]+$/, ""));
-              }}
-              style={{ display: "none" }}
-            />
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div className="il-flabel">색인 문서 수 (상한)</div>
+              <div style={{ ...chipRow, marginBottom: 12 }}>
+                {DOC_COUNTS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className="cf-pill"
+                    aria-pressed={limit === c}
+                    onClick={() => setLimit(c)}
+                    disabled={indexing || uploading}
+                  >
+                    <span className="il-mono">{c.toLocaleString()}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="il-flabel">청크 크기 (토큰)</div>
+              <div style={{ ...chipRow, marginBottom: chunkSize > 0 ? 12 : 16 }}>
+                {CHUNK_SIZES.map((c) => (
+                  <button
+                    key={c.v}
+                    type="button"
+                    className="cf-pill"
+                    aria-pressed={chunkSize === c.v}
+                    onClick={() => setChunkSize(c.v)}
+                    disabled={indexing || uploading}
+                    title={c.label}
+                  >
+                    <span className="il-mono" style={{ fontWeight: 600 }}>
+                      {c.v === 0 ? "안 함" : `${c.v}t`}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              {chunkSize > 0 && (
+                <>
+                  <div className="il-flabel">청크 겹침 (overlap · 토큰)</div>
+                  <div style={{ ...chipRow, marginBottom: 16 }}>
+                    {CHUNK_OVERLAPS.map((o) => (
+                      <button
+                        key={o}
+                        type="button"
+                        className="cf-pill"
+                        aria-pressed={chunkOverlap === o}
+                        onClick={() => setChunkOverlap(o)}
+                        disabled={indexing || uploading}
+                      >
+                        <span className="il-mono">{o}t</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* 실행 + 원본 보기 — custom 은 GitHub 색인 비대상(업로드로). */}
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading || indexing}
-                className="cf-btn"
-                style={{ flexShrink: 0 }}
+                className="cf-btn cf-btn--primary"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={runIndex}
+                disabled={indexing || uploading || domain === "custom"}
+                title={
+                  domain === "custom"
+                    ? "내 데이터(custom)는 아래 문서 업로드로 색인합니다"
+                    : undefined
+                }
               >
-                📁 문서 파일 선택
+                {indexing ? "색인 중…" : "색인 시작"}
               </button>
-              <span
+              {domain !== "custom" && (
+                <button
+                  type="button"
+                  className="cf-btn"
+                  style={{
+                    width: "100%",
+                    justifyContent: "center",
+                    marginTop: 6,
+                  }}
+                  onClick={openCorpus}
+                  disabled={total === null || indexing || uploading}
+                >
+                  문서 원본 보기
+                  {total !== null ? ` (${total.toLocaleString()})` : ""}
+                </button>
+              )}
+
+              {/* 인덱스명 미리보기(시안) */}
+              <div className="il-name-preview">
+                인덱스명 미리보기
+                <br />
+                <code>{namePreview}</code>
+                {domain !== "custom" &&
+                  total !== null &&
+                  total < limit && (
+                    <div style={{ marginTop: 4 }}>
+                      원본이 {total.toLocaleString()}건 — 선택 수보다 적어 전체
+                      색인됩니다.
+                    </div>
+                  )}
+              </div>
+
+              {/* ③ 내 문서 업로드 — 좌측 패널 하단 접힘 영역(기능 보존).
+                  PDF·Word·한글·텍스트·jsonl → "내 데이터" 도메인 색인. */}
+              <div
                 style={{
-                  fontSize: 12,
-                  color: uploadFile
-                    ? "var(--text-default)"
-                    : "var(--text-subtle)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  marginTop: 16,
+                  paddingTop: 12,
+                  borderTop: "1px dashed var(--t-neutral-12)",
                 }}
               >
-                {uploadFile ? uploadFile.name : "선택된 파일 없음"}
-              </span>
-            </div>
-            <input
-              type="text"
-              value={uploadLabel}
-              disabled={uploading || indexing}
-              placeholder="표시 라벨 (예: 우리 회사 문서, 미입력 시 파일명)"
-              maxLength={60}
-              onChange={(e) => setUploadLabel(e.target.value)}
-              style={{
-                fontSize: 12,
-                padding: "6px 10px",
-                borderRadius: "var(--r-md, 8px)",
-                border: "1px solid var(--t-neutral-8)",
-                background: "var(--surface-default)",
-                color: "var(--text-default)",
-                maxWidth: 360,
-              }}
-            />
-          </div>
-          <div style={btnRow}>
-            <button
-              type="button"
-              onClick={runUpload}
-              disabled={uploading || indexing || !uploadFile}
-              className="cf-btn cf-btn--primary"
-            >
-              {uploading ? "업로드 색인 중…" : "이 문서 업로드 색인"}
-            </button>
-          </div>
-        </div>
-
-        {err && (
-          <div
-            style={{
-              ...card,
-              borderColor: "var(--t-danger-8, #e5484d)",
-              color: "var(--t-danger-11, #e5484d)",
-              fontSize: 12.5,
-            }}
-          >
-            ⚠️ {err}
-          </div>
-        )}
-
-        {indexLog.length > 0 && (
-          <div style={card}>
-            <div style={sectionTitle}>진행 상황</div>
-            <pre
-              style={{
-                margin: 0,
-                padding: "10px 12px",
-                fontSize: 11,
-                lineHeight: 1.55,
-                color: "var(--text-subtle)",
-                background: "var(--cf-soft-bg)",
-                borderRadius: "var(--r-md, 8px)",
-                whiteSpace: "pre-wrap",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, monospace",
-              }}
-            >
-              {indexLog.join("\n")}
-            </pre>
-          </div>
-        )}
-
-        <div style={card}>
-          <div style={sectionTitle}>색인된 인덱스 (실습용)</div>
-          {indices.length === 0 ? (
-            <div
-              style={{ fontSize: 12, color: "var(--text-subtle)" }}
-            >
-              아직 색인된 실습 인덱스가 없습니다. 위에서 색인하세요.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {indices.map((ix) => (
-                <div
-                  key={ix.index}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "8px 12px",
-                    border: "1px solid var(--t-neutral-8)",
-                    borderRadius: "var(--r-md, 8px)",
-                    fontSize: 12.5,
+                <div className="il-flabel">
+                  내 문서 업로드 (선택)
+                  <div className="il-flabel-hint">
+                    PDF · Word · 한글 · 텍스트 · jsonl → “내 데이터” 도메인.
+                    위 파라미터 함께 적용. 제목은 LLM 자동 추출.
+                  </div>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".jsonl,.pdf,.docx,.hwpx,.txt,.md,.csv,.json"
+                  disabled={uploading || indexing}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setUploadFile(f);
+                    if (f && !uploadLabel)
+                      setUploadLabel(f.name.replace(/\.[^.]+$/, ""));
                   }}
-                >
-                  <span style={{ color: "var(--text-default)" }}>
-                    <strong>{ix.index}</strong>
-                    <span
-                      style={{
-                        marginLeft: 8,
-                        color: "var(--text-subtle)",
-                      }}
-                    >
-                      {ix.docCount.toLocaleString()}건
-                    </span>
-                  </span>
+                  style={{ display: "none" }}
+                />
+                <div className="il-upload-zone">
                   <button
                     type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || indexing}
                     className="cf-btn"
-                    style={{ height: 28, padding: "0 12px", fontSize: 12 }}
-                    onClick={() => setConfirmDel(ix.index)}
+                    style={{ justifyContent: "center" }}
                   >
-                    삭제
+                    📁 문서 파일 선택
+                  </button>
+                  {uploadFile && (
+                    <span
+                      className="il-mono"
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-default)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {uploadFile.name}
+                    </span>
+                  )}
+                  <input
+                    type="text"
+                    className="cf-field"
+                    value={uploadLabel}
+                    disabled={uploading || indexing}
+                    placeholder="표시 라벨 (미입력 시 파일명)"
+                    maxLength={60}
+                    onChange={(e) => setUploadLabel(e.target.value)}
+                    style={{ fontSize: 12 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={runUpload}
+                    disabled={uploading || indexing || !uploadFile}
+                    className="cf-btn cf-btn--primary"
+                    style={{ justifyContent: "center" }}
+                  >
+                    {uploading ? "업로드 색인 중…" : "이 문서 업로드 색인"}
                   </button>
                 </div>
-              ))}
+              </div>
             </div>
-          )}
+          </div>
+
+          {/* ─── 우측: 워크벤치 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {err && (
+              <div className="il-error" style={{ marginBottom: 16 }}>
+                ⚠️ {err}
+              </div>
+            )}
+
+            {/* 01 · 현재 실행 — 진행 메트릭 + 진행바 + 터미널 로그 */}
+            <div className="il-card" style={{ marginBottom: 16 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 14,
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <span className="il-bench-label">01</span>
+                  <span
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 700,
+                      color: "var(--text-default)",
+                    }}
+                  >
+                    현재 실행
+                  </span>
+                </div>
+                <span className={`il-status il-status--${benchStatus}`}>
+                  {benchStatus === "run"
+                    ? "색인 중"
+                    : benchStatus === "done"
+                      ? "완료"
+                      : "대기"}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap: 10,
+                  marginBottom: 14,
+                }}
+              >
+                <Metric label="목표" value={limit.toLocaleString()} unit="docs" />
+                <Metric
+                  label="진행"
+                  value={prog.indexed != null ? prog.indexed.toLocaleString() : "—"}
+                  unit={prog.total != null ? `/${prog.total}` : undefined}
+                  highlight
+                />
+                <Metric label="임베딩 차원" value={embedDim} unit="d" />
+                <Metric
+                  label="청크"
+                  value={chunkSize === 0 ? "OFF" : `${chunkSize}t`}
+                />
+              </div>
+
+              <div className="il-progress" style={{ marginBottom: 14 }}>
+                <div
+                  className="il-progress-fill"
+                  style={{ width: `${prog.pct}%` }}
+                />
+              </div>
+
+              {indexLog.length > 0 ? (
+                <Terminal title="opensearch-index · stream" lines={indexLog} />
+              ) : (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-subtle)",
+                    padding: "20px 0",
+                    textAlign: "center",
+                  }}
+                >
+                  좌측에서 파라미터를 고르고 <strong>색인 시작</strong> 을
+                  누르면 진행 로그가 여기에 실시간으로 흐릅니다.
+                </div>
+              )}
+            </div>
+
+            {/* 02 · 인덱스 인벤토리 */}
+            <div className="il-card">
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 14,
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <span className="il-bench-label">02</span>
+                  <span
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 700,
+                      color: "var(--text-default)",
+                    }}
+                  >
+                    인덱스 인벤토리
+                  </span>
+                </div>
+                <span
+                  className="il-mono"
+                  style={{ fontSize: 11, color: "var(--text-subtle)" }}
+                >
+                  {indices.length} indices
+                </span>
+              </div>
+
+              {indices.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+                  아직 색인된 실습 인덱스가 없습니다. 좌측에서 색인하세요.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  {indices.map((ix) => (
+                    <div key={ix.index} className="il-ix-row">
+                      <div style={{ minWidth: 0 }}>
+                        <div className="il-ix-name">{ix.index}</div>
+                        {ix.label && (
+                          <div
+                            style={{
+                              fontSize: 10.5,
+                              color: "var(--text-subtle)",
+                              marginTop: 2,
+                            }}
+                          >
+                            {ix.label}
+                          </div>
+                        )}
+                      </div>
+                      <span className="il-ix-count">
+                        {ix.docCount.toLocaleString()} docs
+                      </span>
+                      <button
+                        type="button"
+                        className="cf-btn"
+                        style={{
+                          height: 28,
+                          padding: "0 12px",
+                          fontSize: 12,
+                        }}
+                        onClick={() => setConfirmDel(ix.index)}
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -787,7 +897,8 @@ export function IndexLabView(): ReactNode {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,.4)",
+            background: "rgba(15,23,42,.45)",
+            backdropFilter: "blur(4px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -795,15 +906,17 @@ export function IndexLabView(): ReactNode {
           }}
           onClick={() => setConfirmDel(null)}
         >
-          <div
-            style={{
-              ...card,
-              maxWidth: 380,
-              margin: 0,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={sectionTitle}>인덱스 삭제 확인</div>
+          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+            <div
+              style={{
+                fontSize: 14.5,
+                fontWeight: 800,
+                color: "var(--text-default)",
+                marginBottom: 8,
+              }}
+            >
+              인덱스 삭제 확인
+            </div>
             <p
               style={{
                 fontSize: 12.5,
@@ -812,11 +925,13 @@ export function IndexLabView(): ReactNode {
                 marginBottom: 16,
               }}
             >
-              <strong style={{ color: "var(--text-default)" }}>
+              <strong
+                className="il-mono"
+                style={{ color: "var(--text-default)" }}
+              >
                 {confirmDel}
               </strong>{" "}
-              인덱스를 삭제합니다. 검색하려면 다시 색인해야 합니다.
-              계속할까요?
+              인덱스를 삭제합니다. 검색하려면 다시 색인해야 합니다. 계속할까요?
             </p>
             <div
               style={{
@@ -846,9 +961,7 @@ export function IndexLabView(): ReactNode {
 
       {showCorpus && (
         <CorpusModal
-          domainLabel={
-            allDomains.find((d) => d.id === domain)?.label ?? domain
-          }
+          domainLabel={cur?.label ?? domain}
           docs={corpusDocs}
           loading={corpusLoading}
           onClose={() => setShowCorpus(false)}
@@ -856,4 +969,89 @@ export function IndexLabView(): ReactNode {
       )}
     </div>
   );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Metric — 진행 메트릭 타일(시안 BenchMetric)
+// ─────────────────────────────────────────────────────────────
+function Metric({
+  label,
+  value,
+  unit,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  highlight?: boolean;
+}): ReactNode {
+  return (
+    <div className={highlight ? "il-metric il-metric--hl" : "il-metric"}>
+      <div className="il-metric-label">{label}</div>
+      <div className="il-metric-value">
+        {value}
+        {unit && <span className="il-metric-unit">{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Terminal — 진행 로그 다크 터미널(시안 Terminal). 줄 prefix 로 색.
+// ─────────────────────────────────────────────────────────────
+function Terminal({
+  lines,
+  title,
+}: {
+  lines: string[];
+  title?: string;
+}): ReactNode {
+  return (
+    <div>
+      {title && (
+        <div className="il-term-bar">
+          <span className="il-term-dot" style={{ background: "#ff5f57" }} />
+          <span className="il-term-dot" style={{ background: "#febc2e" }} />
+          <span className="il-term-dot" style={{ background: "#28c840" }} />
+          <span
+            className="il-mono"
+            style={{
+              marginLeft: 8,
+              fontSize: 10.5,
+              color: "var(--lab-term-dim)",
+            }}
+          >
+            {title}
+          </span>
+        </div>
+      )}
+      <pre className="il-term">
+        {lines.map((l, i) => (
+          <TermLine key={i} line={l} />
+        ))}
+        {lines.length > 0 && (
+          <span
+            style={{
+              display: "inline-block",
+              width: 8,
+              height: 13,
+              background: "var(--lab-term-accent)",
+              verticalAlign: "middle",
+              animation: "ilPulse 1s infinite",
+            }}
+          />
+        )}
+      </pre>
+    </div>
+  );
+}
+
+function TermLine({ line }: { line: string }): ReactNode {
+  let color = "var(--lab-term-fg)";
+  if (line.startsWith("✓")) color = "var(--lab-term-success)";
+  else if (line.includes("⚠")) color = "var(--lab-term-warn)";
+  else if (line.startsWith("▶") || line.startsWith("·"))
+    color = "var(--lab-term-accent)";
+  else if (line.startsWith(" ")) color = "var(--lab-term-dim)";
+  return <div style={{ color, whiteSpace: "pre" }}>{line}</div>;
 }
