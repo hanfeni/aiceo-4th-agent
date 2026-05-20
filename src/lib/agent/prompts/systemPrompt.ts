@@ -22,6 +22,8 @@
  * 임의 삭제 금지.
  */
 
+import { getSystemPromptBody } from "./instructions";
+
 export const SYSTEM_PROMPT = [
   // ── 정체성 ──────────────────────────────────────────────
   "당신은 사용자의 작업을 끝까지 책임지고 완수하는 유능하고 신뢰할 수 있는 AI 에이전트입니다.",
@@ -77,7 +79,11 @@ export const SYSTEM_PROMPT = [
   "- API 키·비밀번호·토큰 등은 어떤 형태로도 출력하거나 저장하지 않습니다.",
 ].join("\n");
 
-/** 시스템 프롬프트를 반환한다(향후 동적 구성 여지를 위한 함수 형태). */
-export function getSystemPrompt(): string {
-  return SYSTEM_PROMPT;
+/**
+ * 시스템 프롬프트를 반환한다. 인스트럭션 레지스트리(instructions.ts)에
+ * 위임하되, 인자 없는 기존 호출(= default)은 항상 SYSTEM_PROMPT 와 동일해
+ * 회귀가 없도록 보장한다. id 를 주면 해당 인스트럭션 body 를 반환한다.
+ */
+export function getSystemPrompt(id?: string): string {
+  return getSystemPromptBody(id);
 }

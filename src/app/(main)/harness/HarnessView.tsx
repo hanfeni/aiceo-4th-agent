@@ -2,6 +2,9 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import type { HarnessView as HarnessViewData } from "@/lib/harness-introspect/view";
+import { InstructionManager } from "@/components/harness/InstructionManager";
+import { SkillManager } from "@/components/harness/SkillManager";
+import { SubagentManager } from "@/components/harness/SubagentManager";
 
 /**
  * HarnessView — 하네스 요소 표시 전용 client 컴포넌트 (Slice 2).
@@ -496,6 +499,43 @@ export function HarnessView({
           >
             {view.systemPrompt}
           </pre>
+        </div>
+
+        {/* 관리(CRUD) 패널 — 위쪽 표시 전용 카드와 달리 자체 fetch/state 로
+            인스트럭션·스킬·서브에이전트를 생성·편집·삭제한다. 각 패널은
+            별도 client 컴포넌트(components/harness/*)로 분리해 이 파일의
+            1000줄 한도와 표시/편집 책임 분리를 지킨다. */}
+        <div
+          style={{
+            marginTop: 28,
+            paddingTop: 20,
+            borderTop: "2px solid var(--t-neutral-8)",
+          }}
+        >
+          <h2
+            style={{
+              fontSize: 15,
+              fontWeight: 700,
+              color: "var(--text-default)",
+              letterSpacing: "-0.01em",
+              marginBottom: 4,
+            }}
+          >
+            하네스 관리
+          </h2>
+          <p
+            style={{
+              fontSize: 12,
+              color: "var(--text-subtle)",
+              marginBottom: 16,
+            }}
+          >
+            인스트럭션·스킬·서브에이전트를 직접 만들고 편집·삭제합니다.
+            변경은 즉시 저장되며 다음 대화부터 반영됩니다.
+          </p>
+          <InstructionManager />
+          <SkillManager />
+          <SubagentManager />
         </div>
       </div>
     </div>
