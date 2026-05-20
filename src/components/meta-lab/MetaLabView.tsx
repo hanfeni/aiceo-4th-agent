@@ -1,11 +1,16 @@
 "use client";
 
-import { useState, useRef, type CSSProperties, type ReactNode } from "react";
-import { JsonResultView } from "./JsonResultView";
-import { PipelineGraph } from "@/components/common/PipelineGraph";
-import type { StageStatus, StageIO } from "@/components/common/pipelineNodes";
+import { useState, useRef, Fragment, type ReactNode } from "react";
+import { JsonResultView, extractJson } from "./JsonResultView";
+import type {
+  StageStatus,
+  StageIO,
+  StageCase,
+} from "@/components/common/pipelineNodes";
 import {
   META_STAGE_NODES,
+  META_LABEL_NODES,
+  META_DISCOVER_NODES,
   STEP_TO_STAGE,
 } from "./metaStageNodes";
 import { StageModal } from "./StageModal";
@@ -57,23 +62,8 @@ const TASKS = [
 
 const COUNTS = [1, 3, 5, 10] as const;
 
-const card: CSSProperties = {
-  background: "var(--surface-default)",
-  border: "1px solid var(--t-neutral-8)",
-  borderRadius: "var(--r-lg)",
-  padding: 20,
-  marginBottom: 16,
-};
-const sectionTitle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "var(--text-default)",
-  marginBottom: 10,
-};
-const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8 };
-
-// chip/버튼은 globals.css .cf-pill / .cf-btn 클래스로 통일
-// (SearchLabView·DART 와 동일 — "동일 컴포넌트=동일 디자인").
+// chip/버튼·카드는 globals.css .cf-* / .il-* 클래스로 통일
+// (실험 B 워크벤치 — "동일 컴포넌트=동일 디자인").
 
 interface DocBlock {
   /** 안정적 고유 key (phase/doc 무관 단조 증가 — key 충돌 0) */
@@ -265,6 +255,32 @@ export function MetaLabView(): ReactNode {
       ? META_STAGE_NODES
       : META_STAGE_NODES.slice(0, 4);
 
+  // 작업 메타(현 task) — 좌측 리스트·헤더·hero 요약에 사용.
+  const curTask = TASKS.find((t) => t.id === task);
+  const curDomain = DOMAINS.find((d) => d.id === domain);
+  // ④ 실분류(stage 4)의 케이스 — 시안 SAMPLE_LABEL_CASES 자리에
+  // 실제 stageIO 데이터를 꽂는다(목업 금지). 없으면 빈 배열.
+  const classifyCases: StageCase[] = stageIO[4]?.cases ?? [];
+
+  // hero 노드그래프 — 실험 B 는 task 무관 항상 표시(레퍼런스 충실,
+  // 사용자 결정 2026-05-20). 올인원은 stageStates 로, 단발(label/
+  // discover)은 blocks 진행으로 상태 파생. 단발은 클릭 모달 비활성.
+  const heroNodes = isAllInOne
+    ? graphNodes
+    : task === "discover"
+      ? META_DISCOVER_NODES
+      : META_LABEL_NODES;
+  const hasResultBlock = blocks.some((b) => !b.phase);
+  const allDone = hasResultBlock && blocks.every((b) => b.phase || b.done);
+  const singleStatus: StageStatus = running
+    ? "running"
+    : allDone
+      ? "done"
+      : "idle";
+  // hero 노드 stage→status (올인원은 파생 stageStates, 단발은 단일 상태).
+  const heroState = (stage: number): StageStatus =>
+    isAllInOne ? (stageStates[stage] ?? "idle") : singleStatus;
+
   return (
     // layout.tsx overflow:hidden+100dvh → 자체 스크롤 컨테이너 필요
     // (ChatPanel 선례). .thin-scroll 재사용(기존 클래스).
@@ -272,293 +288,699 @@ export function MetaLabView(): ReactNode {
       className="thin-scroll"
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px" }}>
-      <h1
-        style={{
-          fontSize: 18,
-          fontWeight: 800,
-          color: "var(--text-default)",
-          marginBottom: 4,
-        }}
+      <div
+        style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 64px" }}
       >
-        메타 스키마 · 라벨링 실습
-      </h1>
-      <p
-        style={{
-          fontSize: 12.5,
-          color: "var(--text-subtle)",
-          marginBottom: 20,
-        }}
-      >
-        LLM 이 실제로 작동하며 문서에 메타를 붙이거나(라벨링) 분류
-        체계를 제안하는(스키마 발굴) 모습을 직접 봅니다. 아래에서
-        LLM 에게 주는 시스템 인스트럭션도 그대로 확인됩니다.
-      </p>
-
-      <div style={card}>
-        <div style={sectionTitle}>① 도메인</div>
-        <div style={chipRow}>
-          {DOMAINS.map((d) => (
-            <button
-              key={d.id}
-              type="button"
-              className="cf-pill"
-              aria-pressed={domain === d.id}
-              onClick={() => setDomain(d.id)}
-            >
-              {d.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={card}>
-        <div style={sectionTitle}>② 작업</div>
-        <div style={chipRow}>
-          {TASKS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className="cf-pill"
-              aria-pressed={task === t.id}
-              onClick={() => setTask(t.id)}
-              title={t.hint}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div style={card}>
-        <div style={sectionTitle}>③ 문서 수</div>
-        {isAllInOne ? (
-          <div
+        {/* 헤더(시안 LabPage) — accent 칩 + 타이틀 + 서브타이틀 */}
+        <div style={{ marginBottom: 24 }}>
+          <span
             style={{
-              fontSize: 11.5,
-              color: "var(--text-subtle)",
-              lineHeight: 1.6,
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              color: "var(--blue-600)",
+              textTransform: "uppercase",
+              background: "var(--lab-blue-bg-2)",
+              padding: "3px 8px",
+              borderRadius: 4,
             }}
           >
-            올인원은 자동 진행입니다 — ① 발굴 20개씩 ×10회(비복원,
-            중복 없음) → ② 10개 결과 수렴 → ③ 분류기 인스트럭션 픽스
-            → ④ 실분류 5건 → ⑤ 메타 색인(분류기로 도메인 문서에
-            메타 부착해 OpenSearch 동적 색인). 문서 수는 고정이라
-            선택 불필요.
+            ③ 검색 · 라벨링 실습
+          </span>
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 800,
+              color: "var(--text-default)",
+              margin: "8px 0 0",
+              letterSpacing: "-0.015em",
+            }}
+          >
+            메타 스키마 · 라벨링 실습
+          </h1>
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-subtle)",
+              margin: "6px 0 0",
+              lineHeight: 1.55,
+              maxWidth: 680,
+            }}
+          >
+            LLM 이 실제로 작동하며 문서에 메타를 붙이거나(라벨링) 분류
+            체계를 제안하는(스키마 발굴) 모습을 직접 봅니다. 좌측에서
+            LLM 에게 주는 시스템 인스트럭션도 그대로 확인됩니다.
+          </p>
+        </div>
+
+        {/* ── hero 노드그래프(시안 B) — task 무관 항상 표시.
+            올인원: 4~5단계 + 노드 클릭 모달. 단발(label/discover):
+            단일 노드 + blocks 진행 파생, 클릭 모달 비활성.
+            라이트 통일 + 카드 노드 + SVG 화살표 커넥터. */}
+        <div className="il-hero">
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 16,
+              gap: 12,
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div className="il-hero-eyebrow">
+                {isAllInOne
+                  ? `auto pipeline · ${heroNodes.length} stages`
+                  : `${curTask?.label ?? "실행"} · 단발 LLM`}
+              </div>
+              <div className="il-hero-title">
+                {curDomain?.label ?? domain} —{" "}
+                {isAllInOne
+                  ? "메타 스키마 발굴 → 색인"
+                  : (curTask?.label ?? task)}
+              </div>
+              <div className="il-hero-sub">
+                {isAllInOne
+                  ? `발굴 ×10회 → 수렴 → 분류기 픽스 → 실분류 5건${task === "allinone_index" ? " → 메타 색인" : ""} · 노드 클릭 → 입력·출력 모달`
+                  : "LLM 이 시스템 인스트럭션으로 문서에 메타를 부착합니다 · 결과는 우측 OUTPUT 카드에서 확인"}
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {running && <StatusPill status="running" />}
+              {!running ? (
+                <button
+                  type="button"
+                  onClick={run}
+                  className="cf-btn cf-btn--primary"
+                >
+                  {isAllInOne ? "파이프라인 재실행" : "실행 (LLM 작동)"}
+                </button>
+              ) : (
+                <button type="button" onClick={stop} className="cf-btn">
+                  중지
+                </button>
+              )}
+            </div>
           </div>
-        ) : (
-          <div style={chipRow}>
-            {COUNTS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className="cf-pill"
-                aria-pressed={count === c}
-                onClick={() => setCount(c)}
-              >
-                {c}건
-              </button>
+          <div className="il-pipe">
+            {heroNodes.map((n, i) => (
+              <Fragment key={n.stage}>
+                <PipelineNode
+                  node={n}
+                  status={heroState(n.stage)}
+                  // 모든 노드 클릭 가능 — 입출력 모달(단발은 합성 io).
+                  onClick={() => setOpenStage(n.stage)}
+                />
+                {i < heroNodes.length - 1 && (
+                  <PipelineConnector
+                    fromStatus={heroState(n.stage)}
+                    toStatus={heroState(heroNodes[i + 1].stage)}
+                  />
+                )}
+              </Fragment>
             ))}
           </div>
-        )}
+        </div>
+
+        <div className="il-bench">
+          {/* ─── 좌측: 설정 패널 (sticky) ─── */}
+          <div className="il-bench-aside">
+            <div className="il-card il-config">
+              <div className="il-config-title">실행 설정</div>
+
+              <div className="il-flabel">도메인</div>
+              <select
+                className="cf-field cf-select"
+                style={{ width: "100%", marginBottom: 14 }}
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                disabled={running}
+              >
+                {DOMAINS.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+
+              <div className="il-flabel">작업 모드</div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  marginBottom: 14,
+                }}
+              >
+                {TASKS.map((t) => {
+                  const isPipe =
+                    t.id === "allinone" || t.id === "allinone_index";
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className="il-domain-btn"
+                      aria-pressed={task === t.id}
+                      onClick={() => setTask(t.id)}
+                      disabled={running}
+                      title={t.hint}
+                    >
+                      <span>{t.label}</span>
+                      {isPipe && (
+                        <span
+                          style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            color: "var(--blue-700)",
+                          }}
+                        >
+                          · auto
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* label/discover 만 문서 수 선택(올인원은 고정). */}
+              {!isAllInOne && (
+                <>
+                  <div className="il-flabel">문서 수</div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 6,
+                      marginBottom: 14,
+                    }}
+                  >
+                    {COUNTS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className="cf-pill"
+                        aria-pressed={count === c}
+                        onClick={() => setCount(c)}
+                        disabled={running}
+                      >
+                        <span className="il-mono">{c}</span>건
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {!running ? (
+                <button
+                  type="button"
+                  className="cf-btn cf-btn--primary"
+                  style={{ width: "100%", justifyContent: "center" }}
+                  onClick={run}
+                >
+                  실행 (LLM 작동)
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="cf-btn"
+                  style={{ width: "100%", justifyContent: "center" }}
+                  onClick={stop}
+                >
+                  중지
+                </button>
+              )}
+            </div>
+
+            {/* 시스템 인스트럭션 카드(시안 B 좌측 하단) */}
+            <div
+              className="il-card il-config"
+              style={{ marginTop: 12 }}
+            >
+              <div className="il-config-title">
+                {isAllInOne
+                  ? "현 단계 시스템 인스트럭션"
+                  : "시스템 인스트럭션"}
+              </div>
+              {system ? (
+                <pre className="il-code" style={{ maxHeight: 240, overflow: "auto" }}>
+                  {system}
+                </pre>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    color: "var(--text-subtle)",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  실행하면 LLM 에게 주는 시스템 인스트럭션이 여기에
+                  표시됩니다 — 이 지시가 곧 분류 품질의 상한입니다.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ─── 우측: 워크벤치 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {err && (
+              <div className="il-error" style={{ marginBottom: 16 }}>
+                ⚠️ {err}
+              </div>
+            )}
+
+            {/* ── 올인원: OUTPUT 카드(실분류 케이스 = stageIO[4]) +
+                노드별 설명. 파이프라인은 hero 에 있으므로 여기엔
+                결과만. ── */}
+            {isAllInOne ? (
+              <>
+                <div className="il-card" style={{ marginBottom: 16 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 14,
+                      gap: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                      }}
+                    >
+                      <span className="il-bench-label">OUTPUT</span>
+                      <span
+                        style={{
+                          fontSize: 13.5,
+                          fontWeight: 700,
+                          color: "var(--text-default)",
+                        }}
+                      >
+                        ④ 실분류 — 케이스별 결과
+                      </span>
+                    </div>
+                    <StatusPill status={stageStates[4]} />
+                  </div>
+
+                  {classifyCases.length > 0 ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 10,
+                      }}
+                    >
+                      {classifyCases.map((c, i) => (
+                        <CaseCard key={i} item={c} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text-subtle)",
+                        padding: "16px 0",
+                        textAlign: "center",
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      좌측 또는 hero 에서 <strong>실행</strong> 하면
+                      실분류 결과가 케이스별로 여기에 쌓입니다. 각 단계
+                      입·출력은 위 파이프라인 노드를 클릭해 확인하세요.
+                    </div>
+                  )}
+                </div>
+
+                {/* SCHEMA 카드(시안 MetaLab_B) — ② 수렴된 분류 스키마.
+                    실데이터: stageIO[2].output(수렴 단계 LLM 출력). 없으면
+                    안내. 시안의 ML_SAMPLE_SCHEMA 목업 대신 실 stageIO. */}
+                <div className="il-card">
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 12,
+                      gap: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                      }}
+                    >
+                      <span className="il-bench-label">SCHEMA</span>
+                      <span
+                        style={{
+                          fontSize: 13.5,
+                          fontWeight: 700,
+                          color: "var(--text-default)",
+                        }}
+                      >
+                        ② 수렴된 분류 스키마
+                      </span>
+                    </div>
+                    <StatusPill status={stageStates[2]} />
+                  </div>
+                  {stageIO[2]?.output ? (
+                    <pre className="il-code">{stageIO[2].output}</pre>
+                  ) : (
+                    <div
+                      style={{
+                        fontSize: 11.5,
+                        color: "var(--text-subtle)",
+                        lineHeight: 1.6,
+                        padding: "8px 0",
+                      }}
+                    >
+                      ② 수렴 단계가 완료되면 통합 분류 스키마가 여기에
+                      표시됩니다. ② 노드를 클릭하면 입·출력 전체를 확인할 수
+                      있습니다.
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              // ── label/discover: 실험 B 카드 톤 통일(레퍼런스와 일관).
+              //    OUTPUT 카드 안에 결과 블록(phase 헤더 + 케이스 카드).
+              //    데이터(blocks)·JsonResultView 보존, 시각만 il-* 카드.
+              <div className="il-card">
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 14,
+                    gap: 12,
+                  }}
+                >
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 10 }}
+                  >
+                    <span className="il-bench-label">OUTPUT</span>
+                    <span
+                      style={{
+                        fontSize: 13.5,
+                        fontWeight: 700,
+                        color: "var(--text-default)",
+                      }}
+                    >
+                      {curTask?.label ?? "실행"} — 결과
+                    </span>
+                  </div>
+                  {blocks.length > 0 && (
+                    <StatusPill status={running ? "running" : "done"} />
+                  )}
+                </div>
+
+                {blocks.length === 0 ? (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-subtle)",
+                      padding: "20px 0",
+                      textAlign: "center",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    좌측에서 도메인·작업·문서 수를 고르고{" "}
+                    <strong>실행</strong> 을 누르면 LLM 결과가 여기에 케이스별로
+                    쌓입니다.
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
+                    {blocks.map((b) =>
+                      b.phase ? (
+                        // 단계 헤더 — 케이스 묶음 구분
+                        <div
+                          key={b.uid}
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: "var(--blue-700)",
+                            marginTop: 4,
+                          }}
+                        >
+                          ▌ {b.title}
+                        </div>
+                      ) : (
+                        // 결과 케이스 카드 — 실행 중 마지막 블록은 페이드.
+                        <div
+                          key={b.uid}
+                          className={
+                            running && !b.done
+                              ? "il-case-card cf-meta-fade"
+                              : "il-case-card"
+                          }
+                          data-active={running && !b.done ? "true" : "false"}
+                        >
+                          <div
+                            style={{
+                              fontSize: 12.5,
+                              fontWeight: 700,
+                              color: "var(--text-default)",
+                              marginBottom: 8,
+                            }}
+                          >
+                            {b.done ? "✓ " : "▶ "}
+                            {b.title}
+                          </div>
+                          <pre className="il-code">{b.text || "…"}</pre>
+                          <JsonResultView raw={b.text} />
+                        </div>
+                      ),
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* 실행 버튼 — 설정 카드 밖 독립 줄(설정 ≠ 액션 시각 분리,
-          사용자 요청). 우측 정렬 유지. */}
+      {/* 노드 클릭 모달 (포털 불필요 — fixed overlay).
+          올인원: stageIO[stage] 사용. 단발(label/discover): stageIO 가
+          없으므로 system(입력) + blocks(출력 케이스)로 io 를 합성. */}
+      {openStage != null &&
+        (() => {
+          const meta = heroNodes.find((n) => n.stage === openStage);
+          if (!meta) return null;
+          const io: StageIO = isAllInOne
+            ? (stageIO[openStage] ?? { status: "idle" })
+            : {
+                status: singleStatus,
+                input: system || undefined,
+                // 결과 블록(phase 제외)을 케이스로 — 여러 문서면 스와이프.
+                cases: blocks
+                  .filter((b) => !b.phase)
+                  .map((b) => ({ label: b.title, text: b.text })),
+              };
+          return (
+            <StageModal
+              // 단계별 강제 리마운트 → 모달 내부 케이스 인덱스 리셋
+              key={openStage}
+              meta={meta}
+              io={io}
+              onClose={() => setOpenStage(null)}
+            />
+          );
+        })()}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// CaseCard — 실분류 1건 카드(시안 il-case-card + LabelChip).
+// 데이터원: stageIO[4].cases[i].text (LLM raw JSON). extractJson 으로
+// 파싱 성공하면 원시값(string/number/boolean) 필드를 LabelChip 으로,
+// 실패하면 raw 텍스트를 그대로 보여준다(목업 SAMPLE 금지).
+// ─────────────────────────────────────────────────────────────
+function CaseCard({ item }: { item: StageCase }): ReactNode {
+  const parsed = extractJson(item.text);
+  // 칩으로 표시할 원시값 필드만 추출(중첩 객체·배열은 제외 — JSON 뷰어용).
+  const chips: { k: string; v: string }[] =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? Object.entries(parsed as Record<string, unknown>)
+          .filter(
+            ([, v]) =>
+              typeof v === "string" ||
+              typeof v === "number" ||
+              typeof v === "boolean",
+          )
+          .map(([k, v]) => ({ k, v: String(v) }))
+      : [];
+  return (
+    <div className="il-case-card">
+      <div
+        style={{
+          fontSize: 12.5,
+          fontWeight: 700,
+          color: "var(--text-default)",
+          marginBottom: chips.length > 0 ? 8 : 0,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {item.label}
+      </div>
+      {chips.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {chips.map((c) => (
+            <span key={c.k} className="il-label-chip">
+              <span className="il-label-chip-k">{c.k}</span>
+              <span className="il-label-chip-v">{c.v}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <pre className="il-code" style={{ marginTop: 8 }}>
+          {item.text || "…"}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// StatusPill — 상태칩(idle/running/done/error). il-status CSS 와
+// 매핑(running→run). hero·OUTPUT 헤더 공용.
+// ─────────────────────────────────────────────────────────────
+function StatusPill({ status }: { status: StageStatus }): ReactNode {
+  const map: Record<StageStatus, { cls: string; label: string }> = {
+    idle: { cls: "idle", label: "대기" },
+    running: { cls: "run", label: "진행 중" },
+    done: { cls: "done", label: "완료" },
+    error: { cls: "run", label: "실패" },
+  };
+  const m = map[status] ?? map.idle;
+  return <span className={`il-status il-status--${m.cls}`}>{m.label}</span>;
+}
+
+// ─────────────────────────────────────────────────────────────
+// PipelineNode — hero 파이프라인 카드 노드(시안 갱신 라이트판).
+// 상태별 ring/bg/badge + emphasis(🤖 LLM) 배지 + 상태 dot.
+// 클릭 → StageModal(onClick).
+// ─────────────────────────────────────────────────────────────
+function PipelineNode({
+  node,
+  status,
+  onClick,
+}: {
+  node: { stage: number; label: string; hint: string; emphasis?: boolean };
+  status: StageStatus;
+  /** 없으면 클릭 불가 노드(단발 모드 — 입출력 모달 없음). */
+  onClick?: () => void;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      className="il-pipe-card"
+      data-status={status}
+      data-emphasis={node.emphasis ? "true" : "false"}
+      data-clickable={onClick ? "true" : "false"}
+      disabled={!onClick}
+      onClick={onClick}
+    >
       <div
         style={{
           display: "flex",
-          justifyContent: "flex-end",
-          marginBottom: 16,
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 8,
         }}
       >
-        {!running ? (
-          <button
-            type="button"
-            onClick={run}
-            className="cf-btn cf-btn--primary"
-          >
-            실행 (LLM 작동)
-          </button>
-        ) : (
-          <button type="button" onClick={stop} className="cf-btn">
-            중지
-          </button>
-        )}
+        <span className="il-pipe-badge">
+          {status === "done" ? "✓" : node.stage}
+        </span>
+        {node.emphasis && <span className="il-pipe-llm">🤖 LLM</span>}
+        <span style={{ flex: 1 }} />
+        <span className="il-pipe-dot" data-status={status}>
+          {status === "done"
+            ? "완료"
+            : status === "running"
+              ? "진행"
+              : status === "error"
+                ? "실패"
+                : "대기"}
+        </span>
       </div>
+      <div className="il-pipe-label">{node.label}</div>
+      <div className="il-pipe-hint">{node.hint}</div>
+    </button>
+  );
+}
 
-      {system && (
-        <div
-          style={{
-            ...card,
-            // medigate t-blue-6 강조 배경(보라 agent → blue 통일)
-            background: "var(--t-blue-6)",
-          }}
-        >
-          <div style={sectionTitle}>
-            🛈 시스템 인스트럭션 (LLM 에게 주는 지시 — 실습 핵심)
-          </div>
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              fontSize: 11.5,
-              lineHeight: 1.55,
-              color: "var(--text-subtle)",
-              margin: 0,
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, monospace",
-            }}
+// ─────────────────────────────────────────────────────────────
+// PipelineConnector — 노드 사이 SVG 화살표(시안 갱신).
+// passed(done→done)·active(다음 running)는 blue, done→대기는 green,
+// 그 외 muted. running 진입선은 dash 애니메이션.
+// ─────────────────────────────────────────────────────────────
+function PipelineConnector({
+  fromStatus,
+  toStatus,
+}: {
+  fromStatus: StageStatus;
+  toStatus: StageStatus;
+}): ReactNode {
+  const active =
+    toStatus === "running" ||
+    (fromStatus === "done" && toStatus === "done");
+  const stroke = active
+    ? "var(--blue-500)"
+    : fromStatus === "done"
+      ? "var(--green-400)"
+      : "#d4d8df";
+  const dashed = toStatus === "running";
+  const markerId = `il-pl-arrow-${stroke.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <div className="il-pipe-conn">
+      <svg width="28" height="14" viewBox="0 0 28 14" style={{ overflow: "visible" }}>
+        <defs>
+          <marker
+            id={markerId}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto"
           >
-            {system}
-          </pre>
-        </div>
-      )}
-
-      {err && (
-        <div
-          style={{
-            ...card,
-            borderColor: "var(--t-danger-8, #e5484d)",
-            color: "var(--t-danger-11, #e5484d)",
-            fontSize: 12.5,
-          }}
+            <path d="M0,0 L10,5 L0,10 z" fill={stroke} />
+          </marker>
+        </defs>
+        <line
+          x1="0"
+          y1="7"
+          x2="22"
+          y2="7"
+          stroke={stroke}
+          strokeWidth="1.8"
+          strokeDasharray={dashed ? "4 3" : undefined}
+          markerEnd={`url(#${markerId})`}
         >
-          ⚠️ {err}
-        </div>
-      )}
-
-      {/* ── 올인원: DART식 노드 그래프 + 클릭 모달 ──
-          (사용자 결정 2026-05-19) 페이드/접이식 대신 그래프가
-          결과 표면. 노드 클릭 → StageModal 로 입출력 확인. */}
-      {isAllInOne && (
-        <div style={card}>
-          <div style={sectionTitle}>
-            자동 {graphNodes.length}단계 파이프라인 (노드를 클릭하면
-            입력·출력 확인)
-          </div>
-          <PipelineGraph
-            stageNodes={graphNodes}
-            stageStates={stageStates}
-            onStageClick={(st) => setOpenStage(st)}
-          />
-          <div
-            style={{
-              fontSize: 11,
-              color: "var(--text-subtle)",
-              lineHeight: 1.6,
-            }}
-          >
-            {graphNodes.map((n) => (
-              <div key={n.stage}>
-                <strong>{n.stage}. {n.label}</strong> — {n.hint}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── label/discover: 기존 페이드인-아웃 (미변경) ── */}
-      {!isAllInOne && running && blocks.length > 0 && (() => {
-        const b = blocks[blocks.length - 1];
-        return (
-          <div key={b.uid} className="cf-meta-fade" style={card}>
-            <div style={sectionTitle}>
-              {b.phase ? "▌ " : b.done ? "✓ " : "▶ "}
-              {b.title}
-            </div>
-            {!b.phase && (
-              <>
-                <pre
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    color: "var(--text-default)",
-                    margin: 0,
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, monospace",
-                  }}
-                >
-                  {b.text || "…"}
-                </pre>
-                <JsonResultView raw={b.text} />
-              </>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* label/discover 완료 후: 결과 아카이브(접힘 시작). */}
-      {!isAllInOne && !running && blocks.length > 0 && (
-        <div style={card}>
-          <div style={sectionTitle}>실행 결과 (펼쳐서 확인)</div>
-          {blocks.map((b) =>
-            b.phase ? (
-              <div
-                key={b.uid}
-                style={{
-                  margin: "14px 0 6px",
-                  fontSize: 12.5,
-                  fontWeight: 700,
-                  color: "var(--text-default)",
-                }}
-              >
-                ▌ {b.title}
-              </div>
-            ) : (
-              <details
-                key={b.uid}
-                style={{
-                  borderTop: "1px solid var(--t-neutral-8)",
-                  padding: "8px 0",
-                }}
-              >
-                <summary
-                  style={{
-                    cursor: "pointer",
-                    fontSize: 12,
-                    color: "var(--text-subtle)",
-                  }}
-                >
-                  {b.done ? "✓ " : "▶ "}
-                  {b.title}
-                </summary>
-                <pre
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    color: "var(--text-default)",
-                    margin: "8px 0 0",
-                    fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, monospace",
-                  }}
-                >
-                  {b.text}
-                </pre>
-                <JsonResultView raw={b.text} />
-              </details>
-            ),
+          {dashed && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="14"
+              to="0"
+              dur="0.8s"
+              repeatCount="indefinite"
+            />
           )}
-        </div>
-      )}
-      </div>
-
-      {/* 올인원 노드 클릭 모달 (포털 불필요 — fixed overlay) */}
-      {isAllInOne && openStage != null && (() => {
-        // graphNodes 기준 — 일반 올인원(4노드)은 ⑤ 클릭 불가
-        const meta = graphNodes.find((n) => n.stage === openStage);
-        if (!meta) return null;
-        return (
-          <StageModal
-            // 단계별 강제 리마운트 → 모달 내부 케이스 인덱스 리셋
-            key={openStage}
-            meta={meta}
-            io={stageIO[openStage] ?? { status: "idle" }}
-            onClose={() => setOpenStage(null)}
-          />
-        );
-      })()}
+        </line>
+      </svg>
     </div>
   );
 }

@@ -369,6 +369,11 @@
   --lab-success-text: #0a7a73;
   --lab-success-bg: #e6f6f4;
   --lab-success-border: #b6e3dc;
+  --lab-danger-text: #b91c1c;
+  --lab-danger-bg: #fdecec;
+  /* 시안 파이프라인 노드 상태 ring/dot 색(green/red 보강) */
+  --green-400: #34c39a;
+  --red-300: #f3a9a9;
   /* 진행 로그 터미널 */
   --lab-term-bg: #0d1218;
   --lab-term-fg: #c8d4e3;
@@ -651,4 +656,439 @@
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 12px;
+}
+
+/* ============================================================
+   data-load / meta-lab 워크벤치 공용 (실험 시안 B, 2026-05-20)
+   il-* 프리픽스(검색·라벨링 그룹 공통) 재사용 + 메뉴별 보강.
+   ============================================================ */
+
+/* 좌측 도메인 리스트 버튼(시안 data-load·meta-lab B 세로 리스트) */
+.il-domain-btn {
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--t-neutral-8);
+  background: transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-default);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.12s;
+}
+.il-domain-btn:hover {
+  border-color: var(--t-neutral-16);
+}
+.il-domain-btn[aria-pressed="true"] {
+  border-color: var(--blue-400);
+  background: var(--surface-default);
+  font-weight: 600;
+}
+
+/* 파이프라인 노드(시안 PipelineRow / DataPipeline — div 기반 좌→우) */
+.il-pipe-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+.il-pipe-node {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  text-align: left;
+  background: var(--surface-default);
+  border: 1.5px solid var(--t-neutral-12);
+  border-radius: 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.12s;
+  appearance: none;
+  color: var(--text-default);
+}
+.il-pipe-node:hover {
+  border-color: var(--blue-300);
+}
+.il-pipe-node[data-status="running"],
+.il-pipe-node[data-status="run"] {
+  border-color: var(--blue-400);
+  background: var(--lab-blue-bg);
+}
+.il-pipe-node[data-status="done"] {
+  border-color: var(--lab-success-border);
+  background: var(--lab-success-bg);
+}
+.il-pipe-node[data-status="error"],
+.il-pipe-node[data-status="err"] {
+  border-color: #f3c2c2;
+  background: var(--lab-danger-bg, #fdecec);
+}
+.il-pipe-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--medi-gray-100);
+  font-family: var(--lab-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.il-pipe-node[data-status="running"] .il-pipe-num,
+.il-pipe-node[data-status="run"] .il-pipe-num {
+  background: var(--blue-100);
+  color: var(--blue-700);
+}
+.il-pipe-node[data-status="done"] .il-pipe-num {
+  background: var(--lab-success-bg);
+  color: var(--lab-success-text);
+}
+.il-pipe-chev {
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  color: var(--neutral-500);
+  flex-shrink: 0;
+}
+
+/* hero(meta-lab B 파이프라인 hero) — 라이트 통일(시안 갱신 2026-05-20).
+   다른 카드와 일관된 시각 언어: white→blue tint gradient. */
+.il-hero {
+  background: linear-gradient(180deg, var(--surface-default), var(--lab-blue-bg) 100%);
+  border: 1px solid var(--lab-blue-border);
+  border-radius: var(--r-lg);
+  padding: 24px;
+  margin-bottom: 16px;
+}
+.il-hero-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--blue-700);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.il-hero-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-default);
+  letter-spacing: -0.01em;
+}
+.il-hero-sub {
+  font-size: 11px;
+  color: var(--text-subtle);
+  margin-top: 4px;
+}
+
+/* 파이프라인 v2 — 카드 노드 + SVG 화살표 커넥터(시안 갱신).
+   노드가 가로 폭을 균등 분배(flex:1)해 전체 폭을 채운다. 좁으면
+   최소폭 보장 + 가로 스크롤. 노드 적을 때 가운데 정렬. */
+.il-pipe {
+  position: relative;
+  padding: 8px 4px;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0;
+  overflow-x: auto;
+}
+.il-pipe-card {
+  flex: 1 1 0;
+  min-width: 150px;
+  max-width: 260px;
+  appearance: none;
+  cursor: pointer;
+  text-align: left;
+  background: var(--surface-default);
+  border: 1.5px solid var(--t-neutral-12);
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+  position: relative;
+  transition: transform 0.12s, box-shadow 0.12s;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.il-pipe-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+/* 클릭 불가 노드(단발 모드) — hover lift·커서 제거(일반 hover override) */
+.il-pipe-card[data-clickable="false"] {
+  cursor: default;
+}
+.il-pipe-card[data-clickable="false"]:hover {
+  transform: none;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+.il-pipe-card[data-status="running"] {
+  background: var(--lab-blue-bg);
+  border-color: var(--blue-400);
+  box-shadow: 0 0 0 4px rgba(33, 148, 243, 0.12);
+}
+.il-pipe-card[data-status="done"] {
+  background: var(--lab-success-bg);
+  border-color: var(--green-400);
+}
+.il-pipe-card[data-status="error"] {
+  background: var(--lab-danger-bg);
+  border-color: var(--red-300);
+}
+.il-pipe-card[data-emphasis="true"][data-status="idle"] {
+  background: #fafbfd;
+}
+/* num 배지 */
+.il-pipe-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--medi-gray-100);
+  color: var(--neutral-600);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--lab-font-mono);
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.il-pipe-card[data-emphasis="true"][data-status="idle"] .il-pipe-badge {
+  background: var(--blue-100);
+  color: var(--blue-700);
+}
+.il-pipe-card[data-status="running"] .il-pipe-badge {
+  background: var(--blue-500);
+  color: #fff;
+}
+.il-pipe-card[data-status="done"] .il-pipe-badge {
+  background: var(--green-400);
+  color: #fff;
+}
+.il-pipe-card[data-status="error"] .il-pipe-badge {
+  background: var(--red-300);
+  color: #fff;
+}
+/* LLM 배지(emphasis 노드) */
+.il-pipe-llm {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--blue-700);
+  background: var(--surface-default);
+  border: 1px solid var(--blue-200);
+  padding: 2px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.il-pipe-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-default);
+  line-height: 1.35;
+  margin-bottom: 4px;
+}
+.il-pipe-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-subtle);
+  min-height: 28px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 상태 dot 텍스트 */
+.il-pipe-dot {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.il-pipe-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+}
+.il-pipe-dot[data-status="idle"] {
+  color: var(--text-subtle);
+}
+.il-pipe-dot[data-status="idle"]::before {
+  display: none;
+}
+.il-pipe-dot[data-status="running"] {
+  color: var(--blue-700);
+}
+.il-pipe-dot[data-status="running"]::before {
+  background: var(--blue-500);
+  animation: ilPulse 1.2s infinite;
+}
+.il-pipe-dot[data-status="done"] {
+  color: var(--lab-success-text);
+}
+.il-pipe-dot[data-status="done"]::before {
+  background: var(--green-400);
+}
+.il-pipe-dot[data-status="error"] {
+  color: var(--lab-danger-text);
+}
+.il-pipe-dot[data-status="error"]::before {
+  background: var(--red-300);
+}
+/* SVG 화살표 커넥터 */
+.il-pipe-conn {
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* 테이블 인벤토리(data-load B) */
+.il-tbl-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--surface-default);
+  border: 1px solid var(--t-neutral-8);
+  border-radius: 8px;
+}
+.il-tbl-row[data-loaded="false"] {
+  background: var(--medi-gray-50);
+  border-color: var(--t-neutral-12);
+  opacity: 0.75;
+}
+.il-tbl-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--lab-blue-bg);
+  color: var(--blue-600);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.il-tbl-row[data-loaded="false"] .il-tbl-icon {
+  background: var(--medi-gray-100);
+  color: var(--neutral-500);
+}
+
+/* 미리보기 테이블(data-load PreviewModal CSV 표) */
+.il-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.il-preview-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--medi-gray-50);
+  border-bottom: 2px solid var(--t-neutral-12);
+  font-weight: 700;
+  color: var(--text-default);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+  font-family: var(--lab-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.il-preview-table th .il-col-num {
+  color: var(--text-subtle);
+  margin-right: 6px;
+}
+.il-preview-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--t-neutral-8);
+  color: var(--text-subtle);
+  font-family: var(--lab-font-mono);
+  white-space: nowrap;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.il-preview-table tr:nth-child(even) td {
+  background: var(--medi-gray-50);
+}
+
+/* 라벨 칩(meta-lab 케이스 결과 topic/audience/actionability) */
+.il-label-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--medi-gray-100);
+  font-family: var(--lab-font-mono);
+}
+.il-label-chip-k {
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+.il-label-chip-v {
+  color: var(--blue-700);
+  font-weight: 700;
+}
+
+/* 케이스 카드(meta-lab 케이스 스트림) */
+.il-case-card {
+  padding: 12px 14px;
+  background: var(--surface-default);
+  border: 1px solid var(--t-neutral-8);
+  border-radius: 10px;
+}
+.il-case-card[data-active="true"] {
+  background: var(--lab-blue-bg);
+  border-color: var(--lab-blue-border);
+}
+
+/* 코드 블록(meta-lab 스키마·시스템 인스트럭션) */
+.il-code {
+  background: var(--medi-gray-50);
+  border: 1px solid var(--t-neutral-8);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-family: var(--lab-font-mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-default);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  margin: 0;
+}
+
+/* 모달 탭(meta-lab StageModal 입력/출력) */
+.il-modal-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text-subtle);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.il-modal-tab[aria-selected="true"] {
+  color: var(--text-default);
+  border-bottom-color: var(--blue-500);
 }

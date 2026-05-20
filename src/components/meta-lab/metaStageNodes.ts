@@ -54,6 +54,29 @@ export const META_STAGE_NODES: readonly StageNodeMeta[] = [
   },
 ];
 
+/**
+ * 단발 작업(label/discover) 노드 — 파이프라인이 아니라 단일 단계지만,
+ * 실험 B 디자인은 hero 노드그래프를 항상 그린다(사용자 결정 2026-05-20,
+ * 레퍼런스 충실). stageIO 가 없으므로 blocks 진행으로 상태를 파생한다.
+ * 노드 클릭 모달은 띄우지 않는다(단발은 결과가 우측 OUTPUT 카드에 직접).
+ */
+export const META_LABEL_NODES: readonly StageNodeMeta[] = [
+  {
+    stage: 1,
+    label: "메타 라벨링",
+    hint: "문서 1건씩 시스템 인스트럭션으로 분류 메타(JSON) 부착",
+    emphasis: true,
+  },
+];
+export const META_DISCOVER_NODES: readonly StageNodeMeta[] = [
+  {
+    stage: 1,
+    label: "스키마 발굴",
+    hint: "문서 묶음에서 분류 체계(필드·값) 후보를 LLM 이 제안",
+    emphasis: true,
+  },
+];
+
 /** 단계별 입출력 (노드 클릭 모달 데이터원) */
 export interface MetaStageIO {
   status: "idle" | "running" | "done" | "error";

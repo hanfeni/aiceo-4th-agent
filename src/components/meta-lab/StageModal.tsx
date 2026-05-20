@@ -24,7 +24,9 @@ export interface StageModalProps {
 const overlay: CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,0.42)",
+  // 시안 톤 — 짙은 네이비 반투명 + 블러(il-* 라인업과 정합).
+  background: "rgba(15,23,42,.45)",
+  backdropFilter: "blur(4px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -35,32 +37,11 @@ const panel: CSSProperties = {
   background: "var(--surface-default, #fff)",
   border: "1px solid var(--t-neutral-8, #e4e4e7)",
   borderRadius: "var(--r-lg, 14px)",
-  width: "min(820px, 100%)",
+  width: "min(860px, 100%)",
   maxHeight: "86vh",
   display: "flex",
   flexDirection: "column",
   boxShadow: "0 24px 64px rgba(0,0,0,0.22)",
-};
-const tabBtn = (active: boolean): CSSProperties => ({
-  appearance: "none",
-  border: "none",
-  background: "transparent",
-  padding: "10px 14px",
-  fontSize: 12.5,
-  fontWeight: 700,
-  cursor: "pointer",
-  color: active ? "var(--text-default)" : "var(--text-subtle)",
-  borderBottom: active
-    ? "2px solid var(--t-blue-9, #3b82f6)"
-    : "2px solid transparent",
-});
-const pre: CSSProperties = {
-  whiteSpace: "pre-wrap",
-  fontSize: 11.5,
-  lineHeight: 1.55,
-  color: "var(--text-default)",
-  margin: 0,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
 };
 /** 케이스 스와이프 좌우 화살표 버튼 (양끝에선 비활성) */
 const navBtn = (disabled: boolean): CSSProperties => ({
@@ -163,6 +144,7 @@ export function StageModal({
         </div>
 
         <div
+          role="tablist"
           style={{
             display: "flex",
             gap: 4,
@@ -172,14 +154,18 @@ export function StageModal({
         >
           <button
             type="button"
-            style={tabBtn(tab === "input")}
+            role="tab"
+            className="il-modal-tab"
+            aria-selected={tab === "input"}
             onClick={() => setTab("input")}
           >
             입력 (인스트럭션·프롬프트)
           </button>
           <button
             type="button"
-            style={tabBtn(tab === "output")}
+            role="tab"
+            className="il-modal-tab"
+            aria-selected={tab === "output"}
             onClick={() => setTab("output")}
           >
             출력 (LLM 결과)
@@ -191,7 +177,7 @@ export function StageModal({
           style={{ overflowY: "auto", padding: 18, minHeight: 120 }}
         >
           {tab === "input" ? (
-            <pre style={pre}>
+            <pre className="il-code">
               {io.input ?? "(이 단계 입력이 아직 없습니다)"}
             </pre>
           ) : io.status === "running" ? (
@@ -260,12 +246,12 @@ export function StageModal({
                   ▶
                 </button>
               </div>
-              <pre style={pre}>{cur.text}</pre>
+              <pre className="il-code">{cur.text}</pre>
               <JsonResultView raw={cur.text} />
             </>
           ) : io.output ? (
             <>
-              <pre style={pre}>{io.output}</pre>
+              <pre className="il-code">{io.output}</pre>
               <JsonResultView raw={io.output} />
             </>
           ) : (

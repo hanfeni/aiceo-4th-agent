@@ -9,6 +9,9 @@ import {
   type ReactNode,
 } from "react";
 import { isXlsxFile, xlsxToCsv } from "@/lib/files/xlsxToCsv";
+import { PreviewModal, type Preview } from "./PreviewModal";
+import { ConfirmModal } from "@/components/common/ConfirmModal";
+import { Terminal } from "@/components/common/LabWorkbench";
 
 /**
  * 업로드 파일을 적재용 csv File 로 정규화한다.
@@ -89,37 +92,71 @@ interface TableInfo {
   rowCount: number;
 }
 
-interface Preview {
-  columns: string[];
-  rows: string[][];
-  totalNote: string;
+
+const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 6 };
+
+// 진행 로그에서 "  N/M 적재 중…" 의 N·M 을 뽑아 진행 수치를 추론한다.
+// done 라인(✓)이 있으면 done=true. 시안 B 의 INSERT 노드 sub("N/M") 데이터원.
+function parseLoadProgress(log: string[]): {
+  loaded: number | null;
+  total: number | null;
+  done: boolean;
+} {
+  let loaded: number | null = null;
+  let total: number | null = null;
+  let done = false;
+  for (const line of log) {
+    const m = line.match(/([\d,]+)\s*\/\s*([\d,]+)\s*적재 중/);
+    if (m) {
+      loaded = Number(m[1].replace(/,/g, ""));
+      total = Number(m[2].replace(/,/g, ""));
+    }
+    if (line.startsWith("✓")) done = true;
+  }
+  return { loaded, total, done };
 }
 
-const card: CSSProperties = {
-  background: "var(--surface-default)",
-  border: "1px solid var(--t-neutral-8)",
-  borderRadius: "var(--r-lg)",
-  padding: 20,
-  marginBottom: 16,
-};
-const sectionTitle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "var(--text-default)",
-  marginBottom: 10,
-};
-const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8 };
-const btnRow: CSSProperties = {
-  marginTop: 16,
-  display: "flex",
-  justifyContent: "flex-end",
-};
-const fieldLabel: CSSProperties = {
-  fontSize: 11.5,
-  fontWeight: 600,
-  color: "var(--text-subtle)",
-  marginBottom: 6,
-};
+type PipeStatus = "idle" | "run" | "done";
+
+// 진행 로그 → CSV→SQLite 4단계 파이프라인 노드 상태 매핑(시안 DataPipeline).
+//  - 로그 없음 → 4노드 idle
+//  - fetch/수신/파싱 로그 → 앞 3단계(fetch·파싱·스키마) done
+//  - "적재 중" 진행 로그 → INSERT run
+//  - "✓ 완료" → 전부 done
+function deriveStages(
+  log: string[],
+  running: boolean,
+): { label: string; sub: string; status: PipeStatus }[] {
+  const prog = parseLoadProgress(log);
+  const joined = log.join("\n");
+  const fetched =
+    /fetch|수신|파싱|업로드 문서 파싱|파일 파싱/.test(joined) || running;
+  const inserting = /적재 중/.test(joined);
+  const done = prog.done;
+
+  // 앞 3단계: fetch 로그가 있으면 done(완료 시 전부 done).
+  const early: PipeStatus = done ? "done" : fetched ? "done" : "idle";
+  // INSERT 단계: 완료면 done, 적재 중이면 run, fetch 됐으면 run(곧 시작), 아니면 idle.
+  const insertStatus: PipeStatus = done
+    ? "done"
+    : inserting || (running && fetched)
+      ? "run"
+      : "idle";
+  const insertSub = done
+    ? prog.loaded != null
+      ? `${prog.loaded.toLocaleString()} rows`
+      : "완료"
+    : prog.loaded != null && prog.total != null
+      ? `${prog.loaded.toLocaleString()}/${prog.total.toLocaleString()}`
+      : "INSERT INTO";
+
+  return [
+    { label: "GitHub", sub: "raw fetch", status: early },
+    { label: "CSV 파싱", sub: "컬럼 추론", status: early },
+    { label: "스키마 생성", sub: "CREATE TABLE", status: early },
+    { label: "INSERT", sub: insertSub, status: insertStatus },
+  ];
+}
 
 export function DataLoadView(): ReactNode {
   const [domain, setDomain] = useState<string>("sangkwon");
@@ -334,496 +371,543 @@ export function DataLoadView(): ReactNode {
   }
 
   const cur = DOMAINS.find((d) => d.id === domain);
+  // 현재 도메인의 적재 상태(테이블명·행수) — tables 상태에서 조회.
+  const curTable = tables.find((t) => t.domain === domain);
+  const busy = loading || uploading;
+  const prog = parseLoadProgress(log);
+  // 워크벤치 상태 칩: 실행 중이면 run, 로그에 ✓ 완료가 있으면 done, 아니면 idle.
+  const benchStatus: PipeStatus = busy ? "run" : prog.done ? "done" : "idle";
+  const stages = deriveStages(log, busy);
 
   return (
     <div
       className="thin-scroll"
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "24px 20px" }}>
-        <h1
-          style={{
-            fontSize: 18,
-            fontWeight: 800,
-            color: "var(--text-default)",
-            marginBottom: 4,
-          }}
-        >
-          데이터 적재 — Text-to-SQL 준비
-        </h1>
-        <p
-          style={{
-            fontSize: 12.5,
-            color: "var(--text-subtle)",
-            marginBottom: 20,
-          }}
-        >
-          GitHub public CSV 를 받아 SQLite 테이블로 적재합니다(검색
-          실습의 Text-to-SQL 이 이 테이블을 질의). 도메인을 골라
-          적재한 뒤, 검색 실습에서 자연어로 물어보세요.
-        </p>
-
-        <div style={card}>
-          <div style={sectionTitle}>① 적재할 도메인 선택</div>
-          <div style={chipRow}>
-            {DOMAINS.map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                className="cf-pill"
-                aria-pressed={domain === d.id}
-                onClick={() => setDomain(d.id)}
-                title={d.audience}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
-          <div
+      <div
+        style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 64px" }}
+      >
+        {/* 헤더(시안 LabPage) — accent 칩 + 타이틀 + 서브타이틀 */}
+        <div style={{ marginBottom: 24 }}>
+          <span
             style={{
-              marginTop: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              color: "var(--blue-600)",
+              textTransform: "uppercase",
+              background: "var(--lab-blue-bg-2)",
+              padding: "3px 8px",
+              borderRadius: 4,
             }}
           >
-            <button
-              type="button"
-              className="cf-btn"
-              style={{ height: 26, padding: "0 12px", fontSize: 11.5 }}
-              onClick={openPreview}
-            >
-              데이터 보기
-            </button>
-            {cur && (
-              <span
-                style={{
-                  fontSize: 11.5,
-                  color: "var(--text-subtle)",
-                  lineHeight: 1.6,
-                }}
-              >
-                질의 예시:{" "}
-                <span style={{ color: "var(--cf-soft-text)" }}>
-                  “{cur.sample}”
-                </span>
-              </span>
-            )}
-          </div>
-        </div>
-
-        <div style={card}>
-          <div style={sectionTitle}>② 적재 행수 상한</div>
-          <div style={fieldLabel}>
-            큰 도메인(상권 1만 · 의료/금융 2만)은 메모리·시간 절약을
-            위해 상한을 둡니다.
-          </div>
-          <div style={chipRow}>
-            {ROW_LIMITS.map((c) => (
-              <button
-                key={c}
-                type="button"
-                className="cf-pill"
-                aria-pressed={limit === c}
-                onClick={() => setLimit(c)}
-                disabled={loading}
-              >
-                {c.toLocaleString()}행
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ ...btnRow, marginBottom: 16 }}>
-          <button
-            type="button"
-            onClick={runLoad}
-            disabled={loading}
-            className="cf-btn cf-btn--primary"
-          >
-            {loading ? "적재 중…" : "이 도메인 적재 시작"}
-          </button>
-        </div>
-
-        {/* 로컬 CSV 업로드 — 동적 "내 데이터(custom)" 도메인 추가.
-            고정 5개와 별개로 사용자가 직접 고른 CSV 를 적재한다.
-            적재 후 챗 드롭다운(데이터조회)에 "내 데이터" 가 등장. */}
-        <div style={card}>
-          <div style={sectionTitle}>③ 내 표 데이터 업로드 (선택)</div>
-          <div style={fieldLabel}>
-            로컬 <strong>CSV 또는 엑셀(.xlsx)</strong> 파일을 올리면 6번째
-            “내 데이터” 도메인으로 적재되어, 검색 실습과 챗(데이터조회
-            드롭다운)에서 바로 질의할 수 있습니다. 엑셀은 첫 시트가 CSV 로
-            변환되어 적재됩니다. 위 ② 적재 행수 상한이 함께 적용됩니다.
-          </div>
-          <div
+            ② 검색 · 라벨링 실습
+          </span>
+          <h1
             style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
+              fontSize: 22,
+              fontWeight: 800,
+              color: "var(--text-default)",
+              margin: "8px 0 0",
+              letterSpacing: "-0.015em",
             }}
           >
-            {/* 네이티브 file input 숨김 — 명확한 버튼이 트리거(검색
-                업로드와 동일 UX). 선택 파일명은 옆에 표시. */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              disabled={uploading}
-              onChange={(e) => {
-                const f = e.target.files?.[0] ?? null;
-                setUploadFile(f);
-                if (f && !uploadLabel)
-                  setUploadLabel(f.name.replace(/\.[^.]+$/, ""));
-              }}
-              style={{ display: "none" }}
-            />
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="cf-btn"
-                style={{ flexShrink: 0 }}
-              >
-                📁 CSV·엑셀 파일 선택
-              </button>
-              <span
-                style={{
-                  fontSize: 12,
-                  color: uploadFile
-                    ? "var(--text-default)"
-                    : "var(--text-subtle)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {uploadFile ? uploadFile.name : "선택된 파일 없음"}
-              </span>
-            </div>
-            <input
-              type="text"
-              value={uploadLabel}
-              disabled={uploading}
-              placeholder="표시 라벨 (예: 우리 회사 매출, 미입력 시 파일명)"
-              maxLength={60}
-              onChange={(e) => setUploadLabel(e.target.value)}
-              style={{
-                fontSize: 12,
-                padding: "6px 10px",
-                borderRadius: "var(--r-md, 8px)",
-                border: "1px solid var(--t-neutral-8)",
-                background: "var(--surface-default)",
-                color: "var(--text-default)",
-                maxWidth: 360,
-              }}
-            />
-          </div>
-          <div style={btnRow}>
-            <button
-              type="button"
-              onClick={runUpload}
-              disabled={uploading || !uploadFile}
-              className="cf-btn cf-btn--primary"
-            >
-              {uploading ? "업로드 적재 중…" : "이 파일 업로드 적재"}
-            </button>
-          </div>
-        </div>
-
-        {err && (
-          <div
+            데이터 적재
+          </h1>
+          <p
             style={{
-              ...card,
-              borderColor: "var(--t-danger-8, #e5484d)",
-              color: "var(--t-danger-11, #e5484d)",
-              fontSize: 12.5,
+              fontSize: 13,
+              color: "var(--text-subtle)",
+              margin: "6px 0 0",
+              lineHeight: 1.55,
+              maxWidth: 680,
             }}
           >
-            ⚠️ {err}
-          </div>
-        )}
+            GitHub public CSV → SQLite 파이프라인을 추적하면서 도메인 테이블
+            인벤토리를 한눈에 관리합니다. 적재한 뒤 검색 실습에서 Text-to-SQL
+            로 자연어 질의해 보세요.
+          </p>
+        </div>
 
-        {log.length > 0 && (
-          <div style={card}>
-            <div style={sectionTitle}>진행 상황</div>
-            <pre
-              style={{
-                margin: 0,
-                padding: "10px 12px",
-                fontSize: 11,
-                lineHeight: 1.55,
-                color: "var(--text-subtle)",
-                background: "var(--cf-soft-bg)",
-                borderRadius: "var(--r-md, 8px)",
-                whiteSpace: "pre-wrap",
-                fontFamily:
-                  "ui-monospace, SFMono-Regular, Menlo, monospace",
-              }}
-            >
-              {log.join("\n")}
-            </pre>
-          </div>
-        )}
+        <div className="il-bench">
+          {/* ─── 좌측: 설정 패널 (sticky) ─── */}
+          <div className="il-bench-aside">
+            <div className="il-card il-config">
+              <div className="il-config-title">적재 설정</div>
 
-        <div style={card}>
-          <div style={sectionTitle}>적재된 테이블</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {tables.map((t) => (
+              {/* 도메인 세로 리스트(시안 B) — 우측에 원본 행수 약칭 */}
+              <div className="il-flabel">도메인</div>
               <div
-                key={t.domain}
                 style={{
                   display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "8px 12px",
-                  border: "1px solid var(--t-neutral-8)",
-                  borderRadius: "var(--r-md, 8px)",
-                  fontSize: 12.5,
-                  opacity: t.loaded ? 1 : 0.5,
+                  flexDirection: "column",
+                  gap: 4,
+                  marginBottom: 14,
                 }}
               >
-                <span style={{ color: "var(--text-default)" }}>
-                  <strong>{t.label}</strong>
-                  <span
-                    style={{ marginLeft: 8, color: "var(--text-subtle)" }}
-                  >
-                    {t.loaded
-                      ? `${t.table} · ${t.rowCount.toLocaleString()}행`
-                      : "미적재"}
-                  </span>
-                </span>
-                {t.loaded && (
-                  <button
-                    type="button"
-                    className="cf-btn"
-                    style={{ height: 28, padding: "0 12px", fontSize: 12 }}
-                    onClick={() => setConfirmDel(t.domain)}
-                  >
-                    초기화
-                  </button>
-                )}
+                {DOMAINS.map((d) => {
+                  const ti = tables.find((t) => t.domain === d.id);
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className="il-domain-btn"
+                      aria-pressed={domain === d.id}
+                      onClick={() => setDomain(d.id)}
+                      disabled={busy}
+                      title={d.audience}
+                    >
+                      <span>{d.label}</span>
+                      <span
+                        className="il-mono"
+                        style={{ fontSize: 10.5, color: "var(--text-subtle)" }}
+                      >
+                        {ti?.loaded
+                          ? `${(ti.rowCount / 1000).toFixed(1)}k`
+                          : "—"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
 
-      {confirmDel && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-          onClick={() => setConfirmDel(null)}
-        >
-          <div
-            style={{ ...card, maxWidth: 380, margin: 0 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={sectionTitle}>테이블 초기화 확인</div>
-            <p
-              style={{
-                fontSize: 12.5,
-                color: "var(--text-subtle)",
-                lineHeight: 1.6,
-                marginBottom: 16,
-              }}
-            >
-              <strong style={{ color: "var(--text-default)" }}>
-                {DOMAINS.find((d) => d.id === confirmDel)?.label ??
-                  confirmDel}
-              </strong>{" "}
-              테이블을 삭제합니다. Text-to-SQL 로 질의하려면 다시
-              적재해야 합니다. 계속할까요?
-            </p>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: 8,
-              }}
-            >
-              <button
-                type="button"
-                className="cf-btn"
-                onClick={() => setConfirmDel(null)}
-              >
-                취소
-              </button>
+              {/* 적재 행수 상한 — 기존 ROW_LIMITS 칩(limit 상태 그대로) */}
+              <div className="il-flabel">
+                적재 행수 상한
+                <div className="il-flabel-hint">
+                  큰 도메인(상권 1만 · 의료/금융 2만)은 메모리·시간 절약을
+                  위해 상한을 둡니다.
+                </div>
+              </div>
+              <div style={{ ...chipRow, marginBottom: 16 }}>
+                {ROW_LIMITS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className="cf-pill"
+                    aria-pressed={limit === c}
+                    onClick={() => setLimit(c)}
+                    disabled={busy}
+                  >
+                    <span className="il-mono">{c.toLocaleString()}</span>
+                  </button>
+                ))}
+              </div>
+
               <button
                 type="button"
                 className="cf-btn cf-btn--primary"
-                onClick={() => void dropDomain(confirmDel)}
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={runLoad}
+                disabled={busy}
               >
-                초기화
+                {loading ? "적재 중…" : "적재 시작"}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 데이터 보기 — 적재 전 CSV 앞 20행 표 미리보기.
-          index-lab "문서 원본 보기" 의 표(CSV) 버전. */}
-      {showPreview && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.42)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-            padding: 24,
-          }}
-          onClick={() => setShowPreview(false)}
-        >
-          <div
-            style={{
-              background: "var(--surface-default)",
-              border: "1px solid var(--t-neutral-8)",
-              borderRadius: "var(--r-lg, 14px)",
-              width: "min(960px, 100%)",
-              maxHeight: "86vh",
-              display: "flex",
-              flexDirection: "column",
-              boxShadow: "0 24px 64px rgba(0,0,0,0.22)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "16px 18px",
-                borderBottom: "1px solid var(--t-neutral-8)",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 800,
-                    color: "var(--text-default)",
-                  }}
-                >
-                  {cur?.label ?? domain} — 데이터 미리보기
-                </div>
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    color: "var(--text-subtle)",
-                    marginTop: 3,
-                  }}
-                >
-                  {preview?.totalNote ??
-                    (previewLoading ? "불러오는 중…" : "")}{" "}
-                  · 적재 전 GitHub 원본 CSV
-                </div>
-              </div>
               <button
                 type="button"
-                onClick={() => setShowPreview(false)}
-                aria-label="닫기"
+                className="cf-btn"
                 style={{
-                  appearance: "none",
-                  border: "none",
-                  background: "transparent",
-                  fontSize: 20,
-                  cursor: "pointer",
+                  width: "100%",
+                  justifyContent: "center",
+                  marginTop: 6,
+                }}
+                onClick={openPreview}
+                disabled={busy}
+              >
+                데이터 미리보기 (앞 20행)
+              </button>
+
+              {/* 현재 도메인 테이블명·질의 예시(시안 B 하단 dashed) */}
+              <div
+                style={{
+                  marginTop: 14,
+                  paddingTop: 12,
+                  borderTop: "1px dashed var(--t-neutral-12)",
+                  fontSize: 11,
                   color: "var(--text-subtle)",
-                  padding: 4,
                 }}
               >
-                ×
-              </button>
-            </div>
-            <div
-              className="thin-scroll"
-              style={{ overflow: "auto", padding: 16, minHeight: 160 }}
-            >
-              {previewLoading ? (
                 <div
-                  style={{ fontSize: 12, color: "var(--text-subtle)" }}
-                >
-                  ▶ CSV 원본을 불러오는 중…
-                </div>
-              ) : preview ? (
-                <table
                   style={{
-                    borderCollapse: "collapse",
-                    fontSize: 11,
-                    width: "100%",
+                    fontWeight: 600,
+                    color: "var(--text-default)",
+                    marginBottom: 4,
                   }}
                 >
-                  <thead>
-                    <tr>
-                      {preview.columns.map((c) => (
-                        <th
-                          key={c}
-                          style={{
-                            textAlign: "left",
-                            padding: "6px 10px",
-                            borderBottom:
-                              "2px solid var(--t-neutral-8)",
-                            color: "var(--text-default)",
-                            fontWeight: 700,
-                            whiteSpace: "nowrap",
-                            position: "sticky",
-                            top: 0,
-                            background: "var(--surface-default)",
-                          }}
-                        >
-                          {c}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {preview.rows.map((row, ri) => (
-                      <tr key={ri}>
-                        {row.map((cell, ci) => (
-                          <td
-                            key={ci}
-                            style={{
-                              padding: "5px 10px",
-                              borderBottom:
-                                "1px solid var(--t-neutral-8)",
-                              color: "var(--text-subtle)",
-                              whiteSpace: "nowrap",
-                              maxWidth: 260,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                            }}
-                            title={cell}
-                          >
-                            {cell === "" ? "—" : cell}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                  {cur?.label ?? domain}
+                </div>
+                <div className="il-mono" style={{ fontSize: 10.5 }}>
+                  {curTable?.loaded ? curTable.table : `${domain}_*`}
+                </div>
+                {cur && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontStyle: "italic",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    “{cur.sample}”
+                  </div>
+                )}
+              </div>
+
+              {/* ③ 내 표 데이터 업로드 — 좌측 패널 하단 압축 영역(기능 보존).
+                  로컬 CSV·엑셀(.xlsx) → "내 데이터" 도메인 적재. */}
+              <div
+                style={{
+                  marginTop: 16,
+                  paddingTop: 12,
+                  borderTop: "1px dashed var(--t-neutral-12)",
+                }}
+              >
+                <div className="il-flabel">
+                  내 표 데이터 업로드 (선택)
+                  <div className="il-flabel-hint">
+                    CSV · 엑셀(.xlsx) → 6번째 “내 데이터” 도메인으로 적재.
+                    엑셀은 첫 시트가 CSV 로 자동 변환. 위 적재 상한 함께 적용.
+                  </div>
+                </div>
+                {/* 네이티브 file input 숨김 — 명확한 버튼이 트리거(검색
+                    업로드와 동일 UX). 선택 파일명은 칩 아래 표시. */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  disabled={uploading}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setUploadFile(f);
+                    if (f && !uploadLabel)
+                      setUploadLabel(f.name.replace(/\.[^.]+$/, ""));
+                  }}
+                  style={{ display: "none" }}
+                />
+                <div className="il-upload-zone">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className="cf-btn"
+                    style={{ justifyContent: "center" }}
+                  >
+                    📁 CSV·엑셀 파일 선택
+                  </button>
+                  {uploadFile && (
+                    <span
+                      className="il-mono"
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-default)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {uploadFile.name}
+                    </span>
+                  )}
+                  <input
+                    type="text"
+                    className="cf-field"
+                    value={uploadLabel}
+                    disabled={uploading}
+                    placeholder="표시 라벨 (미입력 시 파일명)"
+                    maxLength={60}
+                    onChange={(e) => setUploadLabel(e.target.value)}
+                    style={{ fontSize: 12 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={runUpload}
+                    disabled={uploading || !uploadFile}
+                    className="cf-btn cf-btn--primary"
+                    style={{ justifyContent: "center" }}
+                  >
+                    {uploading ? "업로드 적재 중…" : "이 파일 업로드 적재"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ─── 우측: 워크벤치 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {err && (
+              <div className="il-error" style={{ marginBottom: 16 }}>
+                ⚠️ {err}
+              </div>
+            )}
+
+            {/* 01 · PIPELINE — CSV→SQLite 4단계 노드 + 진행 터미널 */}
+            <div className="il-card" style={{ marginBottom: 16 }}>
+              <CardHeader
+                num="01"
+                title="GitHub CSV → SQLite"
+                right={
+                  <span className={`il-status il-status--${benchStatus}`}>
+                    {benchStatus === "run"
+                      ? "적재 중"
+                      : benchStatus === "done"
+                        ? "완료"
+                        : "대기"}
+                  </span>
+                }
+              />
+
+              {/* 파이프라인 노드 행(시안 DataPipeline) */}
+              <div className="il-pipe-row" style={{ marginBottom: 14 }}>
+                {stages.map((s, i) => (
+                  <div key={s.label} style={{ display: "contents" }}>
+                    <PipeNode num={i + 1} stage={s} />
+                    {i < stages.length - 1 && (
+                      <div className="il-pipe-chev">›</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {log.length > 0 ? (
+                <Terminal
+                  title={`sqlite-load · ${curTable?.loaded ? curTable.table : domain}`}
+                  lines={log}
+                />
               ) : (
                 <div
-                  style={{ fontSize: 12, color: "var(--text-subtle)" }}
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-subtle)",
+                    padding: "20px 0",
+                    textAlign: "center",
+                  }}
                 >
-                  표시할 데이터가 없습니다.
+                  좌측에서 도메인·상한을 고르고 <strong>적재 시작</strong> 을
+                  누르면 진행 로그가 여기에 실시간으로 흐릅니다.
+                </div>
+              )}
+            </div>
+
+            {/* 02 · INVENTORY — 적재된 테이블 목록 */}
+            <div className="il-card">
+              <CardHeader
+                num="02"
+                title="적재된 테이블"
+                right={
+                  <span
+                    className="il-mono"
+                    style={{ fontSize: 11, color: "var(--text-subtle)" }}
+                  >
+                    {tables.filter((t) => t.loaded).length}/{tables.length}{" "}
+                    loaded
+                  </span>
+                }
+              />
+
+              {tables.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+                  아직 적재된 테이블이 없습니다. 좌측에서 적재하세요.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  {tables.map((t) => (
+                    <div
+                      key={t.domain}
+                      className="il-tbl-row"
+                      data-loaded={t.loaded}
+                    >
+                      <span className="il-tbl-icon">🗄</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: 600,
+                            color: "var(--text-default)",
+                          }}
+                        >
+                          {t.label}
+                        </div>
+                        <div
+                          className="il-mono"
+                          style={{
+                            fontSize: 10.5,
+                            color: "var(--text-subtle)",
+                            marginTop: 1,
+                          }}
+                        >
+                          {t.loaded ? t.table : "미적재 — CSV 적재 필요"}
+                        </div>
+                      </div>
+                      {t.loaded ? (
+                        <span className="il-ix-count">
+                          {t.rowCount.toLocaleString()} 행
+                        </span>
+                      ) : (
+                        <span className="il-status il-status--idle">
+                          미적재
+                        </span>
+                      )}
+                      {t.loaded ? (
+                        <button
+                          type="button"
+                          className="cf-btn"
+                          style={{
+                            height: 28,
+                            padding: "0 12px",
+                            fontSize: 12,
+                          }}
+                          onClick={() => setConfirmDel(t.domain)}
+                        >
+                          초기화
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="cf-btn cf-btn--primary"
+                          style={{
+                            height: 28,
+                            padding: "0 12px",
+                            fontSize: 12,
+                          }}
+                          onClick={() => {
+                            setDomain(t.domain);
+                            void runLoad();
+                          }}
+                          disabled={busy}
+                        >
+                          적재
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           </div>
         </div>
+      </div>
+
+      {/* 테이블 초기화 확인 모달 (오클릭 방지 — 공통 ConfirmModal) */}
+      {confirmDel && (
+        <ConfirmModal
+          title="테이블 초기화 확인"
+          confirmLabel="초기화"
+          onCancel={() => setConfirmDel(null)}
+          onConfirm={() => void dropDomain(confirmDel)}
+        >
+          <strong style={{ color: "var(--text-default)" }}>
+            {DOMAINS.find((d) => d.id === confirmDel)?.label ?? confirmDel}
+          </strong>{" "}
+          테이블을 삭제합니다. Text-to-SQL 로 질의하려면 다시 적재해야 합니다.
+          계속할까요?
+        </ConfirmModal>
       )}
+
+      {/* 데이터 미리보기 — 적재 전 CSV 앞 20행 표(시안 PreviewModal). */}
+      {showPreview && (
+        <PreviewModal
+          title={cur?.label ?? domain}
+          preview={preview}
+          loading={previewLoading}
+          onClose={() => setShowPreview(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// CardHeader — 워크벤치 카드 헤더(번호 라벨 + 제목 + 우측 상태/배지).
+// ─────────────────────────────────────────────────────────────
+function CardHeader({
+  num,
+  title,
+  right,
+}: {
+  num: string;
+  title: string;
+  right?: ReactNode;
+}): ReactNode {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 14,
+        gap: 12,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="il-bench-label">{num}</span>
+        <span
+          style={{
+            fontSize: 13.5,
+            fontWeight: 700,
+            color: "var(--text-default)",
+          }}
+        >
+          {title}
+        </span>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// PipeNode — 파이프라인 단일 노드(번호 + 라벨 + done ✓ + sub).
+// ─────────────────────────────────────────────────────────────
+function PipeNode({
+  num,
+  stage,
+}: {
+  num: number;
+  stage: { label: string; sub: string; status: PipeStatus };
+}): ReactNode {
+  return (
+    <div className="il-pipe-node" data-status={stage.status}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          width: "100%",
+        }}
+      >
+        <span className="il-pipe-num">{num}</span>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            flex: 1,
+            minWidth: 0,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {stage.label}
+        </span>
+        {stage.status === "done" && (
+          <span style={{ color: "var(--lab-success-text)" }}>✓</span>
+        )}
+      </div>
+      <div
+        className="il-mono"
+        style={{
+          fontSize: 10.5,
+          color: "var(--text-subtle)",
+          marginLeft: 28,
+        }}
+      >
+        {stage.sub}
+      </div>
     </div>
   );
 }

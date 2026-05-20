@@ -9,6 +9,9 @@ import {
   type ReactNode,
 } from "react";
 import { CorpusModal, type CorpusDocItem } from "./CorpusModal";
+import { ConfirmModal } from "@/components/common/ConfirmModal";
+import { Metric, Terminal } from "@/components/common/LabWorkbench";
+import { JsonlResultModal, type UploadResult } from "./JsonlResultModal";
 import {
   pickFormat,
   extractTextFromFile,
@@ -130,6 +133,7 @@ interface IndexInfo {
   docCount: number;
 }
 
+
 /** custom 슬롯 고정 인덱스명(domains.ts CUSTOM_SEARCH_INDEX 와 동일). */
 const CUSTOM_INDEX = "searchlab-custom";
 
@@ -163,14 +167,6 @@ function parseProgress(log: string[]): {
   return { indexed, total, pct: Math.min(100, pct), done };
 }
 
-// 삭제 확인 모달 카드(시안 ModalShell 톤).
-const modalCard: CSSProperties = {
-  background: "var(--surface-default)",
-  border: "1px solid var(--t-neutral-8)",
-  borderRadius: "var(--r-lg)",
-  padding: 20,
-  maxWidth: 380,
-};
 const chipRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 6 };
 
 export function IndexLabView(): ReactNode {
@@ -198,6 +194,10 @@ export function IndexLabView(): ReactNode {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadLabel, setUploadLabel] = useState<string>("");
   const [uploading, setUploading] = useState(false);
+  // 지난 업로드 색인 결과(시안 JsonlResultModal — 실데이터). done 이벤트
+  // 에서 캡처한 마지막 업로드 요약 + 진입 모달 토글. 목업 금지.
+  const [lastUpload, setLastUpload] = useState<UploadResult | null>(null);
+  const [showJsonl, setShowJsonl] = useState(false);
 
   // 색인된 custom 인덱스의 동적 라벨(indices API 의 custom 행). null =
   // 미색인(custom 도메인 칩·선택 숨김). 고정 5개 + (있으면) custom.
@@ -416,12 +416,26 @@ export function IndexLabView(): ReactNode {
               ...l.slice(0, -1).filter((x) => !x.startsWith("  ")),
               `  ${ev.indexed}/${ev.total} 색인 중…`,
             ]);
-          else if (ev.type === "done")
+          else if (ev.type === "done") {
             setIndexLog((l) => [
               ...l,
               `✓ 완료: ${ev.indexed}건 → 인덱스 ${ev.index} (검색·챗 드롭다운에 "내 데이터" 등장)`,
             ]);
-          else if (ev.type === "error") setErr(ev.message);
+            // 지난 업로드 결과 모달용 실데이터 캡처(시안 JsonlResultModal).
+            setLastUpload({
+              fileName: uploadFile.name,
+              label: uploadLabel.trim() || uploadFile.name,
+              index: ev.index,
+              indexed: ev.indexed,
+              embedModel,
+              chunkSize,
+              at: new Date().toLocaleString("ko-KR", {
+                timeZone: "Asia/Seoul",
+                dateStyle: "short",
+                timeStyle: "short",
+              }),
+            });
+          } else if (ev.type === "error") setErr(ev.message);
         }
       }
       await loadIndices();
@@ -682,12 +696,38 @@ export function IndexLabView(): ReactNode {
                   borderTop: "1px dashed var(--t-neutral-12)",
                 }}
               >
-                <div className="il-flabel">
-                  내 문서 업로드 (선택)
-                  <div className="il-flabel-hint">
-                    PDF · Word · 한글 · 텍스트 · jsonl → “내 데이터” 도메인.
-                    위 파라미터 함께 적용. 제목은 LLM 자동 추출.
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <div className="il-flabel">
+                    내 문서 업로드 (선택)
+                    <div className="il-flabel-hint">
+                      PDF · Word · 한글 · 텍스트 · jsonl → “내 데이터” 도메인.
+                      위 파라미터 함께 적용. 제목은 LLM 자동 추출.
+                    </div>
                   </div>
+                  {/* 지난 업로드 결과 진입점(시안 JsonlResultModal).
+                      마지막 업로드 색인 성공분이 있을 때만 노출. */}
+                  {lastUpload && (
+                    <button
+                      type="button"
+                      className="cf-btn"
+                      style={{
+                        height: 26,
+                        padding: "0 10px",
+                        fontSize: 11,
+                        flexShrink: 0,
+                      }}
+                      onClick={() => setShowJsonl(true)}
+                    >
+                      지난 업로드 결과
+                    </button>
+                  )}
                 </div>
                 <input
                   ref={fileInputRef}
@@ -923,72 +963,19 @@ export function IndexLabView(): ReactNode {
         </div>
       </div>
 
-      {/* 삭제 확인 모달 (오클릭 방지) */}
+      {/* 삭제 확인 모달 (오클릭 방지 — 공통 ConfirmModal) */}
       {confirmDel && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15,23,42,.45)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-          onClick={() => setConfirmDel(null)}
+        <ConfirmModal
+          title="인덱스 삭제 확인"
+          confirmLabel="삭제"
+          onCancel={() => setConfirmDel(null)}
+          onConfirm={() => void deleteIndex(confirmDel)}
         >
-          <div style={modalCard} onClick={(e) => e.stopPropagation()}>
-            <div
-              style={{
-                fontSize: 14.5,
-                fontWeight: 800,
-                color: "var(--text-default)",
-                marginBottom: 8,
-              }}
-            >
-              인덱스 삭제 확인
-            </div>
-            <p
-              style={{
-                fontSize: 12.5,
-                color: "var(--text-subtle)",
-                lineHeight: 1.6,
-                marginBottom: 16,
-              }}
-            >
-              <strong
-                className="il-mono"
-                style={{ color: "var(--text-default)" }}
-              >
-                {confirmDel}
-              </strong>{" "}
-              인덱스를 삭제합니다. 검색하려면 다시 색인해야 합니다. 계속할까요?
-            </p>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: 8,
-              }}
-            >
-              <button
-                type="button"
-                className="cf-btn"
-                onClick={() => setConfirmDel(null)}
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                className="cf-btn cf-btn--primary"
-                onClick={() => void deleteIndex(confirmDel)}
-              >
-                삭제
-              </button>
-            </div>
-          </div>
-        </div>
+          <strong className="il-mono" style={{ color: "var(--text-default)" }}>
+            {confirmDel}
+          </strong>{" "}
+          인덱스를 삭제합니다. 검색하려면 다시 색인해야 합니다. 계속할까요?
+        </ConfirmModal>
       )}
 
       {showCorpus && (
@@ -999,91 +986,14 @@ export function IndexLabView(): ReactNode {
           onClose={() => setShowCorpus(false)}
         />
       )}
-    </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────
-// Metric — 진행 메트릭 타일(시안 BenchMetric)
-// ─────────────────────────────────────────────────────────────
-function Metric({
-  label,
-  value,
-  unit,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  highlight?: boolean;
-}): ReactNode {
-  return (
-    <div className={highlight ? "il-metric il-metric--hl" : "il-metric"}>
-      <div className="il-metric-label">{label}</div>
-      <div className="il-metric-value">
-        {value}
-        {unit && <span className="il-metric-unit">{unit}</span>}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Terminal — 진행 로그 다크 터미널(시안 Terminal). 줄 prefix 로 색.
-// ─────────────────────────────────────────────────────────────
-function Terminal({
-  lines,
-  title,
-}: {
-  lines: string[];
-  title?: string;
-}): ReactNode {
-  return (
-    <div>
-      {title && (
-        <div className="il-term-bar">
-          <span className="il-term-dot" style={{ background: "#ff5f57" }} />
-          <span className="il-term-dot" style={{ background: "#febc2e" }} />
-          <span className="il-term-dot" style={{ background: "#28c840" }} />
-          <span
-            className="il-mono"
-            style={{
-              marginLeft: 8,
-              fontSize: 10.5,
-              color: "var(--lab-term-dim)",
-            }}
-          >
-            {title}
-          </span>
-        </div>
+      {showJsonl && lastUpload && (
+        <JsonlResultModal
+          result={lastUpload}
+          onClose={() => setShowJsonl(false)}
+        />
       )}
-      <pre className="il-term">
-        {lines.map((l, i) => (
-          <TermLine key={i} line={l} />
-        ))}
-        {lines.length > 0 && (
-          <span
-            style={{
-              display: "inline-block",
-              width: 8,
-              height: 13,
-              background: "var(--lab-term-accent)",
-              verticalAlign: "middle",
-              animation: "ilPulse 1s infinite",
-            }}
-          />
-        )}
-      </pre>
     </div>
   );
 }
 
-function TermLine({ line }: { line: string }): ReactNode {
-  let color = "var(--lab-term-fg)";
-  if (line.startsWith("✓")) color = "var(--lab-term-success)";
-  else if (line.includes("⚠")) color = "var(--lab-term-warn)";
-  else if (line.startsWith("▶") || line.startsWith("·"))
-    color = "var(--lab-term-accent)";
-  else if (line.startsWith(" ")) color = "var(--lab-term-dim)";
-  return <div style={{ color, whiteSpace: "pre" }}>{line}</div>;
-}
