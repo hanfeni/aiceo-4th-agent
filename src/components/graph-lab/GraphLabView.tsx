@@ -8,7 +8,7 @@ import {
 } from "react";
 import { ComparePanels, type PanelState, emptyPanels } from "./ComparePanels";
 import { GraphExploreModal } from "./GraphExploreModal";
-import { StatusPill, Metric, Terminal } from "@/components/common/LabWorkbench";
+import { Terminal } from "@/components/common/LabWorkbench";
 import { ConfirmModal } from "@/components/common/ConfirmModal";
 import { GRAPH_DATASETS } from "@/lib/graphlab/config";
 import type { LoadedDataset } from "@/lib/graphlab/load";
@@ -274,13 +274,6 @@ export function GraphLabView(): ReactNode {
   // 삭제 확인 모달에 표시할 데이터셋 라벨.
   const confirmLabel =
     GRAPH_DATASETS.find((d) => d.id === confirmDel)?.label ?? confirmDel;
-  // 워크벤치 상태칩(좌측 구축 카드 + 우측 비교 카드). build/compare 진행
-  // → run, 둘 다 idle 이며 적재됨 → done, 아니면 idle.
-  const benchStatus = building || comparing
-    ? "running"
-    : built
-      ? "done"
-      : "idle";
 
   return (
     <div
@@ -335,28 +328,23 @@ export function GraphLabView(): ReactNode {
         </div>
 
         <div className="il-bench" style={{ gridTemplateColumns: "320px 1fr" }}>
-          {/* ─── 좌측: 설정 패널 (sticky) ─── */}
+          {/* ─── 좌측: 설정(시안 B — 데이터셋 / 질의 프리셋 / 질의) ─── */}
           <div className="il-bench-aside">
-            {/* 데이터셋 + 그래프 액션 카드 */}
+            {/* 데이터셋 카드 — 리스트(라벨+부제+적재 dot) + 구축/삭제 +
+                DB구조·탐색. 시안엔 구축/삭제 없으나 실동작 기능이라 보존
+                (사용자 결정 2026-05-21: 시안 충실 + 기능 압축 배치). */}
             <div className="il-card il-config">
               <div className="il-config-title">데이터셋</div>
-              <div
-                className="il-flabel-hint"
-                style={{ marginBottom: 10 }}
-              >
-                {activeDataset.blurb}
-              </div>
               <div
                 style={{
                   display: "flex",
                   flexDirection: "column",
                   gap: 6,
-                  marginBottom: 14,
+                  marginBottom: 12,
                 }}
               >
                 {GRAPH_DATASETS.map((d) => {
                   const on = d.id === datasetId;
-                  // 이 데이터셋이 적재돼 있는지(공존 — 초록 dot 표식).
                   const dsLoaded = loaded.some((l) => l.id === d.id);
                   return (
                     <button
@@ -367,24 +355,37 @@ export function GraphLabView(): ReactNode {
                       onClick={() => {
                         if (building || comparing) return;
                         setDatasetId(d.id);
-                        // 데이터셋 바꾸면 기존 비교 패널·로그 초기화
-                        // (다른 데이터 적재 전까지 stale 결과 방지).
                         setPanels(emptyPanels());
                         setQuery("");
                       }}
                       disabled={building || comparing}
                       title={d.blurb}
+                      style={{ alignItems: "flex-start" }}
                     >
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {d.label.split(" (")[0]}
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span
+                          style={{
+                            display: "block",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {d.label.split(" (")[0]}
+                        </span>
+                        <span
+                          style={{
+                            display: "block",
+                            fontSize: 10.5,
+                            fontWeight: 400,
+                            color: "var(--text-subtle)",
+                            marginTop: 2,
+                            whiteSpace: "normal",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          {d.blurb}
+                        </span>
                       </span>
                       {dsLoaded && (
                         <span
@@ -395,6 +396,7 @@ export function GraphLabView(): ReactNode {
                             borderRadius: 99,
                             background: "var(--green-400, #22c55e)",
                             flexShrink: 0,
+                            marginTop: 5,
                           }}
                         />
                       )}
@@ -403,12 +405,41 @@ export function GraphLabView(): ReactNode {
                 })}
               </div>
 
-              {/* DB 구조 보기 · 그래프 탐색 — 둘 다 GraphExploreModal 진입
-                  (상단 스키마 도해 + 하단 인터랙티브 탐색이 한 모달에). */}
+              {/* 구축/재구축 + 삭제(적재 시) — 시안 외 실동작 기능 압축. */}
+              <button
+                type="button"
+                onClick={runBuild}
+                disabled={building || deleting}
+                className="cf-btn cf-btn--primary"
+                style={{ width: "100%", justifyContent: "center" }}
+              >
+                {building ? "구축 중…" : built ? "그래프 재구축" : "그래프 구축"}
+              </button>
+              {built && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDel(datasetId)}
+                  disabled={building || deleting}
+                  className="cf-btn"
+                  style={{
+                    width: "100%",
+                    justifyContent: "center",
+                    marginTop: 6,
+                  }}
+                >
+                  {deleting ? "삭제 중…" : "그래프 삭제"}
+                </button>
+              )}
+
+              {/* DB 구조 보기 · 그래프 탐색 (둘 다 GraphExploreModal). */}
               <button
                 type="button"
                 className="cf-btn"
-                style={{ width: "100%", justifyContent: "center" }}
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  marginTop: 6,
+                }}
                 onClick={() => setShowExplore(true)}
                 disabled={!built || building || deleting}
                 title={
@@ -435,96 +466,55 @@ export function GraphLabView(): ReactNode {
               >
                 그래프 탐색
               </button>
-            </div>
 
-            {/* ① 그래프 구축 카드 */}
-            <div className="il-card il-config" style={{ marginTop: 12 }}>
-              <div className="il-config-title">
-                ① 그래프 구축 → Neo4j
-              </div>
-              {/* 그래프 통계(Metric 타일) — 적재됐을 때만 수치, 아니면 안내. */}
-              {built ? (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 8,
-                    marginBottom: 12,
-                  }}
-                >
-                  <Metric
-                    label={activeDataset.slots.subject}
-                    value={stats.managers.toLocaleString()}
-                  />
-                  <Metric
-                    label={activeDataset.slots.object}
-                    value={stats.companies.toLocaleString()}
-                  />
-                  <Metric
-                    label={`${activeDataset.slots.relation}엣지`}
-                    value={stats.owns.toLocaleString()}
-                    highlight
-                  />
-                  <Metric
-                    label="포지션노드"
-                    value={
-                      stats.positions > 0
-                        ? stats.positions.toLocaleString()
-                        : "—"
-                    }
-                  />
-                </div>
-              ) : (
-                <div
-                  className="il-flabel-hint"
-                  style={{ marginBottom: 12 }}
-                >
-                  아직 그래프가 없습니다. 아래 버튼으로 {activeDataset.label}{" "}
-                  서브셋을 Neo4j 에 적재하세요. (다른 데이터셋과 공존 적재)
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={runBuild}
-                disabled={building || deleting}
-                className="cf-btn cf-btn--primary"
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                {building
-                  ? "구축 중…"
-                  : built
-                    ? "그래프 재구축"
-                    : "그래프 구축"}
-              </button>
+              {/* 적재 그래프 통계 — 작게(시안엔 없으나 실습 유용, 압축). */}
               {built && (
-                <button
-                  type="button"
-                  onClick={() => setConfirmDel(datasetId)}
-                  disabled={building || deleting}
-                  className="cf-btn"
+                <div
                   style={{
-                    width: "100%",
-                    justifyContent: "center",
-                    marginTop: 6,
+                    marginTop: 12,
+                    paddingTop: 12,
+                    borderTop: "1px dashed var(--t-neutral-12)",
+                    fontSize: 10.5,
+                    color: "var(--text-subtle)",
+                    lineHeight: 1.7,
                   }}
+                  className="il-mono"
                 >
-                  {deleting ? "삭제 중…" : "그래프 삭제"}
-                </button>
+                  {activeDataset.slots.subject}{" "}
+                  <strong style={{ color: "var(--blue-700)" }}>
+                    {stats.managers.toLocaleString()}
+                  </strong>{" "}
+                  · {activeDataset.slots.object}{" "}
+                  <strong style={{ color: "var(--blue-700)" }}>
+                    {stats.companies.toLocaleString()}
+                  </strong>{" "}
+                  · {activeDataset.slots.relation}엣지{" "}
+                  <strong style={{ color: "var(--blue-700)" }}>
+                    {stats.owns.toLocaleString()}
+                  </strong>
+                  {stats.positions > 0 && (
+                    <>
+                      {" "}
+                      · 포지션{" "}
+                      <strong style={{ color: "var(--blue-700)" }}>
+                        {stats.positions.toLocaleString()}
+                      </strong>
+                    </>
+                  )}
+                </div>
               )}
             </div>
 
-            {/* ② 질의 — 프리셋 + textarea + 실행 */}
+            {/* 질의 프리셋 카드(시안 B). */}
             <div className="il-card il-config" style={{ marginTop: 12 }}>
-              <div className="il-config-title">② 질의 (3방식 비교)</div>
-              <div className="il-flabel">질의 프리셋</div>
+              <div className="il-config-title">질의 프리셋</div>
               <div
                 className="thin-scroll"
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
                   gap: 6,
-                  marginBottom: 12,
-                  maxHeight: 168,
+                  maxHeight: 200,
                   overflowY: "auto",
                 }}
               >
@@ -541,7 +531,11 @@ export function GraphLabView(): ReactNode {
                   </button>
                 ))}
               </div>
-              <div className="il-flabel">질의문</div>
+            </div>
+
+            {/* 질의 카드(시안 B) — textarea + 3방식 실행. */}
+            <div className="il-card il-config" style={{ marginTop: 12 }}>
+              <div className="il-config-title">질의</div>
               <textarea
                 className="cf-field"
                 style={{
@@ -578,7 +572,7 @@ export function GraphLabView(): ReactNode {
             </div>
           </div>
 
-          {/* ─── 우측: 워크벤치 ─── */}
+          {/* ─── 우측: 3-pane 비교만(시안 B) ─── */}
           <div style={{ minWidth: 0 }}>
             {err && (
               <div className="il-error" style={{ marginBottom: 16 }}>
@@ -586,131 +580,15 @@ export function GraphLabView(): ReactNode {
               </div>
             )}
 
-            {/* 01 · 3방식 비교 결과 */}
-            <div className="il-card" style={{ marginBottom: 16 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 14,
-                  gap: 12,
-                }}
-              >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                >
-                  <span className="il-bench-label">01</span>
-                  <span
-                    style={{
-                      fontSize: 13.5,
-                      fontWeight: 700,
-                      color: "var(--text-default)",
-                    }}
-                  >
-                    같은 질문, 3방식 비교
-                  </span>
-                </div>
-                <StatusPill status={benchStatus} />
+            {/* 구축 진행 로그(다크 터미널) — 구축 중/직후에만. */}
+            {buildLog.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <Terminal title="neo4j-build · stream" lines={buildLog} />
               </div>
+            )}
 
-              {/* 진행 로그(다크 터미널) — 구축 SSE. */}
-              {buildLog.length > 0 && (
-                <div style={{ marginBottom: 14 }}>
-                  <Terminal title="neo4j-build · stream" lines={buildLog} />
-                </div>
-              )}
-
-              {/* 3패널 비교(데이터·실행 로직 보존 — ComparePanels).
-                  시안 B: 실행 전에도 3-pane 틀을 항상 노출(빈 상태 안내). */}
-              <ComparePanels panels={panels} />
-            </div>
-
-            {/* 02 · 적재된 데이터셋 인벤토리 (공존 목록 + 개별 삭제). */}
-            <div className="il-card">
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  marginBottom: 14,
-                  gap: 12,
-                }}
-              >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                >
-                  <span className="il-bench-label">02</span>
-                  <span
-                    style={{
-                      fontSize: 13.5,
-                      fontWeight: 700,
-                      color: "var(--text-default)",
-                    }}
-                  >
-                    적재된 데이터셋
-                  </span>
-                </div>
-                <span
-                  className="il-mono"
-                  style={{ fontSize: 11, color: "var(--text-subtle)" }}
-                >
-                  {loaded.length} datasets
-                </span>
-              </div>
-
-              {loaded.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-                  아직 적재된 데이터셋이 없습니다. 좌측에서 데이터셋을 골라
-                  ① 그래프 구축을 실행하세요.
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                  }}
-                >
-                  {loaded.map((l) => {
-                    const ds = GRAPH_DATASETS.find((d) => d.id === l.id);
-                    const label = ds?.label ?? l.id;
-                    return (
-                      <div key={l.id} className="il-ix-row">
-                        <div style={{ minWidth: 0 }}>
-                          <div className="il-ix-name">{label}</div>
-                          <div
-                            style={{
-                              fontSize: 10.5,
-                              color: "var(--text-subtle)",
-                              marginTop: 2,
-                            }}
-                          >
-                            {ds?.slots.subject ?? "주체"}{" "}
-                            {l.subjects.toLocaleString()} ·{" "}
-                            {ds?.slots.object ?? "대상"}{" "}
-                            {l.objects.toLocaleString()}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          className="cf-btn"
-                          style={{
-                            height: 28,
-                            padding: "0 12px",
-                            fontSize: 12,
-                          }}
-                          disabled={deleting}
-                          onClick={() => setConfirmDel(l.id)}
-                        >
-                          삭제
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            {/* 3-pane 비교(시안 B 우측 전부). 실행 전에도 틀 노출. */}
+            <ComparePanels panels={panels} />
           </div>
         </div>
       </div>
