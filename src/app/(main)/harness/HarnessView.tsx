@@ -1,543 +1,618 @@
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+/**
+ * HarnessView — 하네스 워크벤치 (Lab Design 시안 B · agent 보라 accent).
+ *
+ * 레이아웃: 다른 5개 검색·라벨링 메뉴와 동일한 il-bench(좌 320 설정 / 우 1fr
+ * 워크벤치) 구조. 단 그룹이 "AI 에이전트"라 accent 는 blue 가 아니라 보라
+ * (--agent-700 / --lab-agent-bg). 페이지 루트는 cf-scope--agent 로 cf-* 를
+ * 보라로 스코프(globals.css).
+ *
+ * 데이터·CRUD 보존(절대 규칙 R1):
+ *  - view prop(toggles/systemPrompt/tools/subagents/skills)은 읽기 전용 표시.
+ *    toggles 는 환경변수(HARNESS_*) 제어라 UI 토글 스위치는 표시용(읽기 전용).
+ *  - InstructionManager / SkillManager / SubagentManager 는 각자
+ *    /api/harness/* CRUD 를 가진 동작 컴포넌트 — 로직 변경 없이 탭 컨텐츠로
+ *    그대로 배치(자체 card 헤더를 그리므로 이중 테두리 방지 위해 추가 카드
+ *    래퍼 없이 마진만 정리).
+ *  - 도구 탭은 view.tools 를 ToolRow(C/S 뱃지)로 리스트 + 클릭 시 기존
+ *    ContentModal 로 상세(parameters/configValues).
+ */
+
+import { useState, type ReactNode } from "react";
 import type { HarnessView as HarnessViewData } from "@/lib/harness-introspect/view";
 import { InstructionManager } from "@/components/harness/InstructionManager";
 import { SkillManager } from "@/components/harness/SkillManager";
 import { SubagentManager } from "@/components/harness/SubagentManager";
+import { ContentModal } from "@/components/harness/ContentModal";
 
-/**
- * HarnessView — 하네스 요소 표시 전용 client 컴포넌트 (Slice 2).
- *
- * 데이터는 server page(page.tsx)가 toHarnessView 로 만든 직렬화 안전
- * HarnessViewData props 1개. 자체 fetch/state 없음(정적 표시 — API
- * route 불필요, Plan Critic A1). 디자인 핸드오프에 하네스 화면 스펙이
- * 없으므로(스펙 외 UI) 기존 디자인 토큰(--surface/--text/--agent/--r-*)
- * 으로 ChatPanel 과 시각 일관성만 맞춘다. 스펙 추가 판단은 구현하지
- * 않고 docs/notes/ui-suggestions.md 기록 대상(CLAUDE.md 작업 원칙).
- */
+type TabKey = "tools" | "subagents" | "skills" | "instruction";
 
-const card: CSSProperties = {
-  background: "var(--surface-default)",
-  border: "1px solid var(--t-neutral-8)",
-  borderRadius: "var(--r-lg)",
-  padding: 20,
-  marginBottom: 16,
-};
+// ── 좌측: 요소 토글 스위치(표시용 — 실제 토글은 환경변수 제어) ─────────────
 
-const sectionTitle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "var(--text-default)",
-  letterSpacing: "-0.01em",
-  marginBottom: 4,
-};
+/** 시안 ToggleSwitch — 읽기 전용 상태 표시(클릭 비활성). agent 보라. */
+function ToggleSwitch({ on }: { on: boolean }): ReactNode {
+  return (
+    <div
+      style={{
+        width: 32,
+        height: 18,
+        borderRadius: 99,
+        background: on ? "var(--agent-500)" : "var(--t-neutral-12)",
+        position: "relative",
+        flexShrink: 0,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 2,
+          left: on ? 16 : 2,
+          width: 14,
+          height: 14,
+          borderRadius: 99,
+          background: "white",
+          boxShadow: "0 1px 3px rgba(0,0,0,.15)",
+        }}
+      />
+    </div>
+  );
+}
 
-const sectionDesc: CSSProperties = {
-  fontSize: 11.5,
-  color: "var(--text-subtle)",
-  marginBottom: 14,
-};
+/** 좌측 통계 타일(시안 AgentStat). accent=보라 강조. */
+function AgentStat({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent?: boolean;
+}): ReactNode {
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        background: accent ? "var(--lab-agent-bg)" : "var(--surface-default)",
+        border: "1px solid",
+        borderColor: accent ? "var(--lab-agent-border)" : "var(--t-neutral-8)",
+        borderRadius: 10,
+        minWidth: 0,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10.5,
+          fontWeight: 600,
+          color: "var(--text-subtle)",
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 20,
+          fontWeight: 800,
+          color: accent ? "var(--agent-700)" : "var(--text-default)",
+          marginTop: 2,
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {value}
+      </div>
+      {sub && (
+        <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 1 }}>
+          {sub}
+        </div>
+      )}
+    </div>
+  );
+}
 
-const badge = (on: boolean): CSSProperties => ({
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 4,
-  padding: "2px 8px",
-  borderRadius: 999,
-  fontSize: 11,
-  fontWeight: 600,
-  // 하네스는 "AI 에이전트" 그룹 → 그룹 고유색 보라(agent) 유지.
-  // (blue 통일은 "검색·라벨링 실습" 그룹 전용 — 그룹 색 규칙).
-  background: on
-    ? "color-mix(in srgb, var(--agent-500) 14%, transparent)"
-    : "var(--t-neutral-8)",
-  color: on ? "var(--agent-700)" : "var(--text-subtle)",
-});
+// ── 좌측 패널(토글 + 메인 에이전트 메타 + 통계) ─────────────────────────────
 
-const kindChip: CSSProperties = {
-  fontSize: 10,
-  fontWeight: 600,
-  padding: "1px 6px",
-  borderRadius: 5,
-  background: "var(--t-neutral-8)",
-  color: "var(--text-subtle)",
-  fontFamily: "var(--font-mono)",
-};
+function AsidePanel({
+  view,
+  counts,
+}: {
+  view: HarnessViewData;
+  counts: { tools: number; subagents: number; skills: number };
+}): ReactNode {
+  // 시안 HARNESS_TOGGLES — 실제 값은 view.toggles(읽기 전용).
+  const toggles: { key: keyof HarnessViewData["toggles"]; label: string; sub: string }[] = [
+    { key: "planning", label: "Planning", sub: "계획 수립 미들웨어" },
+    { key: "filesystem", label: "Filesystem", sub: "파일 도구 (read/write/edit/ls)" },
+    { key: "subagents", label: "Subagents", sub: "서브에이전트 위임 (task 도구)" },
+    { key: "skills", label: "Skills", sub: "스킬 미들웨어 (progressive disclosure)" },
+  ];
+  const clientTools = view.tools.filter((t) => t.kind === "client").length;
+  const serverTools = view.tools.filter((t) => t.kind === "server").length;
+  const placeholderSubs = view.subagents.filter((s) => s.isPlaceholder).length;
 
-function Toggle({ label, on }: { label: string; on: boolean }): ReactNode {
+  return (
+    <div className="il-bench-aside">
+      {/* ① 요소 토글 + 메인 에이전트 메타 카드(agent gradient) */}
+      <div
+        className="il-card"
+        style={{
+          borderColor: "var(--lab-agent-border)",
+          background:
+            "linear-gradient(180deg, var(--surface-default), var(--lab-agent-bg) 100%)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10.5,
+            fontWeight: 800,
+            letterSpacing: "0.08em",
+            color: "var(--agent-700)",
+            textTransform: "uppercase",
+            marginBottom: 12,
+          }}
+        >
+          요소 토글
+          <span
+            style={{
+              fontWeight: 500,
+              textTransform: "none",
+              letterSpacing: 0,
+              color: "var(--text-subtle)",
+              marginLeft: 6,
+            }}
+          >
+            HARNESS_* 환경변수 · 읽기 전용
+          </span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {toggles.map((t) => {
+            const on = view.toggles[t.key];
+            return (
+              <div
+                key={t.key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  padding: "8px 10px",
+                  background: "var(--surface-default)",
+                  border: "1px solid",
+                  borderColor: on ? "var(--lab-agent-border)" : "var(--t-neutral-8)",
+                  borderRadius: 8,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: on ? "var(--agent-700)" : "var(--text-default)",
+                    }}
+                  >
+                    {t.label}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-subtle)", marginTop: 1 }}>
+                    {t.sub}
+                  </div>
+                </div>
+                <ToggleSwitch on={on} />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 현재 메인 에이전트 메타 */}
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: "1px dashed var(--t-neutral-12)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              color: "var(--agent-700)",
+              textTransform: "uppercase",
+              marginBottom: 8,
+            }}
+          >
+            현재 메인 에이전트
+          </div>
+          <div style={{ fontSize: 10.5, color: "var(--text-subtle)" }}>
+            인스트럭션:{" "}
+            <strong style={{ color: "var(--agent-700)" }}>기본 (정적 상수)</strong>
+          </div>
+          <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 2 }}>
+            도구 {counts.tools}개 · 서브에이전트 {counts.subagents}개
+          </div>
+        </div>
+      </div>
+
+      {/* ② 통계 카드(실제 view 카운트) */}
+      <div className="il-card" style={{ marginTop: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <AgentStat
+            label="도구"
+            value={counts.tools}
+            sub={`C ${clientTools} · S ${serverTools}`}
+            accent
+          />
+          <AgentStat
+            label="서브"
+            value={counts.subagents}
+            sub={placeholderSubs > 0 ? `PH ${placeholderSubs}` : "위임"}
+          />
+          <AgentStat
+            label="스킬"
+            value={counts.skills}
+            sub={view.toggles.skills ? "활성" : "비활성"}
+          />
+          <AgentStat
+            label="토글"
+            value={`${Object.values(view.toggles).filter(Boolean).length}/4`}
+            sub="활성"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 우측 도구 탭: ToolRow(C/S 뱃지) + 상세 모달 ────────────────────────────
+
+type ToolView = HarnessViewData["tools"][number];
+
+/** 시안 ToolRow — C/S 뱃지 + name + desc, 클릭 시 상세 모달. */
+function ToolRow({ tool, onClick }: { tool: ToolView; onClick: () => void }): ReactNode {
+  const isClient = tool.kind === "client";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        appearance: "none",
+        cursor: "pointer",
+        textAlign: "left",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr auto",
+        gap: 10,
+        alignItems: "center",
+        padding: "10px 14px",
+        background: "var(--surface-default)",
+        border: "1px solid var(--t-neutral-8)",
+        borderRadius: 8,
+        width: "100%",
+      }}
+    >
+      <span
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 7,
+          background: isClient ? "var(--lab-agent-bg)" : "var(--lab-blue-bg)",
+          color: isClient ? "var(--agent-700)" : "var(--blue-700)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          fontWeight: 800,
+        }}
+      >
+        {isClient ? "C" : "S"}
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 12.5,
+            fontWeight: 600,
+            fontFamily: "var(--font-mono)",
+            color: "var(--text-default)",
+          }}
+        >
+          {tool.name}
+          {tool.displayName && (
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 500,
+                color: "var(--text-subtle)",
+                marginLeft: 8,
+                fontFamily: "var(--font-sans, inherit)",
+              }}
+            >
+              {tool.displayName}
+            </span>
+          )}
+        </div>
+        {tool.description && (
+          <div
+            style={{
+              fontSize: 10.5,
+              color: "var(--text-subtle)",
+              marginTop: 2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tool.description}
+          </div>
+        )}
+      </div>
+      <span
+        className="il-mono"
+        style={{
+          fontSize: 9.5,
+          fontWeight: 700,
+          padding: "2px 7px",
+          borderRadius: 4,
+          background: "var(--medi-gray-100)",
+          color: "var(--text-subtle)",
+        }}
+      >
+        {tool.kind}
+      </span>
+    </button>
+  );
+}
+
+/** 도구 상세 모달(ContentModal 재사용) — parameters/configValues 표시. */
+function ToolDetailModal({
+  tool,
+  onClose,
+}: {
+  tool: ToolView;
+  onClose: () => void;
+}): ReactNode {
+  const isClient = tool.kind === "client";
+  const schema = tool.parametersSchema ?? tool.configValues;
+  return (
+    <ContentModal
+      title={tool.name}
+      subtitle={`${
+        isClient ? "ClientTool — 우리 측 실행" : "ServerTool — provider 측 실행"
+      }${tool.displayName ? ` · ${tool.displayName}` : ""}`}
+      onClose={onClose}
+    >
+      {tool.description && (
+        <div
+          style={{
+            fontSize: 12.5,
+            color: "var(--text-default)",
+            marginBottom: 14,
+            lineHeight: 1.6,
+          }}
+        >
+          {tool.description}
+        </div>
+      )}
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          color: "var(--text-subtle)",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          marginBottom: 6,
+        }}
+      >
+        {isClient
+          ? "LLM 사용 명세 (parameters)"
+          : "구성값 (provider 가 입력 명세 관리)"}
+      </div>
+      {schema ? (
+        <pre className="il-code">{JSON.stringify(schema, null, 2)}</pre>
+      ) : (
+        <div style={{ fontSize: 11.5, color: "var(--text-subtle)", fontStyle: "italic" }}>
+          표시할 명세가 없습니다(provider 내장 도구이거나 schema 미보유).
+        </div>
+      )}
+    </ContentModal>
+  );
+}
+
+// ── 우측 탭 컨텐츠 카드 헤더(BenchCard 보라 변형) ───────────────────────────
+
+export function BenchHeader({
+  label,
+  title,
+  status,
+}: {
+  label: string;
+  title: string;
+  status?: ReactNode;
+}): ReactNode {
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "8px 0",
-        borderBottom: "1px solid var(--t-neutral-6)",
+        gap: 12,
+        marginBottom: 14,
       }}
     >
-      <span style={{ fontSize: 12.5, color: "var(--text-default)" }}>
-        {label}
-      </span>
-      <span style={badge(on)}>{on ? "활성" : "비활성"}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="il-bench-label">{label}</span>
+        <span
+          style={{ fontSize: 13.5, fontWeight: 700, color: "var(--text-default)" }}
+        >
+          {title}
+        </span>
+      </div>
+      {status}
     </div>
   );
 }
 
-export function HarnessView({
-  view,
-}: {
-  view: HarnessViewData;
-}): ReactNode {
+// ── 메인 뷰 ──────────────────────────────────────────────────────────────────
+
+export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
+  const [tab, setTab] = useState<TabKey>("tools");
+  const [showTool, setShowTool] = useState<ToolView | null>(null);
+
+  const counts = {
+    tools: view.tools.length,
+    subagents: view.subagents.length,
+    skills: view.skills.sources.length,
+  };
+
+  // 탭 정의 — 라벨에 실제 카운트 반영(인스트럭션은 정적).
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: "tools", label: `도구 ${counts.tools}` },
+    { key: "subagents", label: `서브에이전트 ${counts.subagents}` },
+    { key: "skills", label: `스킬 ${counts.skills}` },
+    { key: "instruction", label: "시스템 인스트럭션" },
+  ];
+
   return (
-    // cf-scope--agent: 하네스는 "AI 에이전트" 그룹 → cf-* 보라 accent
-    // 상속. Toggle 등 그룹 고유색 보라 일관(검색·라벨링은 기본 blue).
     <div
       className="thin-scroll cf-scope--agent"
-      style={{
-        flex: 1,
-        overflowY: "auto",
-        background: "var(--surface-subtle)",
-        padding: "28px 0",
-      }}
+      style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
-      <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 28px" }}>
-        <h1
-          style={{
-            fontSize: 18,
-            fontWeight: 700,
-            color: "var(--text-default)",
-            letterSpacing: "-0.01em",
-            marginBottom: 4,
-          }}
-        >
-          하네스 구성
-        </h1>
-        <p style={{ fontSize: 12, color: "var(--text-subtle)", marginBottom: 20 }}>
-          현재 챗 에이전트에 설정된 하네스 요소입니다. 환경변수 토글로
-          제어되며, 이 화면은 읽기 전용입니다.
-        </p>
-
-        {/* 토글 */}
-        <div style={card}>
-          <div style={sectionTitle}>요소 토글</div>
-          <div style={sectionDesc}>
-            registry.ts buildHarnessConfig 가 env 로 조립하는 on/off 상태.
-          </div>
-          <Toggle label="Planning (계획 수립 미들웨어)" on={view.toggles.planning} />
-          <Toggle label="Filesystem (파일 도구)" on={view.toggles.filesystem} />
-          <Toggle label="Subagents (서브에이전트)" on={view.toggles.subagents} />
-          <Toggle label="Skills (스킬 미들웨어)" on={view.toggles.skills} />
-        </div>
-
-        {/* 도구 */}
-        <div style={card}>
-          <div style={sectionTitle}>도구 ({view.tools.length})</div>
-          <div style={sectionDesc}>
-            에이전트가 호출 가능한 도구. ClientTool(우리 측 실행) /
-            ServerTool(provider 측 실행).
-          </div>
-          {view.tools.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-              등록된 도구가 없습니다.
-            </div>
-          ) : (
-            view.tools.map((t) => (
-              <div
-                key={t.name}
-                style={{
-                  padding: "10px 0",
-                  borderBottom: "1px solid var(--t-neutral-6)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      color: "var(--text-default)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {t.name}
-                  </span>
-                  {t.displayName && (
-                    <span style={{ fontSize: 11.5, color: "var(--text-subtle)" }}>
-                      {t.displayName}
-                    </span>
-                  )}
-                  <span style={kindChip}>{t.kind}</span>
-                </div>
-                {t.description && (
-                  <div
-                    style={{
-                      fontSize: 11.5,
-                      color: "var(--text-subtle)",
-                      marginTop: 3,
-                    }}
-                  >
-                    {t.description}
-                  </div>
-                )}
-
-                {/* LLM 사용 명세(parameters) — LLM 이 도구 호출 시 참조하는
-                    JSON Schema. ClientTool 만 보유. zod .describe() 텍스트
-                    까지 그대로(LLM 이 보는 사용 설명서 = 이것). */}
-                <div style={{ marginTop: 8 }}>
-                  <div
-                    style={{
-                      fontSize: 10.5,
-                      fontWeight: 600,
-                      color: "var(--text-subtle)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      marginBottom: 4,
-                    }}
-                  >
-                    LLM 사용 명세 (parameters)
-                  </div>
-                  {t.parametersSchema ? (
-                    <pre
-                      style={{
-                        margin: 0,
-                        padding: "10px 12px",
-                        background: "var(--surface-subtle)",
-                        border: "1px solid var(--t-neutral-6)",
-                        borderRadius: "var(--r-md)",
-                        fontSize: 11,
-                        lineHeight: 1.55,
-                        color: "var(--text-default)",
-                        fontFamily: "var(--font-mono)",
-                        overflowX: "auto",
-                        whiteSpace: "pre",
-                      }}
-                    >
-                      {JSON.stringify(t.parametersSchema, null, 2)}
-                    </pre>
-                  ) : t.kind === "server" ? (
-                    // ServerTool(OpenAI 내장): LLM 입력 명세(zod)는
-                    // provider 관리라 표시 불가. 대신 **우리 구성값**
-                    // (buildWebSearchOptions 가 보내는 설정 — 실측:
-                    // search_context_size 등)을 표시한다.
-                    <>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: "var(--text-subtle)",
-                          fontStyle: "italic",
-                          marginBottom: t.configValues ? 6 : 0,
-                        }}
-                      >
-                        OpenAI 내장 도구 — LLM 입력 명세는 provider 가
-                        관리. 아래는 우리가 보내는 구성값.
-                      </div>
-                      {t.configValues ? (
-                        <pre
-                          style={{
-                            margin: 0,
-                            padding: "10px 12px",
-                            background: "var(--surface-subtle)",
-                            border: "1px solid var(--t-neutral-6)",
-                            borderRadius: "var(--r-md)",
-                            fontSize: 11,
-                            lineHeight: 1.55,
-                            color: "var(--text-default)",
-                            fontFamily: "var(--font-mono)",
-                            overflowX: "auto",
-                            whiteSpace: "pre",
-                          }}
-                        >
-                          {JSON.stringify(t.configValues, null, 2)}
-                        </pre>
-                      ) : (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--text-subtle)",
-                            fontStyle: "italic",
-                          }}
-                        >
-                          구성 옵션 없음(기본 동작).
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--text-subtle)",
-                        fontStyle: "italic",
-                      }}
-                    >
-                      표시 가능한 파라미터 명세가 없습니다.
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* 서브에이전트 */}
-        <div style={card}>
-          <div style={sectionTitle}>
-            서브에이전트 ({view.subagents.length})
-          </div>
-          <div style={sectionDesc}>
-            메인 에이전트가 task 도구로 위임하는 일꾼 에이전트.
-          </div>
-          {view.subagents.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-              등록된 서브에이전트가 없습니다.
-            </div>
-          ) : (
-            view.subagents.map((s) => (
-              <div
-                key={s.name}
-                style={{
-                  padding: "12px 0",
-                  borderBottom: "1px solid var(--t-neutral-6)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      color: "var(--text-default)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {s.name}
-                  </span>
-                  {s.isPlaceholder && (
-                    <span
-                      style={{
-                        ...badge(false),
-                        background: "#fef3c7",
-                        color: "#92400e",
-                      }}
-                      title="systemPrompt 가 미확정 placeholder 입니다"
-                    >
-                      ⚠ PLACEHOLDER
-                    </span>
-                  )}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11.5,
-                    color: "var(--text-subtle)",
-                    marginTop: 3,
-                  }}
-                >
-                  {s.description}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-subtle)",
-                    marginTop: 4,
-                  }}
-                >
-                  모델: {s.modelLabel}
-                </div>
-                {s.toolNames.length > 0 && (
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-subtle)",
-                      marginTop: 2,
-                    }}
-                  >
-                    도구: {s.toolNames.join(", ")}
-                  </div>
-                )}
-                <pre
-                  style={{
-                    marginTop: 8,
-                    padding: "10px 12px",
-                    background: "var(--surface-subtle)",
-                    border: "1px solid var(--t-neutral-6)",
-                    borderRadius: "var(--r-md)",
-                    fontSize: 11,
-                    lineHeight: 1.6,
-                    color: "var(--text-default)",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontFamily: "var(--font-mono)",
-                  }}
-                >
-                  {s.systemPrompt}
-                </pre>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* 스킬 — 상세(SKILL.md frontmatter + 본문) 노출. frontmatter
-            name/description = LLM 이 스킬 사용 시점 판단 근거(시스템
-            프롬프트 주입분), 본문 = 에이전트가 read_file 로 읽는 가이드. */}
-        <div style={card}>
-          <div style={sectionTitle}>
-            스킬 ({view.skills.details.length})
-          </div>
-          <div style={sectionDesc}>
-            progressive disclosure. frontmatter(name/description)가 LLM
-            프롬프트에 주입되고 본문은 에이전트가 read_file 로 읽는다.
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <span style={badge(view.skills.enabled)}>
-              {view.skills.enabled ? "활성" : "비활성"}
-            </span>
-          </div>
-          {view.skills.details.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-              활성 스킬이 없습니다.
-            </div>
-          ) : (
-            view.skills.details.map((sk) => (
-              <div
-                key={sk.source}
-                style={{
-                  padding: "12px 0",
-                  borderBottom: "1px solid var(--t-neutral-6)",
-                }}
-              >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 8 }}
-                >
-                  <span
-                    style={{
-                      fontSize: 12.5,
-                      fontWeight: 600,
-                      color: "var(--text-default)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {sk.name ?? sk.source}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-subtle)",
-                      fontFamily: "var(--font-mono)",
-                    }}
-                  >
-                    {sk.source}
-                  </span>
-                </div>
-                {sk.description && (
-                  <div
-                    style={{
-                      fontSize: 11.5,
-                      color: "var(--text-subtle)",
-                      marginTop: 4,
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {sk.description}
-                  </div>
-                )}
-                {sk.body && (
-                  <>
-                    <div
-                      style={{
-                        fontSize: 10.5,
-                        fontWeight: 600,
-                        color: "var(--text-subtle)",
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                        marginTop: 10,
-                        marginBottom: 4,
-                      }}
-                    >
-                      SKILL.md 본문 (에이전트가 read_file 로 읽음)
-                    </div>
-                    <pre
-                      style={{
-                        margin: 0,
-                        padding: "12px 14px",
-                        background: "var(--surface-subtle)",
-                        border: "1px solid var(--t-neutral-6)",
-                        borderRadius: "var(--r-md)",
-                        fontSize: 11,
-                        lineHeight: 1.65,
-                        color: "var(--text-default)",
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        fontFamily: "var(--font-mono)",
-                      }}
-                    >
-                      {sk.body}
-                    </pre>
-                  </>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* 시스템 인스트럭션 */}
-        <div style={card}>
-          <div style={sectionTitle}>시스템 인스트럭션</div>
-          <div style={sectionDesc}>
-            메인 에이전트에 주입되는 시스템 프롬프트 전문(정적 상수).
-          </div>
-          <pre
+      <div style={{ maxWidth: 1320, margin: "0 auto", padding: "28px 24px 64px" }}>
+        {/* 헤더(시안 HarnessPage) — agent eyebrow + 타이틀 + 서브타이틀 */}
+        <div style={{ marginBottom: 24 }}>
+          <span
             style={{
-              padding: "14px 16px",
-              background: "var(--surface-subtle)",
-              border: "1px solid var(--t-neutral-6)",
-              borderRadius: "var(--r-md)",
-              fontSize: 12,
-              lineHeight: 1.7,
-              color: "var(--text-default)",
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              margin: 0,
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              color: "var(--agent-700)",
+              textTransform: "uppercase",
+              background: "var(--lab-agent-bg-2)",
+              padding: "3px 8px",
+              borderRadius: 4,
             }}
           >
-            {view.systemPrompt}
-          </pre>
-        </div>
-
-        {/* 관리(CRUD) 패널 — 위쪽 표시 전용 카드와 달리 자체 fetch/state 로
-            인스트럭션·스킬·서브에이전트를 생성·편집·삭제한다. 각 패널은
-            별도 client 컴포넌트(components/harness/*)로 분리해 이 파일의
-            1000줄 한도와 표시/편집 책임 분리를 지킨다. */}
-        <div
-          style={{
-            marginTop: 28,
-            paddingTop: 20,
-            borderTop: "2px solid var(--t-neutral-8)",
-          }}
-        >
-          <h2
+            AI 에이전트 · 하네스
+          </span>
+          <h1
             style={{
-              fontSize: 15,
-              fontWeight: 700,
+              fontSize: 22,
+              fontWeight: 800,
               color: "var(--text-default)",
-              letterSpacing: "-0.01em",
-              marginBottom: 4,
+              margin: "8px 0 0",
+              letterSpacing: "-0.015em",
             }}
           >
-            하네스 관리
-          </h2>
+            하네스 워크벤치
+          </h1>
           <p
             style={{
-              fontSize: 12,
+              fontSize: 13,
               color: "var(--text-subtle)",
-              marginBottom: 16,
+              margin: "6px 0 0",
+              lineHeight: 1.55,
+              maxWidth: 680,
             }}
           >
-            인스트럭션·스킬·서브에이전트를 직접 만들고 편집·삭제합니다.
-            변경은 즉시 저장되며 다음 대화부터 반영됩니다.
+            좌측에 요소 토글·메타·통계, 우측 탭에서 도구·서브에이전트·스킬·시스템
+            인스트럭션을 한 화면에. 토글은 환경변수로 제어(읽기 전용)되고,
+            서브에이전트·스킬·인스트럭션은 탭에서 직접 만들고 편집·삭제합니다.
           </p>
-          <InstructionManager />
-          <SkillManager />
-          <SubagentManager />
+        </div>
+
+        <div className="il-bench">
+          {/* ─── 좌측: 토글 · 메타 · 통계 ─── */}
+          <AsidePanel view={view} counts={counts} />
+
+          {/* ─── 우측: 탭 워크벤치 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {/* 탭 헤더(agent 보라 활성) */}
+            <div
+              style={{
+                background: "var(--surface-default)",
+                border: "1px solid var(--t-neutral-8)",
+                borderRadius: 12,
+                padding: 6,
+                marginBottom: 14,
+                display: "flex",
+                gap: 4,
+                flexWrap: "wrap",
+              }}
+            >
+              {tabs.map((t) => {
+                const active = tab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setTab(t.key)}
+                    style={{
+                      appearance: "none",
+                      cursor: "pointer",
+                      padding: "8px 14px",
+                      borderRadius: 8,
+                      border: "none",
+                      background: active ? "var(--lab-agent-bg)" : "transparent",
+                      color: active ? "var(--agent-700)" : "var(--text-subtle)",
+                      fontSize: 12,
+                      fontWeight: active ? 700 : 500,
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* tools 탭 — view.tools 를 ToolRow 리스트 + 상세 모달 */}
+            {tab === "tools" && (
+              <div className="il-card">
+                <BenchHeader label="TOOLS" title="에이전트가 호출 가능한 도구" />
+                {view.tools.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+                    등록된 도구가 없습니다.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {view.tools.map((t) => (
+                      <ToolRow key={t.name} tool={t} onClick={() => setShowTool(t)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* subagents 탭 — SubagentManager(실제 CRUD). 자체 card 헤더를
+                그리므로 추가 카드 래퍼 없이 그대로 배치(이중 테두리 방지). */}
+            {tab === "subagents" && (
+              <div className="harness-tab-body">
+                <SubagentManager />
+              </div>
+            )}
+
+            {/* skills 탭 — SkillManager(실제 CRUD). */}
+            {tab === "skills" && (
+              <div className="harness-tab-body">
+                <SkillManager />
+              </div>
+            )}
+
+            {/* instruction 탭 — InstructionManager(실제 CRUD · 시스템 프롬프트). */}
+            {tab === "instruction" && (
+              <div className="harness-tab-body">
+                <InstructionManager systemPrompt={view.systemPrompt} />
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* 도구 상세 모달 */}
+      {showTool && (
+        <ToolDetailModal tool={showTool} onClose={() => setShowTool(null)} />
+      )}
     </div>
   );
 }

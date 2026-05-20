@@ -7,22 +7,17 @@
  * POST   body{id?,label,body} → {instruction} | {error,detail?}(400)
  * DELETE ?id= → {ok:true} | {error}
  *
- * builtin(=true, "default")은 편집·삭제 비활성(API 도 거부하지만 UI 차단).
- * 자체 fetch + 로컬 상태(표시 전용 HarnessView 와 분리 — 충돌 0).
+ * builtin(=true)은 편집·삭제 비활성. systemPrompt prop 은 내장 "기본" 항목
+ * 미리보기용(CRUD API 목록에 포함되지 않는 정적 상수 — 별도 표시).
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  card,
-  sectionTitle,
   sectionDesc,
-  rowItem,
   itemName,
-  itemDesc,
   builtinChip,
   btnGhost,
   btnPrimary,
-  btnDanger,
   btnDisabled,
   input,
   textarea,
@@ -30,7 +25,20 @@ import {
   field,
   messageStyle,
   actionRow,
+  benchAction,
+  benchPrimarySolid,
+  benchModalGhost,
+  benchModalDanger,
+  benchModalBadge,
+  instructionRow,
+  rowBtn,
+  rowBtnDanger,
+  rowBtnDisabled,
+  previewText,
+  formWrap,
 } from "./managerStyles";
+import { ContentModal } from "./ContentModal";
+import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 
 interface Instruction {
   id: string;
@@ -40,7 +48,6 @@ interface Instruction {
 }
 
 interface FormState {
-  /** 신규면 undefined, 편집이면 대상 id. */
   id?: string;
   label: string;
   body: string;
@@ -48,13 +55,22 @@ interface FormState {
 
 const MAX_LABEL_LEN = 100;
 const MAX_BODY_LEN = 20000;
+const PREVIEW_LEN = 80;
 
-export function InstructionManager(): ReactNode {
+export function InstructionManager({
+  systemPrompt,
+}: {
+  systemPrompt: string;
+}): ReactNode {
   const [items, setItems] = useState<Instruction[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // 모달: id 가 있으면 CRUD 변형(편집/삭제 가능), 없으면 정적 "기본"(읽기 전용).
+  const [modal, setModal] = useState<{ id?: string; label: string; body: string; builtin?: boolean } | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,11 +116,7 @@ export function InstructionManager(): ReactNode {
       const res = await fetch("/api/harness/instructions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          id: form.id,
-          label: form.label,
-          body: form.body,
-        }),
+        body: JSON.stringify({ id: form.id, label: form.label, body: form.body }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
@@ -143,114 +155,208 @@ export function InstructionManager(): ReactNode {
     }
   };
 
+  // 모달이 가리키는 CRUD 변형 원본(편집·삭제 연결용). id 없으면 정적 "기본".
+  const modalSource = modal?.id ? items.find((i) => i.id === modal.id) : undefined;
+  // 변형 1줄 행 — 정적 "기본"과 CRUD 변형을 동일 톤으로 렌더(builtin 보호).
+  const renderRow = (
+    key: string,
+    label: string,
+    body: string,
+    opts: { builtin: boolean; active?: boolean; onView: () => void; onEdit?: () => void; onDelete?: () => void },
+  ): ReactNode => (
+    <div
+      key={key}
+      role="button"
+      tabIndex={0}
+      style={{ ...instructionRow, cursor: "pointer" }}
+      onClick={opts.onView}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          opts.onView();
+        }
+      }}
+    >
+      <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={itemName}>{label}</span>
+        {opts.active && (
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              color: "var(--lab-success-text, #15803d)",
+              marginLeft: 2,
+            }}
+          >
+            ● 활성
+          </span>
+        )}
+        {opts.builtin && <span style={builtinChip}>내장</span>}
+        <span style={{ ...previewText, marginLeft: 4 }}>
+          {body.length > PREVIEW_LEN ? `${body.slice(0, PREVIEW_LEN)}…` : body}
+        </span>
+      </div>
+      <button
+        type="button"
+        style={opts.builtin || !opts.onEdit ? rowBtnDisabled : rowBtn}
+        disabled={opts.builtin || !opts.onEdit}
+        onClick={(e) => {
+          e.stopPropagation();
+          opts.onEdit?.();
+        }}
+      >
+        편집
+      </button>
+      <button
+        type="button"
+        style={opts.builtin || !opts.onDelete ? rowBtnDisabled : rowBtnDanger}
+        disabled={opts.builtin || !opts.onDelete}
+        onClick={(e) => {
+          e.stopPropagation();
+          opts.onDelete?.();
+        }}
+      >
+        삭제
+      </button>
+      <span style={{ width: 4 }} />
+    </div>
+  );
+
   return (
-    <div style={card}>
-      <div style={sectionTitle}>시스템 인스트럭션 관리</div>
-      <div style={sectionDesc}>
-        메인 에이전트에 주입할 시스템 프롬프트를 만들고 편집합니다. 내장
-        기본 인스트럭션은 보호되어 편집·삭제할 수 없습니다.
+    <>
+      <div className="il-card">
+        {/* 시안 BenchCard 헤더 — SYSTEM 라벨 + 우측 액션. 멀티 변형 구조 */}
+        <BenchHeader
+          label="SYSTEM"
+          title="메인 에이전트 시스템 인스트럭션 (변형)"
+          status={
+            !form ? (
+              <button type="button" style={benchAction} onClick={startNew}>
+                + 새 인스트럭션
+              </button>
+            ) : undefined
+          }
+        />
+        <div style={sectionDesc}>
+          메인 에이전트에 주입할 시스템 프롬프트 변형을 만들고 편집합니다. 내장
+          기본 인스트럭션은 보호되어 편집·삭제할 수 없습니다. 변형 행을 클릭하면
+          전문을 봅니다.
+        </div>
+
+        {msg && <div style={messageStyle(msg.ok)}>{msg.text}</div>}
+
+        {/* 편집 폼 */}
+        {form && (
+          <div style={formWrap}>
+            <div style={field}>
+              <label style={fieldLabel}>이름 (label)</label>
+              <input
+                style={input}
+                value={form.label}
+                maxLength={MAX_LABEL_LEN}
+                placeholder="예: 친절한 고객 지원 톤"
+                onChange={(e) => setForm({ ...form, label: e.target.value })}
+              />
+            </div>
+            <div style={field}>
+              <label style={fieldLabel}>본문 (body)</label>
+              <textarea
+                style={textarea}
+                value={form.body}
+                maxLength={MAX_BODY_LEN}
+                placeholder="시스템 프롬프트 전문을 입력하세요."
+                onChange={(e) => setForm({ ...form, body: e.target.value })}
+              />
+            </div>
+            <div style={actionRow}>
+              <button
+                type="button"
+                style={saving ? btnDisabled : btnPrimary}
+                disabled={saving}
+                onClick={() => void save()}
+              >
+                {saving ? "저장 중…" : "저장"}
+              </button>
+              <button type="button" style={btnGhost} onClick={cancel}>
+                취소
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 변형 목록 — 정적 "기본"(활성) + CRUD 변형, 동일 톤 행 리스트 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {/* 기본(내장) 인스트럭션 — 정적 systemPrompt, 활성 표시 */}
+          {renderRow("__builtin__", "기본", systemPrompt, {
+            builtin: true,
+            active: true,
+            onView: () => setModal({ label: "기본 인스트럭션", body: systemPrompt, builtin: true }),
+          })}
+
+          {loading ? (
+            <div style={{ fontSize: 12, color: "var(--text-subtle)", paddingTop: 6 }}>
+              불러오는 중…
+            </div>
+          ) : (
+            items.map((it) =>
+              renderRow(it.id, it.label, it.body, {
+                builtin: !!it.builtin,
+                onView: () => setModal({ id: it.id, label: it.label, body: it.body, builtin: it.builtin }),
+                onEdit: it.builtin ? undefined : () => startEdit(it),
+                onDelete: it.builtin ? undefined : () => void remove(it),
+              }),
+            )
+          )}
+        </div>
       </div>
 
-      {msg && <div style={messageStyle(msg.ok)}>{msg.text}</div>}
-
-      {!form && (
-        <div style={{ marginBottom: 14 }}>
-          <button type="button" style={btnPrimary} onClick={startNew}>
-            + 새 인스트럭션
-          </button>
-        </div>
-      )}
-
-      {form && (
-        <div
-          style={{
-            border: "1px solid var(--t-neutral-8)",
-            borderRadius: "var(--r-md)",
-            padding: 14,
-            marginBottom: 14,
-            background: "var(--surface-subtle)",
-          }}
+      {/* 상세 모달 — 시안 InstructionEditModal 톤(SYSTEM 배지 + footer) */}
+      {modal && (
+        <ContentModal
+          title={modal.label}
+          subtitle="시스템 인스트럭션 전문"
+          onClose={() => setModal(null)}
+          width={820}
+          headerExtra={<span style={benchModalBadge}>SYSTEM</span>}
+          footer={
+            <>
+              <button type="button" style={benchModalGhost} onClick={() => setModal(null)}>
+                닫기
+              </button>
+              {modalSource && !modalSource.builtin && (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    style={benchModalDanger}
+                    onClick={() => {
+                      const target = modalSource;
+                      setModal(null);
+                      void remove(target);
+                    }}
+                  >
+                    삭제
+                  </button>
+                  <button
+                    type="button"
+                    style={benchPrimarySolid}
+                    onClick={() => {
+                      setModal(null);
+                      startEdit(modalSource);
+                    }}
+                  >
+                    편집
+                  </button>
+                </div>
+              )}
+            </>
+          }
         >
-          <div style={field}>
-            <label style={fieldLabel}>이름 (label)</label>
-            <input
-              style={input}
-              value={form.label}
-              maxLength={MAX_LABEL_LEN}
-              placeholder="예: 친절한 고객 지원 톤"
-              onChange={(e) =>
-                setForm({ ...form, label: e.target.value })
-              }
-            />
-          </div>
-          <div style={field}>
-            <label style={fieldLabel}>본문 (body)</label>
-            <textarea
-              style={textarea}
-              value={form.body}
-              maxLength={MAX_BODY_LEN}
-              placeholder="시스템 프롬프트 전문을 입력하세요."
-              onChange={(e) => setForm({ ...form, body: e.target.value })}
-            />
-          </div>
-          <div style={actionRow}>
-            <button
-              type="button"
-              style={saving ? btnDisabled : btnPrimary}
-              disabled={saving}
-              onClick={() => void save()}
-            >
-              {saving ? "저장 중…" : "저장"}
-            </button>
-            <button type="button" style={btnGhost} onClick={cancel}>
-              취소
-            </button>
-          </div>
-        </div>
+          <pre className="il-code" style={{ maxHeight: 420, overflowY: "auto" }}>
+            {modal.body}
+          </pre>
+        </ContentModal>
       )}
-
-      {loading ? (
-        <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-          불러오는 중…
-        </div>
-      ) : items.length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-          등록된 인스트럭션이 없습니다.
-        </div>
-      ) : (
-        items.map((it) => (
-          <div key={it.id} style={rowItem}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={itemName}>{it.label}</span>
-              {it.builtin && <span style={builtinChip}>내장</span>}
-            </div>
-            <div style={itemDesc}>
-              {it.body.length > 120
-                ? `${it.body.slice(0, 120)}…`
-                : it.body}
-            </div>
-            <div style={{ ...actionRow, marginTop: 8 }}>
-              <button
-                type="button"
-                style={it.builtin ? btnDisabled : btnGhost}
-                disabled={it.builtin}
-                onClick={() => startEdit(it)}
-              >
-                편집
-              </button>
-              <button
-                type="button"
-                style={it.builtin ? btnDisabled : btnDanger}
-                disabled={it.builtin}
-                onClick={() => void remove(it)}
-              >
-                삭제
-              </button>
-            </div>
-          </div>
-        ))
-      )}
-    </div>
+    </>
   );
 }
 

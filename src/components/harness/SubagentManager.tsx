@@ -3,26 +3,16 @@
 /**
  * 서브에이전트 관리 패널 — /api/harness/subagents CRUD UI.
  *
- * GET    {subagents:[{name,description,systemPrompt}]}  (커스텀만, builtin 제외)
+ * GET    {subagents:[{name,description,systemPrompt}]}
  * POST   body{name,description,systemPrompt} → {subagent} | {error}
  * DELETE ?name= → {ok:true} | {error}
- *
- * 목록은 사용자 정의 서브에이전트만 노출(내장 web-searcher 는 코드 모듈이라
- * 여기 안 옴 → 모두 편집·삭제 가능). 예약명(web-searcher)은 API 가 거부하며
- * UI 도 slug 검증으로 차단한다. 편집 시 name(식별자)은 잠근다.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
-  card,
-  sectionTitle,
   sectionDesc,
-  rowItem,
-  itemName,
-  itemDesc,
   btnGhost,
   btnPrimary,
-  btnDanger,
   btnDisabled,
   input,
   textarea,
@@ -30,7 +20,20 @@ import {
   field,
   messageStyle,
   actionRow,
+  benchAction,
+  benchPrimarySolid,
+  benchModalGhost,
+  benchModalDanger,
+  benchModalBadge,
+  subagentGrid,
+  subagentCard,
+  subagentCardName,
+  subagentCardDesc,
+  subagentCardMeta,
+  formWrap,
 } from "./managerStyles";
+import { ContentModal } from "./ContentModal";
+import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 
 interface Subagent {
   name: string;
@@ -39,8 +42,13 @@ interface Subagent {
 }
 
 interface FormState {
-  /** 편집 모드면 true(name 잠금). */
   editing: boolean;
+  name: string;
+  description: string;
+  systemPrompt: string;
+}
+
+interface ModalState {
   name: string;
   description: string;
   systemPrompt: string;
@@ -57,6 +65,7 @@ export function SubagentManager(): ReactNode {
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [modal, setModal] = useState<ModalState | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,12 +91,7 @@ export function SubagentManager(): ReactNode {
 
   const startEdit = (sa: Subagent): void => {
     setMsg(null);
-    setForm({
-      editing: true,
-      name: sa.name,
-      description: sa.description,
-      systemPrompt: sa.systemPrompt,
-    });
+    setForm({ editing: true, name: sa.name, description: sa.description, systemPrompt: sa.systemPrompt });
   };
 
   const cancel = (): void => {
@@ -102,17 +106,11 @@ export function SubagentManager(): ReactNode {
       return;
     }
     if (!SLUG_RE.test(form.name)) {
-      setMsg({
-        ok: false,
-        text: "이름은 영문 소문자·숫자·하이픈만(2~64자) 사용할 수 있습니다.",
-      });
+      setMsg({ ok: false, text: "이름은 영문 소문자·숫자·하이픈만(2~64자) 사용할 수 있습니다." });
       return;
     }
     if (RESERVED.has(form.name)) {
-      setMsg({
-        ok: false,
-        text: `'${form.name}' 은(는) 내장 서브에이전트 이름이라 사용할 수 없습니다.`,
-      });
+      setMsg({ ok: false, text: `'${form.name}' 은(는) 내장 서브에이전트 이름이라 사용할 수 없습니다.` });
       return;
     }
     if (!form.systemPrompt.trim()) {
@@ -125,11 +123,7 @@ export function SubagentManager(): ReactNode {
       const res = await fetch("/api/harness/subagents", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: form.name,
-          description: form.description,
-          systemPrompt: form.systemPrompt,
-        }),
+        body: JSON.stringify({ name: form.name, description: form.description, systemPrompt: form.systemPrompt }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) {
@@ -167,134 +161,190 @@ export function SubagentManager(): ReactNode {
     }
   };
 
+  // 모달에서 보고 있는 서브에이전트의 원본(편집·삭제 연결용).
+  const modalSource = modal ? items.find((s) => s.name === modal.name) : undefined;
+
   return (
-    <div style={card}>
-      <div style={sectionTitle}>서브에이전트 관리</div>
-      <div style={sectionDesc}>
-        메인 에이전트가 task 도구로 위임하는 일꾼 에이전트를 선언형으로
-        만듭니다(코드 작성 불필요). 도구는 메인 기본 도구를 상속합니다. 내장
-        서브에이전트(web-searcher)는 여기 표시되지 않습니다.
-      </div>
-
-      {msg && <div style={messageStyle(msg.ok)}>{msg.text}</div>}
-
-      {!form && (
-        <div style={{ marginBottom: 14 }}>
-          <button type="button" style={btnPrimary} onClick={startNew}>
-            + 새 서브에이전트
-          </button>
-        </div>
-      )}
-
-      {form && (
-        <div
-          style={{
-            border: "1px solid var(--t-neutral-8)",
-            borderRadius: "var(--r-md)",
-            padding: 14,
-            marginBottom: 14,
-            background: "var(--surface-subtle)",
-          }}
-        >
-          <div style={field}>
-            <label style={fieldLabel}>이름 (slug)</label>
-            <input
-              style={{
-                ...input,
-                ...(form.editing
-                  ? { background: "var(--t-neutral-6)", cursor: "not-allowed" }
-                  : {}),
-                fontFamily: "var(--font-mono)",
-              }}
-              value={form.name}
-              maxLength={64}
-              disabled={form.editing}
-              placeholder="예: contract-reviewer"
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-            {form.editing && (
-              <div
-                style={{
-                  fontSize: 10.5,
-                  color: "var(--text-subtle)",
-                  marginTop: 4,
-                }}
-              >
-                이름(식별자)은 변경할 수 없습니다.
-              </div>
-            )}
-          </div>
-          <div style={field}>
-            <label style={fieldLabel}>설명 (description)</label>
-            <input
-              style={input}
-              value={form.description}
-              maxLength={MAX_DESC_LEN}
-              placeholder="메인이 언제 이 서브에이전트에 위임할지 판단하는 근거"
-              onChange={(e) =>
-                setForm({ ...form, description: e.target.value })
-              }
-            />
-          </div>
-          <div style={field}>
-            <label style={fieldLabel}>systemPrompt</label>
-            <textarea
-              style={textarea}
-              value={form.systemPrompt}
-              maxLength={MAX_PROMPT_LEN}
-              placeholder="이 서브에이전트의 역할·지침 전문"
-              onChange={(e) =>
-                setForm({ ...form, systemPrompt: e.target.value })
-              }
-            />
-          </div>
-          <div style={actionRow}>
-            <button
-              type="button"
-              style={saving ? btnDisabled : btnPrimary}
-              disabled={saving}
-              onClick={() => void save()}
-            >
-              {saving ? "저장 중…" : "저장"}
-            </button>
-            <button type="button" style={btnGhost} onClick={cancel}>
-              취소
-            </button>
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-          불러오는 중…
-        </div>
-      ) : items.length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-          등록된 커스텀 서브에이전트가 없습니다.
-        </div>
-      ) : (
-        items.map((sa) => (
-          <div key={sa.name} style={rowItem}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={itemName}>{sa.name}</span>
-            </div>
-            {sa.description && <div style={itemDesc}>{sa.description}</div>}
-            <div style={{ ...actionRow, marginTop: 8 }}>
-              <button type="button" style={btnGhost} onClick={() => startEdit(sa)}>
-                편집
+    <>
+      <div className="il-card">
+        {/* 시안 BenchCard 헤더 — il-bench-label 칩 + 제목 + 우측 액션 */}
+        <BenchHeader
+          label="SUBAGENTS"
+          title="task 도구로 위임할 일꾼 에이전트"
+          status={
+            !form ? (
+              <button type="button" style={benchAction} onClick={startNew}>
+                + 새로 만들기
               </button>
+            ) : undefined
+          }
+        />
+        <div style={sectionDesc}>
+          메인 에이전트가 task 도구로 위임하는 일꾼 에이전트를 선언형으로
+          만듭니다(코드 작성 불필요). 도구는 메인 기본 도구를 상속합니다. 내장
+          서브에이전트(web-searcher)는 여기 표시되지 않습니다.
+        </div>
+
+        {msg && <div style={messageStyle(msg.ok)}>{msg.text}</div>}
+
+        {/* 편집 폼 */}
+        {form && (
+          <div style={formWrap}>
+            <div style={field}>
+              <label style={fieldLabel}>이름 (slug)</label>
+              <input
+                style={{
+                  ...input,
+                  ...(form.editing ? { background: "var(--t-neutral-6)", cursor: "not-allowed" } : {}),
+                  fontFamily: "var(--font-mono)",
+                }}
+                value={form.name}
+                maxLength={64}
+                disabled={form.editing}
+                placeholder="예: contract-reviewer"
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+              {form.editing && (
+                <div style={{ fontSize: 10.5, color: "var(--text-subtle)", marginTop: 4 }}>
+                  이름(식별자)은 변경할 수 없습니다.
+                </div>
+              )}
+            </div>
+            <div style={field}>
+              <label style={fieldLabel}>설명 (description)</label>
+              <input
+                style={input}
+                value={form.description}
+                maxLength={MAX_DESC_LEN}
+                placeholder="메인이 언제 이 서브에이전트에 위임할지 판단하는 근거"
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+            </div>
+            <div style={field}>
+              <label style={fieldLabel}>systemPrompt</label>
+              <textarea
+                style={textarea}
+                value={form.systemPrompt}
+                maxLength={MAX_PROMPT_LEN}
+                placeholder="이 서브에이전트의 역할·지침 전문"
+                onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
+              />
+            </div>
+            <div style={actionRow}>
               <button
                 type="button"
-                style={btnDanger}
-                onClick={() => void remove(sa)}
+                style={saving ? btnDisabled : btnPrimary}
+                disabled={saving}
+                onClick={() => void save()}
               >
-                삭제
+                {saving ? "저장 중…" : "저장"}
+              </button>
+              <button type="button" style={btnGhost} onClick={cancel}>
+                취소
               </button>
             </div>
           </div>
-        ))
+        )}
+
+        {/* 목록 — 시안 2열 카드 그리드(카드 클릭 → 상세 모달) */}
+        {loading ? (
+          <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>불러오는 중…</div>
+        ) : items.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+            등록된 커스텀 서브에이전트가 없습니다.
+          </div>
+        ) : (
+          <div style={subagentGrid}>
+            {items.map((sa) => (
+              <button
+                key={sa.name}
+                type="button"
+                style={subagentCard}
+                onClick={() =>
+                  setModal({ name: sa.name, description: sa.description, systemPrompt: sa.systemPrompt })
+                }
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={subagentCardName}>{sa.name}</span>
+                </div>
+                <div style={subagentCardDesc}>
+                  {sa.description || (
+                    <span style={{ fontStyle: "italic" }}>설명 없음 — systemPrompt 로 위임 판단</span>
+                  )}
+                </div>
+                {/* 하단 점선 위 메타 — 도구는 메인 상속, 프롬프트 길이 */}
+                <div style={subagentCardMeta}>
+                  <span style={{ color: "var(--agent-700)", fontWeight: 700, fontFamily: "var(--lab-font-mono)" }}>
+                    도구 상속
+                  </span>
+                  <span>·</span>
+                  <span>프롬프트 {sa.systemPrompt.length.toLocaleString()}자</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 상세 모달 — 시안 SubagentDetailModal 톤(보라 배지 + footer 편집/삭제) */}
+      {modal && (
+        <ContentModal
+          title={modal.name}
+          subtitle={modal.description || "서브에이전트 systemPrompt"}
+          onClose={() => setModal(null)}
+          width={820}
+          headerExtra={<span style={benchModalBadge}>SUBAGENT</span>}
+          footer={
+            <>
+              <button type="button" style={benchModalGhost} onClick={() => setModal(null)}>
+                닫기
+              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  style={benchModalDanger}
+                  onClick={() => {
+                    if (!modalSource) return;
+                    const target = modalSource;
+                    setModal(null);
+                    void remove(target);
+                  }}
+                >
+                  삭제
+                </button>
+                <button
+                  type="button"
+                  style={benchPrimarySolid}
+                  onClick={() => {
+                    if (!modalSource) return;
+                    setModal(null);
+                    startEdit(modalSource);
+                  }}
+                >
+                  편집
+                </button>
+              </div>
+            </>
+          }
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--text-subtle)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              marginBottom: 6,
+            }}
+          >
+            시스템 프롬프트
+          </div>
+          <pre className="il-code" style={{ maxHeight: 360, overflowY: "auto" }}>
+            {modal.systemPrompt}
+          </pre>
+        </ContentModal>
       )}
-    </div>
+    </>
   );
 }
 

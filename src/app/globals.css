@@ -178,6 +178,64 @@
   }
 }
 
+/* 스켈레톤 깜빡임 — 크기(scale) 변화 없이 opacity 만(번역 대기 reasoning).
+   pulse(점 애니메이션)는 scale 0.6 이라 블록에 쓰면 크기가 출렁인다. */
+@keyframes skeletonPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* 사고 번역 대기 스켈레톤: 원문 텍스트를 그대로 렌더하되 글자만 회색
+   바로 덮는다(텍스트 투명 + 배경 회색). 원문과 같은 줄 수·높이를
+   유지해 번역 완료 시 레이아웃 점프 0. opacity 펄스만(크기 모션 없음).
+
+   줄별 사각형: 텍스트 블록(p/li/h*)을 inline 화 + box-decoration-break
+   clone 으로, wrap 된 각 줄마다 회색 배경 사각형이 끊겨 그려진다(전형적
+   스켈레톤). line-height 여백이 사각형 사이 간격을 만든다. */
+/* 사고 본문 스켈레톤(.thinking-skeleton-body) — 제목은 제외(원문 텍스트).
+
+   Layout shift 0 핵심: 원문 본문과 "완전히 동일한" 마크다운·클래스로
+   렌더하므로 line-height·font-size·줄 수·문단 마진이 전부 그대로다. 여기선
+   글자 색만 투명하게 + 글자 자리에 회색 배경만 입힌다. 높이에 영향 주는
+   속성(line-height/padding/margin/::after)은 절대 추가하지 않는다 → 번역
+   완료로 글자가 드러나도 높이 변화 0.
+
+   줄별 사각형: 텍스트를 담은 p/li 를 inline 화 + box-decoration-break:clone
+   하면, wrap 된 각 줄마다 배경 사각형이 끊겨 그려진다. inline 화해도 원문의
+   line-height(THINKING_MD_CLASS leading-1.7)를 그대로 쓰므로 줄 높이 동일.
+   문단 마진(my-1)은 인라인이라 무시되지만, 사고 본문은 보통 1~2 문단이라
+   체감 차이가 없도록 줄 간격만으로 분리되게 둔다. */
+.thinking-skeleton-body {
+  animation: skeletonPulse 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+.thinking-skeleton-body :is(p, li) {
+  display: inline;
+  color: transparent !important;
+  background: rgba(156, 163, 175, 0.3) !important;
+  border-radius: 4px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+/* 문단(p/li) 사이 줄바꿈 — inline 화로 사라진 문단 경계를 복원한다. 빈
+   block 이라 줄바꿈만 만들고 높이는 0(원문 높이 영향 없음). 마지막
+   문단 뒤엔 불필요. */
+.thinking-skeleton-body :is(p, li):not(:last-child)::after {
+  content: "";
+  display: block;
+}
+/* 중첩 인라인(strong/em/a/code)은 부모 배경 위에 겹쳐 칠하지 않게 — 글자만
+   투명, 배경은 부모(p/li)것 사용(2겹 방지). */
+.thinking-skeleton-body :is(strong, em, a, code) {
+  color: transparent !important;
+  background: transparent !important;
+}
+
 /* 대화 기록 Popover 등장(디자인 chat.jsx:881 ConvHistoryPopover). */
 @keyframes popoverIn {
   from {
@@ -365,6 +423,13 @@
   --lab-blue-bg: #f4f9fe;
   --lab-blue-bg-2: #ebf3fb;
   --lab-blue-border: #c8def3;
+  /* AI 에이전트 그룹 보라(하네스 — 검색·라벨링 blue 와 구분). agent
+     스케일 보강(--agent-400/600) + lab tint(시안 lab-agent-*). */
+  --agent-400: #a78bfa;
+  --agent-600: #7c3aed;
+  --lab-agent-bg: #f5f3ff;
+  --lab-agent-bg-2: #ede9fe;
+  --lab-agent-border: #ddd6fe;
   /* 상태색 */
   --lab-success-text: #0a7a73;
   --lab-success-bg: #e6f6f4;
