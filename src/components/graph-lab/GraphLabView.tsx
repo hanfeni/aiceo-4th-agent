@@ -262,11 +262,13 @@ export function GraphLabView(): ReactNode {
     built &&
     stats.loadedDatasetId !== null &&
     stats.loadedDatasetId !== datasetId;
-  // 적재된 데이터셋의 라벨(경고 문구용).
-  const loadedLabel =
-    GRAPH_DATASETS.find((d) => d.id === stats?.loadedDatasetId)?.label ??
-    stats?.loadedDatasetId ??
-    "(미상)";
+  // 실제 적재된 데이터셋(모달·경고 문구용). 미상이면 선택 데이터셋 폴백.
+  const loadedDataset =
+    GRAPH_DATASETS.find((d) => d.id === stats?.loadedDatasetId) ??
+    activeDataset;
+  const loadedLabel = stats?.loadedDatasetId
+    ? loadedDataset.label
+    : "(미상)";
 
   return (
     <div
@@ -588,7 +590,11 @@ export function GraphLabView(): ReactNode {
       )}
 
       {showExplore && (
-        <GraphExploreModal onClose={() => setShowExplore(false)} />
+        <GraphExploreModal
+          onClose={() => setShowExplore(false)}
+          datasetLabel={loadedLabel}
+          slots={loadedDataset.slots}
+        />
       )}
     </div>
   );

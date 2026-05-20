@@ -159,10 +159,23 @@ const overlay: CSSProperties = {
   zIndex: 1000,
 };
 
+/** 데이터셋 노드/관계 표시 라벨(주체/대상/관계). config.slots 와 동형. */
+interface DatasetSlots {
+  subject: string;
+  object: string;
+  relation: string;
+}
+
 export function GraphExploreModal({
   onClose,
+  datasetLabel,
+  slots,
 }: {
   onClose: () => void;
+  /** 실제 적재된 데이터셋 라벨(헤더 제목). */
+  datasetLabel: string;
+  /** 노드/관계 한글 라벨(데이터셋별 — SEC 하드코딩 제거). */
+  slots: DatasetSlots;
 }): ReactNode {
   // raw 누적 저장소 (layout 은 렌더 직전 파생 — 기존 노드 위치 보존).
   const [nodeMap, setNodeMap] = useState<Map<string, ApiNode>>(new Map());
@@ -414,7 +427,7 @@ export function GraphExploreModal({
             }}
           >
             <strong style={{ fontSize: 15, color: "var(--text-default)" }}>
-              그래프 DB 구조 — SEC EDGAR 지식그래프
+              그래프 DB 구조 — {datasetLabel} 지식그래프
             </strong>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {/* 스키마 토글 (owns ↔ position) */}
@@ -484,7 +497,7 @@ export function GraphExploreModal({
                 fontWeight: 600,
               }}
             >
-              (:Manager) 기관
+              (:Manager) {slots.subject}
             </span>
             {mode === "position" ? (
               <>
@@ -508,7 +521,7 @@ export function GraphExploreModal({
               </>
             ) : (
               <span style={{ color: "var(--text-subtle)" }}>
-                ──[:OWNS value·shares]──▶
+                ──[:OWNS {slots.relation}]──▶
               </span>
             )}
             <span
@@ -520,7 +533,7 @@ export function GraphExploreModal({
                 fontWeight: 600,
               }}
             >
-              (:Company) 종목
+              (:Company) {slots.object}
             </span>
             <span
               style={{
@@ -530,8 +543,8 @@ export function GraphExploreModal({
               }}
             >
               {mode === "position"
-                ? "← 포지션 노드가 보유 1건을 매개(옵션/현물·가치). Neo4j 공식 패턴"
-                : "← 기관 클릭=보유 종목 펼침 · 종목 클릭=보유 기관 펼침. GraphRAG 멀티홉의 실체"}
+                ? `← 포지션 노드가 ${slots.relation} 1건을 매개. Neo4j 공식 패턴`
+                : `← ${slots.subject} 클릭=${slots.relation} ${slots.object} 펼침 · ${slots.object} 클릭=${slots.relation} ${slots.subject} 펼침. GraphRAG 멀티홉의 실체`}
             </span>
           </div>
 
