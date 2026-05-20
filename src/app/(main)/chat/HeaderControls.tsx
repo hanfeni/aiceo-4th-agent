@@ -13,7 +13,7 @@ import {
   Check,
   Database,
 } from "lucide-react";
-import { useChatStore, chatStore } from "@/store";
+import { useChatStore, useChatStoreApi } from "@/store";
 import { ConversationHistory } from "@/components/chat/ConversationHistory";
 import {
   ALLOWED_MODELS,
@@ -21,6 +21,14 @@ import {
 } from "@/lib/agent/harness/models";
 import { SEARCH_DOMAINS, DOMAIN_SPEC } from "@/lib/searchlab/domains";
 import { SQL_DOMAINS, SQL_DOMAIN_SPEC } from "@/lib/sqllab/domains";
+import { GRAPH_DATASETS } from "@/lib/graphlab/config";
+
+// 온톨로지 조회(graph) 드롭다운 옵션 — 맨 앞 "안함"(도구 없음).
+// GRAPH_DATASETS SSOT(수업3) 가 드롭다운·도구 단일 소스(수업1·3 연결).
+const GRAPH_OPTIONS: { value: string | null; label: string }[] = [
+  { value: null, label: "온톨로지 안함" },
+  ...GRAPH_DATASETS.map((d) => ({ value: d.id, label: d.label })),
+];
 
 // 인덱스검색 드롭다운 옵션 — 맨 앞 "안함"(도구 없음=기존 챗).
 const IDX_OPTIONS: { value: string | null; label: string }[] = [
@@ -32,13 +40,23 @@ const IDX_OPTIONS: { value: string | null; label: string }[] = [
 ];
 
 // 데이터 조회(SQL) 드롭다운 옵션 — 맨 앞 "안함"(도구 없음).
-const SQL_OPTIONS: { value: string | null; label: string }[] = [
+// custom 슬롯은 정적 항목에서 제외하고(등록 시에만 동적 라벨로 추가)
+// render 에서 buildSqlOptions(customLabel) 로 합친다.
+const SQL_STATIC_OPTIONS: { value: string | null; label: string }[] = [
   { value: null, label: "데이터조회 안함" },
-  ...SQL_DOMAINS.map((d) => ({
-    value: d,
+  ...SQL_DOMAINS.filter((d) => d !== "custom").map((d) => ({
+    value: d as string,
     label: SQL_DOMAIN_SPEC[d].label,
   })),
 ];
+
+/** 정적 옵션 + (등록된 경우) 동적 custom 옵션을 합친다. */
+function buildSqlOptions(
+  customLabel: string | null,
+): { value: string | null; label: string }[] {
+  if (!customLabel) return SQL_STATIC_OPTIONS;
+  return [...SQL_STATIC_OPTIONS, { value: "custom", label: customLabel }];
+}
 
 /**
  * HeaderControls — 디자인 탑바 우측 액션 클러스터 (chat.jsx:183-225).
@@ -88,10 +106,13 @@ export function HeaderControls({
   model,
   onNewChat,
 }: HeaderControlsProps): ReactNode {
+  // 현재 컨텍스트의 store(워크스페이스 격리 또는 전역 /chat). Provider
+  // 없는 /chat 은 전역 싱글톤을 받아 종전과 동일(회귀 0).
+  const storeApi = useChatStoreApi();
   // 서버 유래 값을 store 에 1회 하이드레이트(FR-07 — 키 미포함 식별자만).
   useEffect(() => {
-    chatStore.setState({ provider, model });
-  }, [provider, model]);
+    storeApi.setState({ provider, model });
+  }, [storeApi, provider, model]);
 
   const storeProvider = useChatStore((s) => s.provider);
   const storeModel = useChatStore((s) => s.model);
@@ -110,10 +131,10 @@ export function HeaderControls({
   // store.model 이 비어 있으면(초기) 정규화된 선택 모델로 시드 — 드롭다운
   // 현재 표시와 useChat 이 보낼 model 을 일치시킨다.
   useEffect(() => {
-    if (!chatStore.getState().model) {
-      chatStore.getState().setModel(selectedModel);
+    if (!storeApi.getState().model) {
+      storeApi.getState().setModel(selectedModel);
     }
-  }, [selectedModel]);
+  }, [storeApi, selectedModel]);
 
   const modelLabel = effProvider
     ? `${effProvider} · ${selectedModel}`
@@ -129,7 +150,7 @@ export function HeaderControls({
   };
 
   const handleSelectModel = (m: string): void => {
-    chatStore.getState().setModel(m); // 같은 모델 재선택도 안전(no-op)
+    storeApi.getState().setModel(m); // 같은 모델 재선택도 안전(no-op)
     setPickerOpen(false);
   };
 
@@ -139,10 +160,19 @@ export function HeaderControls({
   // 수시로 바뀌므로 드롭다운 열 때마다 재조회(사용자 결정).
   const [idxAvail, setIdxAvail] = useState<Set<string> | null>(null);
   const [sqlAvail, setSqlAvail] = useState<Set<string> | null>(null);
+  // 동적 custom 도메인 라벨(업로드 시 결정 — tables API 가 반환).
+  // null = 미등록(드롭다운에서 custom 숨김).
+  const [customLabel, setCustomLabel] = useState<string | null>(null);
 
   // 인덱스검색 드롭다운 — 로컬 open 상태(모델 픽커와 동형).
   const [idxOpen, setIdxOpen] = useState(false);
   const storeIdxDomain = useChatStore((s) => s.idxDomain);
+
+  // 온톨로지 조회 드롭다운 — 인덱스검색 동형(독립 필드). Neo4j 는
+  // 단일 인스턴스라 가용성 체크 없이 정적 GRAPH_OPTIONS(데이터셋
+  // 적재 여부는 도구가 graceful 안내). 수업1·3 연결.
+  const [graphOpen, setGraphOpen] = useState(false);
+  const storeGraphDataset = useChatStore((s) => s.graphDataset);
 
   // 드롭다운 오픈 시 현황 fetch (열 때마다 — 항상 최신). 실패해도
   // 막지 않고 "전부 미가용"로 안전 폴백(색인 안내 툴팁이 뜸).
@@ -170,17 +200,17 @@ export function HeaderControls({
     try {
       const r = await fetch("/api/sql-lab/tables");
       const d = (await r.json()) as {
-        tables?: { domain: string; loaded: boolean }[];
+        tables?: { domain: string; loaded: boolean; label: string }[];
       };
-      setSqlAvail(
-        new Set(
-          (d.tables ?? [])
-            .filter((t) => t.loaded)
-            .map((t) => t.domain),
-        ),
-      );
+      const rows = d.tables ?? [];
+      setSqlAvail(new Set(rows.filter((t) => t.loaded).map((t) => t.domain)));
+      // 동적 custom 라벨 — tables API 는 등록(업로드 완료)된 경우에만
+      // custom 행을 반환하므로, 있으면 그 라벨을 사용·없으면 숨김.
+      const cu = rows.find((t) => t.domain === "custom");
+      setCustomLabel(cu ? cu.label : null);
     } catch {
       setSqlAvail(new Set());
+      setCustomLabel(null);
     }
   };
   const idxLabel =
@@ -188,7 +218,7 @@ export function HeaderControls({
     "인덱스검색 안함";
 
   const handleSelectIdx = (v: string | null): void => {
-    const st = chatStore.getState();
+    const st = storeApi.getState();
     if (st.idxDomain === v) {
       setIdxOpen(false);
       return; // 동일 선택 — no-op(불필요한 세션 리프레시 방지)
@@ -202,6 +232,23 @@ export function HeaderControls({
     setIdxOpen(false);
   };
 
+  const graphLabel =
+    GRAPH_OPTIONS.find((o) => o.value === storeGraphDataset)?.label ??
+    "온톨로지 안함";
+
+  const handleSelectGraph = (v: string | null): void => {
+    const st = storeApi.getState();
+    if (st.graphDataset === v) {
+      setGraphOpen(false);
+      return; // 동일 선택 — no-op
+    }
+    st.setGraphDataset(v);
+    // 세션 리프레시: 인덱스검색과 동일(캐시 키 변경=새 그래프).
+    st.resetChat();
+    onNewChat();
+    setGraphOpen(false);
+  };
+
   // 데이터 조회(SQL) 드롭다운 — 인덱스검색과 동형(독립 필드) +
   // 자동 적재(A안). 도메인 선택 시 미적재면 /api/sql-lab/load 를
   // SSE 완료까지 호출 → 그래야 그래프 빌드 시 getSchema 가 유효
@@ -210,10 +257,12 @@ export function HeaderControls({
   // 적재 진행 표시 — 진행 중엔 드롭다운/선택 잠금(조기 send 방지).
   const [sqlLoading, setSqlLoading] = useState(false);
   const storeSqlDomain = useChatStore((s) => s.sqlDomain);
+  const sqlOptions = buildSqlOptions(customLabel);
   const sqlLabel = sqlLoading
     ? "적재 중…"
-    : (SQL_OPTIONS.find((o) => o.value === storeSqlDomain)?.label ??
-      "데이터조회 안함");
+    : (sqlOptions.find((o) => o.value === storeSqlDomain)?.label ??
+      // custom 선택 상태인데 아직 라벨 미조회면 임시 표기.
+      (storeSqlDomain === "custom" ? "내 데이터" : "데이터조회 안함"));
 
   /** 한 도메인이 적재돼 있나 — tables API 로 확인(미적재면 자동 적재). */
   async function ensureSqlLoaded(domain: string): Promise<boolean> {
@@ -256,7 +305,7 @@ export function HeaderControls({
   }
 
   const handleSelectSql = async (v: string | null): Promise<void> => {
-    const st = chatStore.getState();
+    const st = storeApi.getState();
     if (st.sqlDomain === v || sqlLoading) {
       setSqlOpen(false);
       return; // 동일 선택·적재 중 — no-op
@@ -270,7 +319,7 @@ export function HeaderControls({
       if (!loaded) {
         // 적재 실패 — 선택 취소(스키마 못 박으면 의미 없음).
         // (조용한 실패 금지 — 사용자에게 표면화)
-        chatStore
+        storeApi
           .getState()
           .setError(
             `[${v}] 데이터 적재 실패 — 데이터 적재 메뉴에서 직접 ` +
@@ -279,7 +328,7 @@ export function HeaderControls({
         return;
       }
     }
-    const s2 = chatStore.getState();
+    const s2 = storeApi.getState();
     s2.setSqlDomain(v);
     // 세션 리프레시 — 적재 완료 후이므로 다음 send 의 그래프 빌드
     // 시점에 getSchema 가 유효 스키마 반환 → description 에 박힘.
@@ -288,7 +337,7 @@ export function HeaderControls({
   };
 
   const handleNewChat = (): void => {
-    chatStore.getState().resetChat(); // FR-06: 새 thread_id + 상태 초기화
+    storeApi.getState().resetChat(); // FR-06: 새 thread_id + 상태 초기화
     onNewChat();
   };
 
@@ -591,7 +640,7 @@ export function HeaderControls({
               gap: 2,
             }}
           >
-            {SQL_OPTIONS.map((o) => {
+            {sqlOptions.map((o) => {
               const active = o.value === storeSqlDomain;
               // "안함"(value=null)은 항상 가용. 도메인은 적재된 것만
               // enable. 미조회(sqlAvail=null) 중엔 disable 안 함.
@@ -630,6 +679,116 @@ export function HeaderControls({
                     fontWeight: active ? 600 : 500,
                     cursor: disabled ? "not-allowed" : "pointer",
                     opacity: disabled ? 0.4 : 1,
+                    textAlign: "left",
+                    width: "100%",
+                  }}
+                >
+                  <span>{o.label}</span>
+                  {active && (
+                    <Check
+                      size={13}
+                      style={{ color: "var(--agent-500)" }}
+                      aria-hidden
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 온톨로지 조회 드롭다운 — 인덱스검색과 동형(독립). Neo4j 는
+          단일 인스턴스라 가용성 체크 없이 정적 옵션(적재 여부는 도구가
+          graceful 안내). 수업1·3 연결: GRAPH_DATASETS SSOT 단일 소스. */}
+      <div style={{ position: "relative" }}>
+        <button
+          type="button"
+          onClick={() => {
+            if (isStreaming) return;
+            setGraphOpen((v) => !v);
+          }}
+          disabled={isStreaming}
+          title={
+            isStreaming
+              ? "응답 생성 중에는 변경할 수 없습니다"
+              : "온톨로지 조회 도구 데이터셋(변경 시 새 세션)"
+          }
+          aria-label={`온톨로지: ${graphLabel}`}
+          aria-haspopup="menu"
+          aria-expanded={graphOpen}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "5px 10px",
+            borderRadius: 8,
+            border: "1px solid var(--t-neutral-8)",
+            background: storeGraphDataset
+              ? "var(--t-blue-6, #eef4ff)"
+              : "var(--surface-default)",
+            fontSize: 12,
+            color: "var(--text-default)",
+            cursor: isStreaming ? "not-allowed" : "pointer",
+            fontWeight: 500,
+            opacity: isStreaming ? 0.6 : 1,
+          }}
+        >
+          <Database
+            size={12}
+            style={{ color: "var(--agent-500)" }}
+            aria-hidden
+          />
+          <span>{graphLabel}</span>
+          <ChevronDown
+            size={11}
+            style={{ color: "var(--text-subtle)" }}
+            aria-hidden
+          />
+        </button>
+
+        {graphOpen && !isStreaming && (
+          <div
+            role="menu"
+            style={{
+              position: "absolute",
+              top: "calc(100% + 4px)",
+              left: 0,
+              minWidth: 220,
+              background: "var(--surface-default)",
+              border: "1px solid var(--t-neutral-8)",
+              borderRadius: 8,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
+              padding: 4,
+              zIndex: 20,
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+            }}
+          >
+            {GRAPH_OPTIONS.map((o) => {
+              const active = o.value === storeGraphDataset;
+              return (
+                <button
+                  key={o.value ?? "__none__"}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => handleSelectGraph(o.value)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    padding: "6px 8px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: active
+                      ? "var(--t-neutral-4)"
+                      : "transparent",
+                    color: "var(--text-default)",
+                    fontSize: 12,
+                    fontWeight: active ? 600 : 500,
+                    cursor: "pointer",
                     textAlign: "left",
                     width: "100%",
                   }}

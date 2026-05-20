@@ -3,10 +3,8 @@ import { z } from "zod";
 import { getDb } from "@/lib/sqllab/db";
 import { getSchema } from "@/lib/sqllab/load";
 import { assertReadOnly } from "@/lib/sqllab/text2sql";
-import {
-  SQL_DOMAIN_SPEC,
-  type SqlDomain,
-} from "@/lib/sqllab/domains";
+import { type SqlDomain } from "@/lib/sqllab/domains";
+import { getSqlDomainSpec } from "@/lib/sqllab/dynamicDomains";
 
 /**
  * 데이터 조회(SQL) ClientTool — **순수 쿼리 실행기**.
@@ -56,7 +54,7 @@ function formatRows(columns: string[], rows: unknown[][]): string {
  * 미적재면 안내 문구(도구는 그래도 등록 — 실행 시 graceful).
  */
 function schemaText(domain: SqlDomain): string {
-  const label = SQL_DOMAIN_SPEC[domain].label;
+  const label = getSqlDomainSpec(domain).label;
   let schema: ReturnType<typeof getSchema> = null;
   try {
     schema = getSchema(domain);
@@ -92,7 +90,7 @@ function schemaText(domain: SqlDomain): string {
  * @param domain 세션에서 고른 적재 테이블 도메인(클로저 바인딩).
  */
 export function makeSqlQueryTool(domain: SqlDomain) {
-  const label = SQL_DOMAIN_SPEC[domain].label;
+  const label = getSqlDomainSpec(domain).label;
   // 도구 사전 정보(description)에 스키마 텍스트 박기 — LLM 이
   // 이것만 보고 SQL 작성(도구 내부 LLM 없음).
   const description =

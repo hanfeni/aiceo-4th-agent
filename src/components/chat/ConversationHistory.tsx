@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { History, Search, X } from "lucide-react";
-import { chatStore } from "@/store";
+import { useChatStoreApi } from "@/store";
 import type { ChatMessage } from "@/types";
 import type { ConversationRow } from "@/lib/conversations/list";
 import { groupConversations } from "@/lib/conversations/group";
@@ -59,13 +59,15 @@ export interface ConversationHistoryProps {
 export function ConversationHistory({
   iconBtnStyle,
 }: ConversationHistoryProps): ReactNode {
+  // 현재 컨텍스트의 store(워크스페이스 격리 또는 전역 /chat).
+  const storeApi = useChatStoreApi();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<ConversationRow[]>([]);
   const [mode, setMode] = useState<"sqlite" | "memory">("sqlite");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState<string | null>(
-    chatStore.getState().conversationId,
+    storeApi.getState().conversationId,
   );
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -122,7 +124,7 @@ export function ConversationHistory({
       const data = (await res.json()) as ApiRestoreResponse;
       // C1 — 원자 복원: conversationId + messages 동시 커밋. 복원 직후
       // useChat.send 가 이 conversationId 를 읽어 같은 thread 로 이어짐.
-      chatStore
+      storeApi
         .getState()
         .loadConversation(id, Array.isArray(data.messages) ? data.messages : []);
       setActiveId(id);
@@ -130,7 +132,7 @@ export function ConversationHistory({
     } catch {
       // 복원 실패는 조용히 무시(목록은 유지 — 사용자가 재시도 가능).
     }
-  }, []);
+  }, [storeApi]);
 
   const grouped = groupConversations(rows, query);
   const total = grouped.reduce((s, [, items]) => s + items.length, 0);

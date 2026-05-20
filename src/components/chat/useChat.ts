@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { chatStore } from "@/store";
+import { useChatStoreApi } from "@/store";
 import type { ChatMessage } from "@/types";
 
 /**
@@ -30,6 +30,9 @@ export interface UseChatApi {
 }
 
 export function useChat(): UseChatApi {
+  // 현재 컨텍스트의 store(워크스페이스 격리 또는 전역 /chat). Provider
+  // 없는 /chat 은 전역 싱글톤을 받아 종전과 동일(회귀 0).
+  const storeApi = useChatStoreApi();
   const send = useCallback(
     async (input: string, files?: File[]): Promise<void> => {
       const trimmed = input.trim();
@@ -37,7 +40,7 @@ export function useChat(): UseChatApi {
       // AD-4(client) — 빈 입력 + 첨부 없으면 무동작. 첨부만 있으면 허용.
       if (trimmed.length === 0 && !hasFiles) return;
 
-      const store = chatStore.getState();
+      const store = storeApi.getState();
       // 중복 전송 가드는 startStream 이 단일 진실로 수행하지만, 첨부
       // 추출(비용 큰 동적 import)을 진행 중에 헛돌리지 않도록 여기서도
       // 조기 차단한다(빠른 경로 — 동작 동일, 불필요 작업 0).
@@ -97,7 +100,7 @@ export function useChat(): UseChatApi {
         ...(attachMeta.length > 0 ? { attachments: attachMeta } : {}),
       });
     },
-    [],
+    [storeApi],
   );
 
   return { send };

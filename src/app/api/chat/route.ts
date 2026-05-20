@@ -6,6 +6,8 @@ import { createStream } from "@/lib/agent/agent";
 import { ALLOWED_MODELS } from "@/lib/agent/harness/models";
 import { SEARCH_DOMAINS } from "@/lib/searchlab/domains";
 import { SQL_DOMAINS } from "@/lib/sqllab/domains";
+import { WORKSPACE_IDS } from "@/lib/agent/harness/profiles";
+import { GRAPH_DATASET_IDS } from "@/lib/graphlab/config";
 import {
   MAX_QUERY_LEN,
   MAX_IMAGES_PER_TURN,
@@ -65,6 +67,15 @@ const bodySchema = z.object({
   // 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립 — 둘
   // 다 가능. 미지정=도구 없음. 변경 시 새 그래프=세션 리프레시.
   sqlDomain: z.enum(SQL_DOMAINS).optional(),
+  // 워크스페이스 하네스 프로필 id. 지정 시 그 프로필의 차단 정책
+  // (skills/subagents)이 그래프에 강제 적용된다. 미지정/생략=기존
+  // 챗(차단 없음, 회귀 0). 화이트리스트 밖 값은 safeParse 실패 →
+  // badRequest(AD-4) 자동 처리(수동 if 0줄 — R2).
+  profileId: z.enum(WORKSPACE_IDS).optional(),
+  // 온톨로지 조회(graph) 도구 세션 데이터셋. 지정 시 그 데이터셋
+  // 바인딩 graph_query 도구가 그래프에 포함된다(수업1·3 연결). 미지정
+  // =도구 없음(회귀 0). 화이트리스트 밖 값은 safeParse 실패 → 400.
+  graphDataset: z.enum(GRAPH_DATASET_IDS as [string, ...string[]]).optional(),
 });
 
 /** AD-4 — 검증 실패 응답은 SSE 아닌 JSON 400 으로 고정. */
@@ -126,6 +137,8 @@ export async function POST(req: Request): Promise<Response> {
           images: parsed.data.images,
           idxDomain: parsed.data.idxDomain,
           sqlDomain: parsed.data.sqlDomain,
+          profileId: parsed.data.profileId,
+          graphDataset: parsed.data.graphDataset,
         });
         for await (const ev of gen) {
           controller.enqueue(encodeSse(ev));

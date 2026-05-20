@@ -11,7 +11,9 @@ import {
   Tags,
   Pill,
   Network,
+  Bot,
 } from "lucide-react";
+import { HARNESS_PROFILES, WORKSPACE_IDS } from "@/lib/agent/harness/profiles";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
@@ -69,6 +71,13 @@ const NAV_GROUPS: NavGroup[] = [
         label: "DART 기업분석",
         href: "/dart",
       },
+      // 챗 에이전트 복제 워크스페이스 3개(메뉴별 하네스 필터). 라벨은
+      // 프로필 SSOT(profiles.ts)에서 단일 소스로 가져온다 — 라벨 드리프트 0.
+      ...WORKSPACE_IDS.map((id) => ({
+        icon: <Bot size={14} aria-hidden />,
+        label: HARNESS_PROFILES[id].label,
+        href: `/workspace/${id}`,
+      })),
     ],
   },
   {

@@ -9,8 +9,10 @@ import { makeIndexSearchTool } from "./tools/indexSearchTool";
 import type { SearchDomain } from "@/lib/searchlab/domains";
 import { makeSqlQueryTool } from "./tools/sqlQueryTool";
 import type { SqlDomain } from "@/lib/sqllab/domains";
+import { makeGraphQueryTool } from "./tools/graphQueryTool";
 import { HARNESS_SUBAGENTS } from "./subagents";
 import { SKILL_SOURCES, createSkillsBackend } from "./skills";
+import type { HarnessProfile } from "./profiles";
 
 /**
  * 하네스 요소 토글의 단일 지점 (CLAUDE.md R2 / FR-08,11 / AD-2).
@@ -120,13 +122,31 @@ export function buildHarnessConfig(
   // 데이터 조회(SQL) 도구 세션 도메인. idxDomain 과 독립 — 둘 다
   // 선택하면 두 도구 모두 부여. 미지정이면 미포함(회귀 0).
   sqlDomain?: SqlDomain,
+  // 워크스페이스 하네스 프로필(메뉴별 차단 레이어). 미지정이면 차단
+  // 없음 → 기존 /chat 과 100% 동일 경로(회귀 0). 지정 시 profile.blocked
+  // 에 든 요소만 env 토글 결과 위에 강제 off 한다(R2 — 차단 분기는 이
+  // 함수 안에만 격리, 하류는 토글 off 와 동일 경로).
+  profile?: HarnessProfile,
+  // 온톨로지 조회(graph) 도구 세션 데이터셋(챗 그래프 드롭다운).
+  // idx/sqlDomain 과 독립 — 지정 시 그 데이터셋 바인딩 graph_query
+  // 도구 포함(수업1·3 연결: GRAPH_DATASETS SSOT 가 드롭다운·도구
+  // 단일 소스). 미지정=도구 없음(회귀 0). 변경 시 캐시 키 변경=리프레시.
+  graphDataset?: string,
 ): HarnessConfig {
   // 잘못된 provider 를 은폐하지 않는다(무음 폴백 0 — AC-4). LLM 호출 아님.
   resolveProvider(env);
 
-  const subagentsEnabled = parseToggle(env.HARNESS_SUBAGENTS, true);
+  // 프로필 차단 집합 — 빠른 조회. 미지정이면 빈 집합(차단 0 = 회귀 0).
+  const blocked = new Set(profile?.blocked ?? []);
+
+  // env 토글 위에 프로필 차단을 AND 로 합성한다. blocked 에 든 요소는
+  // env 가 켜져 있어도 강제 off(메뉴별 필터). env 자체는 미변형 —
+  // 다른 경로(/chat·다른 워크스페이스)는 영향 0.
+  const subagentsEnabled =
+    parseToggle(env.HARNESS_SUBAGENTS, true) && !blocked.has("subagents");
   const filesystemEnabled = parseToggle(env.HARNESS_FILESYSTEM, true);
-  const skillsToggle = parseToggle(env.HARNESS_SKILLS, true);
+  const skillsToggle =
+    parseToggle(env.HARNESS_SKILLS, true) && !blocked.has("skills");
   const skillSources = resolveSkillSources(skillsToggle, filesystemEnabled);
 
   return {
@@ -138,10 +158,11 @@ export function buildHarnessConfig(
     // 미지정이면 정적 HARNESS_TOOLS 그대로(기존 챗 회귀 0). 둘
     // 독립 — 동시 선택 시 두 도구 모두 부여.
     tools: ((): unknown[] => {
-      if (!idxDomain && !sqlDomain) return HARNESS_TOOLS;
+      if (!idxDomain && !sqlDomain && !graphDataset) return HARNESS_TOOLS;
       const t: unknown[] = [...HARNESS_TOOLS];
       if (idxDomain) t.push(makeIndexSearchTool(idxDomain));
       if (sqlDomain) t.push(makeSqlQueryTool(sqlDomain));
+      if (graphDataset) t.push(makeGraphQueryTool(graphDataset));
       return t;
     })(),
     // AD-2: lazy 핸들. 호출만으로는 ./.data/ 생성·saver 오픈 0.

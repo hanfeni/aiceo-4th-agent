@@ -4,6 +4,8 @@
 
 import { createStore, useStore } from "zustand";
 import type { StoreApi } from "zustand";
+import { createContext, createElement, useContext } from "react";
+import type { ReactNode } from "react";
 import type { ChatMessage, SseEvent, WebSource } from "@/types";
 import {
   reduceReasoning,
@@ -44,6 +46,19 @@ export interface ChatState {
    * 리프레시(서버 getGraph 캐시 키 변경 — 사용자 결정 2026-05-19).
    */
   sqlDomain: string | null;
+  /**
+   * 온톨로지 조회(graph) 도구 세션 데이터셋 id. idx/sqlDomain 과
+   * 독립(셋 다 선택 가능). null=도구 없음. 변경 시 resetChat 으로
+   * 세션 리프레시(서버 getGraph 캐시 키 변경). 수업1·3 연결.
+   */
+  graphDataset: string | null;
+  /**
+   * 워크스페이스 하네스 프로필 id(workspace1|2|3). null=기존 /chat
+   * (차단 없음 — body 에 미동봉, 서버 회귀 0). 워크스페이스 store
+   * 인스턴스가 마운트 시 1회 세팅한다. startStream 이 body.profileId
+   * 로 동봉해 서버 그래프가 그 워크스페이스 차단 정책을 적용·격리한다.
+   */
+  profileId: string | null;
 }
 
 export interface ChatActions {
@@ -125,6 +140,12 @@ export interface ChatActions {
   /** 데이터 조회(SQL) 도메인 설정(null=도구 없음). 호출처가
    *  변경 직후 resetChat 으로 세션 리프레시. */
   setSqlDomain: (domain: string | null) => void;
+  /** 온톨로지 데이터셋 설정(null=도구 없음). 호출처가 변경
+   *  직후 resetChat 으로 세션 리프레시. */
+  setGraphDataset: (dataset: string | null) => void;
+  /** 워크스페이스 프로필 id 설정(null=기존 챗). 워크스페이스
+   *  store 인스턴스가 마운트 시 1회 호출(이후 불변). */
+  setProfileId: (profileId: string | null) => void;
   finalizeLastAssistant: () => void;
   setError: (error: string | null) => void;
   resetChat: () => void;
@@ -142,6 +163,8 @@ const initialState: ChatState = {
   model: "",
   idxDomain: null,
   sqlDomain: null,
+  graphDataset: null,
+  profileId: null,
 };
 
 /**
@@ -306,6 +329,8 @@ export function createChatStore(): StoreApi<ChatStore> {
     setModel: (model) => set({ model }),
     setIdxDomain: (idxDomain) => set({ idxDomain }),
     setSqlDomain: (sqlDomain) => set({ sqlDomain }),
+    setGraphDataset: (graphDataset) => set({ graphDataset }),
+    setProfileId: (profileId) => set({ profileId }),
 
     // 스트림 종료 마커. 현재는 부수효과 없음(메시지 내용 보존, 멱등).
     // useChat 의 finally 입력-잠금-해제 회귀 가드 지점(TC-20.4).
@@ -323,10 +348,13 @@ export function createChatStore(): StoreApi<ChatStore> {
         lastStreamEvent: null,
         provider: state.provider,
         model: state.model,
-        // idx/sqlDomain 보존 — resetChat 은 세션(thread)만 새로,
-        // 사용자가 고른 도메인 선택은 유지(model 과 동일 정책).
+        // idx/sql/graph 도메인 보존 — resetChat 은 세션(thread)만
+        // 새로, 사용자가 고른 도메인 선택은 유지(model 과 동일 정책).
         idxDomain: state.idxDomain,
         sqlDomain: state.sqlDomain,
+        graphDataset: state.graphDataset,
+        // profileId 보존 — 워크스페이스 정체성은 새 대화에도 불변.
+        profileId: state.profileId,
       })),
 
     // 과거 대화 복원 (C1). resetChat 과 대칭 — 단일 set 원자 커밋으로
@@ -342,6 +370,8 @@ export function createChatStore(): StoreApi<ChatStore> {
         isStreaming: false,
         provider: state.provider,
         model: state.model,
+        // 워크스페이스 정체성은 복원에도 불변(같은 워크스페이스 내 복원).
+        profileId: state.profileId,
       })),
 
     // SSE 소비를 store 싱글톤으로(메뉴 이동 지속의 핵심). fetch+루프가
@@ -376,7 +406,14 @@ export function createChatStore(): StoreApi<ChatStore> {
       try {
         // R3 — body 엔 현재 turn 입력만. conversationId/model 동봉
         // (턴 재사용 / 런타임 모델). 검증은 서버 zod enum 이 SSOT.
-        const { conversationId, model, idxDomain, sqlDomain } = get();
+        const {
+          conversationId,
+          model,
+          idxDomain,
+          sqlDomain,
+          graphDataset,
+          profileId,
+        } = get();
         const body: {
           query: string;
           conversationId?: string;
@@ -384,6 +421,8 @@ export function createChatStore(): StoreApi<ChatStore> {
           images?: string[];
           idxDomain?: string;
           sqlDomain?: string;
+          graphDataset?: string;
+          profileId?: string;
         } = { query };
         if (conversationId) body.conversationId = conversationId;
         if (model) body.model = model;
@@ -392,6 +431,10 @@ export function createChatStore(): StoreApi<ChatStore> {
         // 가 미수신 → 도구 없는 기존 챗(회귀 0). 서버 enum SSOT.
         if (idxDomain) body.idxDomain = idxDomain;
         if (sqlDomain) body.sqlDomain = sqlDomain;
+        if (graphDataset) body.graphDataset = graphDataset;
+        // 워크스페이스 진입 시에만 동봉 — null(기존 /chat)이면 미수신
+        // → 차단 없는 기존 챗(회귀 0). 서버 zod enum SSOT.
+        if (profileId) body.profileId = profileId;
 
         const res = await fetch("/api/chat", {
           method: "POST",
@@ -467,14 +510,58 @@ export function createChatStore(): StoreApi<ChatStore> {
 /** 앱 전역 싱글톤 인스턴스(클라이언트 단일 대화 상태). */
 export const chatStore: StoreApi<ChatStore> = createChatStore();
 
-/** React 컴포넌트용 selector 훅. 인자 없으면 전체 상태 반환. */
+/**
+ * 워크스페이스 격리용 store Context.
+ *
+ * 기본값은 전역 싱글톤(chatStore). Provider 가 없으면(=기존 /chat) 모든
+ * 컴포넌트가 전역 싱글톤을 그대로 쓴다(회귀 0). 워크스페이스 페이지는
+ * ChatStoreProvider 로 자신만의 store 인스턴스를 주입해 messages/
+ * conversationId/profileId 를 다른 워크스페이스·/chat 과 완전히 격리한다.
+ *
+ * useChatStore/useChatStoreApi 가 이 Context 를 읽으므로, 같은 컴포넌트
+ * (ChatPanel/HeaderControls/MessageList/ConversationHistory)가 Provider
+ * 유무에 따라 전역 또는 워크스페이스 store 를 자동 선택한다.
+ */
+const ChatStoreContext = createContext<StoreApi<ChatStore>>(chatStore);
+
+/**
+ * 워크스페이스별 store 인스턴스를 주입하는 Provider.
+ * store 는 호출부(워크스페이스 페이지)가 useState 등으로 1회 생성해
+ * 마운트 동안 안정적으로 유지해야 한다(매 렌더 재생성 금지 — 상태 소실).
+ */
+export function ChatStoreProvider({
+  store,
+  children,
+}: {
+  store: StoreApi<ChatStore>;
+  children: ReactNode;
+}): ReactNode {
+  return createElement(ChatStoreContext.Provider, { value: store }, children);
+}
+
+/**
+ * 현재 컨텍스트의 store 인스턴스(StoreApi)를 반환한다. 명령형 접근
+ * (.getState()/.setState())용. Provider 없으면 전역 싱글톤.
+ */
+export function useChatStoreApi(): StoreApi<ChatStore> {
+  return useContext(ChatStoreContext);
+}
+
+/**
+ * React 컴포넌트용 selector 훅. 인자 없으면 전체 상태 반환.
+ *
+ * 현재 컨텍스트의 store(Provider 있으면 워크스페이스, 없으면 전역
+ * 싱글톤)를 구독한다. 기존 /chat 은 Provider 가 없어 전역 싱글톤을
+ * 구독하던 종전과 100% 동일(회귀 0).
+ */
 export function useChatStore<T>(selector: (state: ChatStore) => T): T;
 export function useChatStore(): ChatStore;
 export function useChatStore<T>(
   selector?: (state: ChatStore) => T,
 ): T | ChatStore {
+  const store = useContext(ChatStoreContext);
   return useStore(
-    chatStore,
+    store,
     selector ?? ((state) => state as unknown as T),
   );
 }

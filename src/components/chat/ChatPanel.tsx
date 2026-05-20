@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useChatStore, chatStore } from "@/store";
+import { useChatStore, useChatStoreApi } from "@/store";
 import { useChat } from "@/components/chat/useChat";
 import { MessageList } from "@/components/common/BaseChat/MessageList";
 import { ChatInput } from "@/components/common/BaseChat/ChatInput";
@@ -29,6 +29,8 @@ export interface ChatPanelProps {
 }
 
 export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
+  // 현재 컨텍스트의 store(워크스페이스 격리 또는 전역 /chat).
+  const storeApi = useChatStoreApi();
   const { send } = useChat();
   const messageCount = useChatStore((s) => s.messages.length);
   // EmptyState 추천칩 → ChatInput 초기값 주입. key 변경으로 리마운트.
@@ -58,7 +60,7 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
   // 빈 assistant + isStreaming 인 조합을 보조 신호로 쓸까 ③ dev
   // (process.env.NODE_ENV)에서만 공격적 복구할까. 5~10줄로 확정.
   const shouldRecover = (): boolean => {
-    const s = chatStore.getState();
+    const s = storeApi.getState();
     // PLACEHOLDER — 사용자가 stale 판정 정책을 확정할 지점.
     // 기본 골격: live 신호 없을 때만 복구(가장 단순·안전한 출발점).
     return s.isStreaming && !s.isStreamActive();
@@ -66,9 +68,10 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
 
   useEffect(() => {
     if (shouldRecover()) {
-      chatStore.getState().setStreaming(false);
+      storeApi.getState().setStreaming(false);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeApi]);
 
   const onPickPrompt = useCallback((text: string) => {
     setSeed((s) => ({ value: text, key: s.key + 1 }));

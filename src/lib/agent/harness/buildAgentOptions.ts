@@ -118,12 +118,26 @@ function registeredKeys(): Set<string> {
  * profile 이 한 번도 등록되지 않아 FR-08/AC-4 토글이 깨진다. 첫 등록은
  * 빌트인 위에 의도적으로 merge 돼야 하므로, "이 프로세스에서 이 key 를
  * 이미 우리가 등록했는가"만 가드한다(누적/stale 만 차단, 첫 merge 는 허용).
+ *
+ * sig — 등록할 profile 의 signature. 같은 (key, sig) 는 1회만 등록한다.
+ * 같은 key 에 **다른 sig** 가 오면(워크스페이스별 차단 조합이 다른 경우)
+ * 다시 등록한다 — deepagents mergeProfiles 가 generalPurposeSubagent 를
+ * override-wins(명시 enabled) 로 합쳐 active 워크스페이스의 GP 정책이 base
+ * 를 덮는다. excludedTools/Middleware 는 createHarnessProfile 의 Set 으로
+ * dedup 되므로(index.js 7522/7523) 동일 항목 재등록은 누적되지 않는다.
+ * sig 미지정(기존 /chat·harness-toggle 경로)은 종전과 100% 동일하게 key
+ * 단위 first-call 가드만 적용(회귀 0).
  */
-function registerHarnessProfileOnce(key: string, profile: HarnessProfileOpts): void {
+function registerHarnessProfileOnce(
+  key: string,
+  profile: HarnessProfileOpts,
+  sig?: string,
+): void {
   const seen = registeredKeys();
-  if (seen.has(key)) return;
+  const guardKey = sig ? `${key}#${sig}` : key;
+  if (seen.has(guardKey)) return;
   registerHarnessProfile(key, profile);
-  seen.add(key);
+  seen.add(guardKey);
 }
 
 /**
@@ -148,10 +162,13 @@ function toProfileOptions(config: HarnessConfig): HarnessProfileOpts {
   const opts: HarnessProfileOpts = {};
   if (excludedMiddleware.length > 0) opts.excludedMiddleware = excludedMiddleware;
   if (excludedTools.length > 0) opts.excludedTools = excludedTools;
-  // subagents 비어있으면 자동 추가 GP subagent 도 끈다(단일 에이전트 동작).
-  if (config.subagents.length === 0) {
-    opts.generalPurposeSubagent = { enabled: false };
-  }
+  // 자동 추가 GP subagent — subagents 비어있으면 끄고(단일 에이전트 동작),
+  // 있으면 명시적으로 켠다. enabled 를 **항상 명시**하는 이유: deepagents
+  // mergeProfiles 는 generalPurposeSubagent 를 field-wise override-wins 로
+  // 합치는데(index.js 7616), override 가 enabled 를 안 주면 base 의 stale
+  // 값이 살아남는다. 워크스페이스가 같은 모델 키에 서로 다른 GP 정책을
+  // 재등록할 때 명시 enabled 가 있어야 active 정책이 base 를 덮는다.
+  opts.generalPurposeSubagent = { enabled: config.subagents.length > 0 };
   return opts;
 }
 
@@ -174,11 +191,18 @@ export interface AgentOptions {
 /**
  * HarnessConfig + model + systemPrompt → createDeepAgent 완전 인자 객체.
  * 부수효과로 registerHarnessProfile 을 호출해 토글 프로파일을 주입한다.
+ *
+ * profileSig — 워크스페이스 하네스 프로필 signature(차단 조합). 같은 모델
+ * 키에 워크스페이스별로 다른 차단 정책을 등록할 때, registerHarnessProfileOnce
+ * 가 sig 별로 재등록하도록 전달한다. 미지정(기존 /chat)은 종전 동작 그대로.
+ * 등록은 buildGraph 가 동기적으로 createDeepAgent 직전에 수행하므로(중간
+ * await 0), deepagents 가 build 시점에 읽는 registry 가 active 프로필이 된다.
  */
 export function buildAgentOptions(
   config: HarnessConfig,
   model: BaseChatModel,
   systemPrompt: string,
+  profileSig?: string,
 ): AgentOptions {
   const profile = toProfileOptions(config);
 
@@ -186,12 +210,12 @@ export function buildAgentOptions(
   const provider = modelProviderHint(model);
   const identifier = modelIdentifierHint(model);
   if (provider) {
-    registerHarnessProfileOnce(provider, profile);
+    registerHarnessProfileOnce(provider, profile, profileSig);
     if (identifier && !identifier.includes(":")) {
-      registerHarnessProfileOnce(`${provider}:${identifier}`, profile);
+      registerHarnessProfileOnce(`${provider}:${identifier}`, profile, profileSig);
     }
   } else if (identifier) {
-    registerHarnessProfileOnce(identifier, profile);
+    registerHarnessProfileOnce(identifier, profile, profileSig);
   }
 
   const options: AgentOptions = {
