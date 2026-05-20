@@ -25,7 +25,7 @@
 homebrew 가 macOS 에 없고 설치가 필요하면 먼저 brew 부터 설치(공식 스크립트)한 뒤 진행하세요.
 
 [2단계 · 리포 클론]
-이미 이 폴더가 git 리포면 건너뜁니다. 아니면 `git clone https://github.com/hanfeni/aiceo-4th-agent.git` 후 `cd aiceo-4th-agent`. 이후 모든 명령은 이 폴더 안에서 실행합니다.
+이미 이 폴더가 git 리포면 건너뜁니다. 아니면 클론을 진행하세요. 클론 전에 **어느 폴더에 받을지 사용자에게 먼저 확인하세요** (예: `~/Documents`, `~/Desktop`, 홈 디렉토리 등). 위치를 지정하지 않았으면 반드시 물어보고 진행합니다. 확인 후 지정 폴더로 이동해 `git clone https://github.com/hanfeni/aiceo-4th-agent.git` 실행 후 `cd aiceo-4th-agent`. 이후 모든 명령은 이 폴더 안에서 실행합니다.
 
 [2-B단계 · 교육 하네스 설정 (.claude/ 초기화)]
 클론 완료 후 당신이 직접 아래 두 파일을 생성하세요. 이 파일들은 수강생이 앱 사용법을 물을 때 당신이 참조하는 지식베이스입니다.
