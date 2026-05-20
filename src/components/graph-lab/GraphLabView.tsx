@@ -29,6 +29,8 @@ interface GraphStats {
   companies: number;
   owns: number;
   positions: number;
+  /** 현재 Neo4j 에 적재된 데이터셋 id(없으면 null=미상). */
+  loadedDatasetId: string | null;
 }
 
 // 추천 질의는 데이터셋별 config.demoQueries SSOT 에서 가져온다
@@ -181,6 +183,14 @@ export function GraphLabView(): ReactNode {
 
   async function runCompare(q: string): Promise<void> {
     if (comparing || !q.trim()) return;
+    // 선택 ≠ 적재면 비교 차단(엉뚱한 데이터로 답하는 혼동 방지).
+    if (datasetMismatch) {
+      setErr(
+        `현재 적재된 데이터(${loadedLabel})와 선택한 데이터셋(${activeDataset.label})이 ` +
+          `다릅니다. "① 그래프 구축"으로 데이터를 교체한 뒤 비교하세요.`,
+      );
+      return;
+    }
     setComparing(true);
     setErr(null);
     setPanels(emptyPanels());
@@ -245,6 +255,18 @@ export function GraphLabView(): ReactNode {
   }
 
   const built = stats !== null;
+  // 선택한 데이터셋과 실제 적재된 데이터셋 불일치 — Neo4j 는 단일
+  // 인스턴스라 데이터셋 전환 후 "그래프 구축"을 다시 눌러야 한다.
+  // 불일치면 비교 결과가 엉뚱한(이전) 데이터로 나오므로 경고·차단.
+  const datasetMismatch =
+    built &&
+    stats.loadedDatasetId !== null &&
+    stats.loadedDatasetId !== datasetId;
+  // 적재된 데이터셋의 라벨(경고 문구용).
+  const loadedLabel =
+    GRAPH_DATASETS.find((d) => d.id === stats?.loadedDatasetId)?.label ??
+    stats?.loadedDatasetId ??
+    "(미상)";
 
   return (
     <div
@@ -325,6 +347,27 @@ export function GraphLabView(): ReactNode {
               );
             })}
           </div>
+          {/* 선택 ≠ 적재 경고 — Neo4j 단일 인스턴스라 전환 후 재구축 필요. */}
+          {datasetMismatch && (
+            <div
+              style={{
+                marginTop: 12,
+                padding: "10px 12px",
+                borderRadius: 8,
+                background:
+                  "color-mix(in srgb, var(--t-warning-9, #f59e0b) 12%, transparent)",
+                border: "1px solid var(--t-warning-9, #f59e0b)",
+                fontSize: 12,
+                color: "var(--text-default)",
+                lineHeight: 1.5,
+              }}
+            >
+              ⚠ 현재 Neo4j 에는 <strong>{loadedLabel}</strong> 데이터가
+              적재돼 있습니다. <strong>{activeDataset.label}</strong> 로
+              질의하려면 아래 <strong>① 그래프 구축</strong>을 다시 눌러
+              데이터를 교체하세요. (그래프는 한 번에 한 데이터셋만 담깁니다.)
+            </div>
+          )}
         </div>
 
         {/* ① 그래프 구축 */}

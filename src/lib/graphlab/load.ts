@@ -343,12 +343,18 @@ export async function* loadGraph(
   };
 }
 
-/** 그래프 현황 (UI "이미 구축됨" 표시용). 없으면 0. */
+/** 그래프 현황 (UI "이미 구축됨" 표시용). 없으면 0.
+ *
+ *  loadedDatasetId: 현재 Neo4j 에 적재된 데이터셋 id(MemStore 에서).
+ *  Neo4j 는 단일 인스턴스라 한 번에 한 데이터셋만 적재된다 → UI 가
+ *  "선택한 데이터셋 ≠ 적재된 데이터셋"을 감지해 재구축을 안내하기 위함
+ *  (데이터셋 전환 시 build 안 누르면 이전 데이터가 남는 혼동 방지). */
 export async function graphStats(): Promise<{
   managers: number;
   companies: number;
   owns: number;
   positions: number;
+  loadedDatasetId: string | null;
 } | null> {
   try {
     const driver = getNeo4jDriver();
@@ -369,7 +375,9 @@ export async function graphStats(): Promise<{
       positions: number;
     }[];
     if (!row || row.managers === 0) return null;
-    return row;
+    // 적재 데이터셋 식별 — MemStore(적재 시 setMemStore 가 datasetId 기록).
+    // 그래프는 있는데 MemStore 가 비면(서버 재시작 등) null(미상).
+    return { ...row, loadedDatasetId: getMemStore()?.datasetId ?? null };
   } catch {
     return null;
   }
