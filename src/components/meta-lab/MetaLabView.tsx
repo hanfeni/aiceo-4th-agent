@@ -294,7 +294,7 @@ export function MetaLabView(): ReactNode {
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
       <div
-        style={{ maxWidth: 1180, margin: "0 auto", padding: "28px 24px 64px" }}
+        style={{ maxWidth: 1320, margin: "0 auto", padding: "28px 24px 64px" }}
       >
         {/* 헤더(시안 LabPage) — accent 칩 + 타이틀 + 서브타이틀 */}
         <div style={{ marginBottom: 24 }}>

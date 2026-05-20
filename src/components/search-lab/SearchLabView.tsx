@@ -90,7 +90,7 @@ export function SearchLabView(): ReactNode {
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
       <div
-        style={{ maxWidth: 1240, margin: "0 auto", padding: "28px 24px 64px" }}
+        style={{ maxWidth: 1320, margin: "0 auto", padding: "28px 24px 64px" }}
       >
         {/* 헤더(시안 LabPage) — accent 칩 + 타이틀 + 서브타이틀 */}
         <div style={{ marginBottom: 24 }}>
@@ -136,7 +136,7 @@ export function SearchLabView(): ReactNode {
 
         {/* il-bench — 좌(설정 300px) · 우(워크벤치 1fr). 도메인 리스트가
             길어 300px 로 override(시안 B). */}
-        <div className="il-bench" style={{ gridTemplateColumns: "300px 1fr" }}>
+        <div className="il-bench" style={{ gridTemplateColumns: "320px 1fr" }}>
           {/* ─── 좌측: 설정 패널 (sticky) ─── */}
           <div className="il-bench-aside">
             {/* 설정 카드 — 도메인 세로 리스트 · 실행 모드 · 방식 · TOP K */}
