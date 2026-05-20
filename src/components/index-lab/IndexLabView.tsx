@@ -577,6 +577,9 @@ export function IndexLabView(): ReactNode {
           <div
             style={{ display: "flex", flexDirection: "column", gap: 10 }}
           >
+            {/* 네이티브 file input 은 숨기고(브라우저 기본 "파일 선택"
+                글자가 작아 버튼처럼 안 보임 — 사용자 혼란), 명확한 버튼이
+                트리거. 선택된 파일명은 옆에 표시. */}
             <input
               ref={fileInputRef}
               type="file"
@@ -588,8 +591,32 @@ export function IndexLabView(): ReactNode {
                 if (f && !uploadLabel)
                   setUploadLabel(f.name.replace(/\.jsonl$/i, ""));
               }}
-              style={{ fontSize: 12, color: "var(--text-default)" }}
+              style={{ display: "none" }}
             />
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || indexing}
+                className="cf-btn"
+                style={{ flexShrink: 0 }}
+              >
+                📁 jsonl 파일 선택
+              </button>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: uploadFile
+                    ? "var(--text-default)"
+                    : "var(--text-subtle)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {uploadFile ? uploadFile.name : "선택된 파일 없음"}
+              </span>
+            </div>
             <input
               type="text"
               value={uploadLabel}
