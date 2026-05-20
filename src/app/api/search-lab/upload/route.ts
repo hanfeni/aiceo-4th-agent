@@ -8,6 +8,11 @@
  * 레지스트리에 등록되어 검색 실습 도메인 목록·챗 인덱스검색 드롭다운에
  * custom 도메인이 등장한다. SQL 메뉴(sql-lab/upload)의 검색 버전.
  *
+ * 제목 보강: title 이 빈 doc(파일 업로드는 클라가 title="" 로 보냄,
+ * jsonl 도 title 누락 가능)은 색인 전 gpt-5.4-nano 로 본문에서 제목을
+ * 추출해 채운다(extractTitle). 검색 BM25 title 가중(^3~^6)·임베딩 입력
+ * 품질 향상. 추출 실패는 doc_id(파일명) 폴백 — 색인은 끊기지 않는다.
+ *
  * 보안:
  *  - 확장자 .jsonl 만 허용(임의 바이너리 차단).
  *  - 파일 크기 상한(MAX_UPLOAD_CSV_BYTES — 강의장 메모리 보호. CSV 와
@@ -25,6 +30,7 @@ import {
 } from "@/lib/searchlab/domains";
 import { registerCustomSearchDomain } from "@/lib/searchlab/dynamicDomains";
 import { DECOMPOUND_MODES, EMBED_MODELS } from "@/lib/searchlab/client";
+import { extractTitle } from "@/lib/searchlab/extractTitle";
 import { MAX_UPLOAD_CSV_BYTES } from "@/lib/files/limits";
 
 export const runtime = "nodejs";
@@ -160,6 +166,23 @@ export async function POST(req: Request): Promise<Response> {
     async start(controller) {
       let done = false;
       try {
+        // 제목 보강: title 이 빈 doc 은 gpt-5.4-nano 로 본문에서 추출.
+        // 실패(키 없음·API 오류·빈 응답)는 doc_id(=파일명) 로 폴백 —
+        // 색인은 끊기지 않는다(사용자 결정). 클라가 파일 업로드 시
+        // title="" 로 보내므로 여기서 채워진다.
+        const needTitle = docs.filter((d) => !d.title?.trim());
+        if (needTitle.length > 0) {
+          controller.enqueue(
+            encodeSse({
+              type: "infra",
+              text: `제목 추출 중 (gpt-5.4-nano, ${needTitle.length}건)…`,
+            }),
+          );
+          for (const d of needTitle) {
+            const extracted = await extractTitle(d.body);
+            d.title = extracted ?? d.doc_id;
+          }
+        }
         for await (const ev of runIndexing({
           domain: CUSTOM_SEARCH_DOMAIN,
           docs,

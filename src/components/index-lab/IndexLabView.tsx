@@ -15,8 +15,13 @@ import { pickFormat, extractTextFromFile } from "@/lib/files/extractText";
  * 업로드 파일을 색인용 jsonl File 로 정규화한다.
  *  - .jsonl: 그대로(한 줄 = 한 JSON 문서, 서버 parseJsonl 이 처리).
  *  - pdf/docx/hwpx/txt 등: 클라이언트에서 텍스트 추출 → 문서 1건짜리
- *    jsonl({doc_id,title,body}) 로 감싸 동일 업로드 경로로 보낸다
+ *    jsonl({doc_id,title:"",body}) 로 감싸 동일 업로드 경로로 보낸다
  *    (서버 무변경 — search-lab/upload 가 .jsonl 만 받으므로).
+ *
+ * title 은 **빈 문자열**로 둔다 — 파일명은 의미 없을 수 있어(scan_001.pdf)
+ * title BM25 가중(^3~^6)을 낭비한다. 서버 upload 가 title 빈 doc 을
+ * gpt-5.4-nano 로 본문에서 추출해 채우고, 실패 시 파일명(doc_id)으로
+ * 폴백한다. 파일명은 doc_id 로 보존(폴백·식별용).
  */
 async function toIndexJsonlFile(file: File): Promise<File> {
   if (/\.jsonl$/i.test(file.name)) return file;
@@ -35,7 +40,7 @@ async function toIndexJsonlFile(file: File): Promise<File> {
     );
   }
   const base = file.name.replace(/\.[^.]+$/, "");
-  const doc = { doc_id: base, title: base, body: text };
+  const doc = { doc_id: base, title: "", body: text };
   return new File([JSON.stringify(doc) + "\n"], `${base}.jsonl`, {
     type: "application/x-ndjson",
   });
@@ -616,7 +621,8 @@ export function IndexLabView(): ReactNode {
             또는 jsonl)를 올리면 6번째 “내 데이터” 도메인으로 OpenSearch 에
             색인되어, 검색 실습과 챗(인덱스검색 드롭다운)에서 바로 검색할 수
             있습니다. PDF·Word·한글은 본문 텍스트가 자동 추출되어 한 문서로
-            색인됩니다. 위 ② 색인 파라미터가 함께 적용됩니다.
+            색인되며, 문서 제목은 gpt-5.4-nano 가 본문에서 자동 추출합니다.
+            위 ② 색인 파라미터가 함께 적용됩니다.
           </div>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 10 }}
