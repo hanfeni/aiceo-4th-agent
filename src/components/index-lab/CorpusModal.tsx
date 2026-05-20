@@ -25,11 +25,12 @@ interface CorpusModalProps {
   onClose: () => void;
 }
 
-// StageModal.tsx 와 동일 스타일(시각 일관) — 값 1:1 복제.
+// 시안 ModalShell 톤(blur overlay + 강한 그림자). index-lab 워크벤치 정합.
 const overlay: CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,0.42)",
+  background: "rgba(15,23,42,0.45)",
+  backdropFilter: "blur(4px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -40,18 +41,19 @@ const panel: CSSProperties = {
   background: "var(--surface-default, #fff)",
   border: "1px solid var(--t-neutral-8, #e4e4e7)",
   borderRadius: "var(--r-lg, 14px)",
-  width: "min(820px, 100%)",
+  width: "min(860px, 100%)",
   maxHeight: "86vh",
   display: "flex",
   flexDirection: "column",
-  boxShadow: "0 24px 64px rgba(0,0,0,0.22)",
+  boxShadow:
+    "0 24px 64px rgba(15,23,42,0.22), 0 4px 16px rgba(15,23,42,0.08)",
 };
 const navBtn = (disabled: boolean): CSSProperties => ({
   appearance: "none",
-  border: "1px solid var(--t-neutral-8, #e4e4e7)",
+  border: "1px solid var(--t-neutral-12, #e4e4e7)",
   background: "var(--surface-default, #fff)",
   borderRadius: 8,
-  width: 30,
+  width: 32,
   height: 30,
   fontSize: 13,
   lineHeight: 1,
@@ -93,43 +95,69 @@ export function CorpusModal({
             borderBottom: "1px solid var(--t-neutral-8)",
           }}
         >
-          <div
-            style={{
-              fontSize: 13.5,
-              fontWeight: 700,
-              color: "var(--text-default)",
-            }}
-          >
-            원본 문서 — {domainLabel}
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 14.5,
+                fontWeight: 800,
+                color: "var(--text-default)",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              원본 문서 — {domainLabel}
+            </div>
             {total > 0 && (
-              <span
+              <div
                 style={{
-                  marginLeft: 8,
-                  fontSize: 11,
-                  fontWeight: 500,
+                  fontSize: 11.5,
                   color: "var(--text-subtle)",
+                  marginTop: 3,
                 }}
               >
-                앞 {total}건 샘플
-              </span>
+                앞 {total}건 샘플 · doc_id · title · body 원본 그대로
+              </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="닫기"
+          <div
             style={{
-              appearance: "none",
-              border: "none",
-              background: "transparent",
-              fontSize: 18,
-              lineHeight: 1,
-              cursor: "pointer",
-              color: "var(--text-subtle)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexShrink: 0,
             }}
           >
-            ✕
-          </button>
+            {total > 0 && (
+              <span
+                className="il-mono"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--blue-700)",
+                  fontWeight: 700,
+                  background: "var(--lab-blue-bg)",
+                  padding: "4px 8px",
+                  borderRadius: 4,
+                }}
+              >
+                JSONL · {total}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="닫기"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "transparent",
+                fontSize: 18,
+                lineHeight: 1,
+                cursor: "pointer",
+                color: "var(--text-subtle)",
+              }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* 본문 */}
@@ -158,8 +186,8 @@ export function CorpusModal({
             <>
               <div
                 style={{
-                  fontSize: 13,
-                  fontWeight: 700,
+                  fontSize: 15,
+                  fontWeight: 800,
                   color: "var(--text-default)",
                   marginBottom: 4,
                 }}
@@ -167,62 +195,89 @@ export function CorpusModal({
                 {cur.title || "(제목 없음)"}
               </div>
               <div
+                className="il-mono"
                 style={{
                   fontSize: 10.5,
                   color: "var(--text-subtle)",
-                  marginBottom: 12,
+                  marginBottom: 14,
                 }}
               >
-                doc_id: {cur.doc_id}
+                doc_id: {cur.doc_id} · body{" "}
+                {cur.body.length.toLocaleString()} chars
               </div>
-              <pre style={pre}>{cur.body}</pre>
+              <pre
+                style={{
+                  ...pre,
+                  background: "var(--medi-gray-50)",
+                  border: "1px solid var(--t-neutral-8)",
+                  borderRadius: 8,
+                  padding: "12px 14px",
+                  maxHeight: 420,
+                  overflowY: "auto",
+                }}
+                className="thin-scroll"
+              >
+                {cur.body}
+              </pre>
             </>
           )}
         </div>
 
-        {/* 좌우 네비 (StageModal 과 동일 ◀ N/M ▶ 패턴) */}
-        {total > 0 && (
+        {/* 푸터 — 좌측 doc_id(mono) · 우측 ◀ N/M ▶ (시안 ModalShell) */}
+        {total > 0 && cur && (
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              justifyContent: "center",
-              gap: 14,
+              justifyContent: "space-between",
+              gap: 12,
               padding: "12px 18px",
               borderTop: "1px solid var(--t-neutral-8)",
+              background: "var(--medi-gray-50)",
+              borderBottomLeftRadius: "var(--r-lg, 14px)",
+              borderBottomRightRadius: "var(--r-lg, 14px)",
             }}
           >
-            <button
-              type="button"
-              style={navBtn(safeIdx <= 0)}
-              disabled={safeIdx <= 0}
-              onClick={() => setIdx((i) => Math.max(0, i - 1))}
-              aria-label="이전 문서"
-            >
-              ◀
-            </button>
             <span
-              style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: "var(--text-subtle)",
-                minWidth: 60,
-                textAlign: "center",
-              }}
+              className="il-mono"
+              style={{ fontSize: 11, color: "var(--text-subtle)" }}
             >
-              {safeIdx + 1} / {total}
+              {cur.doc_id}
             </span>
-            <button
-              type="button"
-              style={navBtn(safeIdx >= total - 1)}
-              disabled={safeIdx >= total - 1}
-              onClick={() =>
-                setIdx((i) => Math.min(total - 1, i + 1))
-              }
-              aria-label="다음 문서"
+            <div
+              style={{ display: "flex", alignItems: "center", gap: 12 }}
             >
-              ▶
-            </button>
+              <button
+                type="button"
+                style={navBtn(safeIdx <= 0)}
+                disabled={safeIdx <= 0}
+                onClick={() => setIdx((i) => Math.max(0, i - 1))}
+                aria-label="이전 문서"
+              >
+                ◀
+              </button>
+              <span
+                className="il-mono"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--text-subtle)",
+                  minWidth: 60,
+                  textAlign: "center",
+                }}
+              >
+                {safeIdx + 1} / {total}
+              </span>
+              <button
+                type="button"
+                style={navBtn(safeIdx >= total - 1)}
+                disabled={safeIdx >= total - 1}
+                onClick={() => setIdx((i) => Math.min(total - 1, i + 1))}
+                aria-label="다음 문서"
+              >
+                ▶
+              </button>
+            </div>
           </div>
         )}
       </div>
