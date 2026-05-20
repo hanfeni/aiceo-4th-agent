@@ -40,6 +40,25 @@ interface GraphStats {
 // 🟨=SQL도 가능 · ⚪=RAG 한계)으로 학생이 3패널 결과 전 가설을
 // 세우게 한다(교육 설계).
 
+// 시안 graph-lab 질의 프리셋: 라벨 옆 컬러 정사각형(태그). config 의
+// 라벨 끝 이모지(🟦/🟨/⚪)를 파싱해 시안 TAG_META 색으로 렌더하고,
+// 라벨 텍스트에선 이모지를 떼어 깔끔하게 보인다.
+function parseQueryTag(label: string): { text: string; color: string } {
+  if (label.includes("🟦"))
+    return { text: label.replace("🟦", "").trim(), color: "var(--blue-600)" };
+  if (label.includes("🟨"))
+    return {
+      text: label.replace("🟨", "").trim(),
+      color: "var(--lab-warn-text, #b45309)",
+    };
+  if (label.includes("⚪"))
+    return {
+      text: label.replace("⚪", "").trim(),
+      color: "var(--neutral-600)",
+    };
+  return { text: label.trim(), color: "var(--t-neutral-16)" };
+}
+
 export function GraphLabView(): ReactNode {
   const [stats, setStats] = useState<GraphStats | null>(null);
   // 현재 Neo4j 에 공존 적재된 데이터셋 목록(라벨 분리 — 여러 개 동시
@@ -505,31 +524,73 @@ export function GraphLabView(): ReactNode {
               )}
             </div>
 
-            {/* 질의 프리셋 카드(시안 B). */}
+            {/* 질의 프리셋 카드(시안 B) — 세로 리스트 + 좌측 태그 색 정사각형. */}
             <div className="il-card il-config" style={{ marginTop: 12 }}>
               <div className="il-config-title">질의 프리셋</div>
               <div
                 className="thin-scroll"
                 style={{
                   display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  maxHeight: 200,
+                  flexDirection: "column",
+                  gap: 2,
+                  maxHeight: 240,
                   overflowY: "auto",
                 }}
               >
-                {activeDataset.demoQueries.map((d) => (
-                  <button
-                    key={d.label}
-                    type="button"
-                    className="cf-pill"
-                    onClick={() => setQuery(d.query)}
-                    disabled={comparing}
-                    title={d.query}
-                  >
-                    {d.label}
-                  </button>
-                ))}
+                {activeDataset.demoQueries.map((d) => {
+                  const tag = parseQueryTag(d.label);
+                  return (
+                    <button
+                      key={d.label}
+                      type="button"
+                      onClick={() => setQuery(d.query)}
+                      disabled={comparing}
+                      title={d.query}
+                      style={{
+                        appearance: "none",
+                        cursor: comparing ? "default" : "pointer",
+                        textAlign: "left",
+                        background: "transparent",
+                        border: "none",
+                        borderRadius: 6,
+                        padding: "7px 9px",
+                        fontSize: 11.5,
+                        color: "var(--text-default)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        opacity: comparing ? 0.6 : 1,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "var(--medi-gray-50)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 2,
+                          background: tag.color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {tag.text}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

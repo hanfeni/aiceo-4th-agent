@@ -535,23 +535,17 @@ export function SearchLabView(): ReactNode {
                   label="렉시컬 · BM25"
                   hits={hits}
                   hint="Nori 토크나이즈 기반 키워드 정합"
-                  highlight={mode === "lexical"}
                 />
                 <CompareCol
-                  label="벡터 · 임베딩"
+                  label="벡터 · 3-small"
                   hits={hits}
-                  hint="임베딩 코사인 유사도"
-                  highlight={mode === "vector"}
+                  hint="1536d 코사인 유사도"
                 />
                 <CompareCol
-                  label="하이브리드 · 결합"
+                  label="하이브리드 · 가중 결합"
                   hits={hits}
-                  hint={
-                    mode === "hybrid"
-                      ? `결합 방식 ${hybridMethod}`
-                      : "BM25 + 벡터 결합"
-                  }
-                  highlight={mode === "hybrid"}
+                  hint="α=0.6 (BM25:벡터)"
+                  highlight
                 />
               </div>
             )}
@@ -707,25 +701,8 @@ export function SearchLabView(): ReactNode {
               </div>
             )}
 
-            {/* 결과 전 안내 — 어느 카드도 안 떴을 때 빈 워크벤치 안내. */}
-            {!err &&
-              !heroNodes &&
-              taskMode === "search" &&
-              hits.length === 0 && (
-                <div
-                  className="il-card"
-                  style={{
-                    fontSize: 12,
-                    color: "var(--text-subtle)",
-                    textAlign: "center",
-                    padding: "28px 0",
-                    lineHeight: 1.6,
-                  }}
-                >
-                  좌측에서 도메인·방식·검색어를 고르고 <strong>검색</strong> 을
-                  누르면 세 방식의 결과가 나란히 비교됩니다.
-                </div>
-              )}
+            {/* 시안 SearchLab_B: 검색·RAG 모드는 3-pane 가 빈 상태
+                안내를 자체 표시하므로 별도 하단 안내 박스 없음. */}
           </div>
         </div>
       </div>

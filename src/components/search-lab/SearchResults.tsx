@@ -175,7 +175,7 @@ export function CompareCol({
               fontWeight: 700,
             }}
           >
-            ★ 적용 방식
+            ★ 추천
           </span>
         )}
       </div>

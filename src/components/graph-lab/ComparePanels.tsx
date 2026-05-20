@@ -53,7 +53,6 @@ const META: Record<
   {
     title: string;
     sub: string;
-    accent: string;
     verdict: string;
     verdictKind: "ok" | "warn" | "err";
     highlight?: boolean;
@@ -62,21 +61,18 @@ const META: Record<
   rag: {
     title: "RAG (벡터 검색)",
     sub: "텍스트 검색 → LLM",
-    accent: "var(--t-neutral-9, #8b8b8b)",
     verdict: "한계",
     verdictKind: "err",
   },
   sql: {
     title: "Text-to-SQL",
     sub: "단일 테이블 쿼리 (대조군)",
-    accent: "var(--t-warning-9, #d4a017)",
     verdict: "부분 답",
     verdictKind: "warn",
   },
   graphrag: {
     title: "GraphRAG (Cypher)",
     sub: "Neo4j 멀티홉 경로",
-    accent: "var(--blue-500, #2563eb)",
     verdict: "압승",
     verdictKind: "ok",
     highlight: true,
@@ -137,10 +133,11 @@ function Panel({
       style={{
         flex: "1 1 0",
         minWidth: 0,
-        border: m.highlight
-          ? "1.5px solid var(--blue-300, #93c5fd)"
-          : "1px solid var(--t-neutral-8)",
-        borderTop: `3px solid ${m.accent}`,
+        // 시안 MethodPanel: 균일 1.5px 보더만(상단 컬러 바 없음).
+        border: "1.5px solid",
+        borderColor: m.highlight
+          ? "var(--blue-300, #93c5fd)"
+          : "var(--t-neutral-8)",
         borderRadius: 12,
         padding: 16,
         display: "flex",
