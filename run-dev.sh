@@ -38,9 +38,11 @@ if [ "${NEED_INSTALL}" -eq 1 ]; then
   echo "  pnpm install 실행 중 (네이티브 빌드 포함, 수 분 소요 가능)..."
   pnpm install
   # R1: @langchain/core 단일 트리 검증 (버전 갈리면 AIMessageChunk instanceof 깨짐)
+  # pnpm 출력 포맷 = "@langchain/core@1.1.46" (@ 구분). 버전만 추출.
+  # grep 비매칭(exit 1)이 set -e 로 스크립트를 죽이지 않게 || true.
   CORE_VERSIONS="$(pnpm why @langchain/core 2>/dev/null \
-    | grep -oE '@langchain/core [0-9]+\.[0-9]+\.[0-9]+' \
-    | awk '{print $2}' | sort -u)"
+    | grep -oE '@langchain/core@[0-9]+\.[0-9]+\.[0-9]+' \
+    | sed 's/.*@//' | sort -u || true)"
   CORE_COUNT="$(printf '%s\n' "${CORE_VERSIONS}" | grep -c . || true)"
   if [ "${CORE_COUNT}" -gt 1 ]; then
     echo "✗ R1 위반: @langchain/core 가 단일 버전이 아님 →" >&2
