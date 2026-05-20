@@ -12,6 +12,8 @@ import {
   deleteSearchlabIndex,
   isSearchlabIndex,
 } from "@/lib/searchlab/admin";
+import { CUSTOM_SEARCH_INDEX } from "@/lib/searchlab/domains";
+import { unregisterCustomSearchDomain } from "@/lib/searchlab/dynamicDomains";
 
 export const runtime = "nodejs";
 
@@ -65,6 +67,9 @@ export async function DELETE(req: Request): Promise<Response> {
   }
   try {
     const r = await deleteSearchlabIndex(index);
+    // custom 인덱스 삭제는 동적 메타도 함께 해제(드롭다운·도메인
+    // 목록에서 custom 이 사라지게 — SQL tables DELETE 와 동일 사상).
+    if (index === CUSTOM_SEARCH_INDEX) unregisterCustomSearchDomain();
     return json({ index, deleted: r.deleted }, 200);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -6,8 +6,15 @@
  * indexDocCount(prefix 검증 포함) 재사용. R7 nodejs.
  */
 
-import { SEARCH_DOMAINS, DOMAIN_SPEC } from "@/lib/searchlab/domains";
+import {
+  SEARCH_DOMAINS,
+  CUSTOM_SEARCH_DOMAIN,
+} from "@/lib/searchlab/domains";
 import { indexDocCount } from "@/lib/searchlab/admin";
+import {
+  getSearchDomainSpec,
+  isCustomSearchRegistered,
+} from "@/lib/searchlab/dynamicDomains";
 
 export const runtime = "nodejs";
 
@@ -20,10 +27,15 @@ function json(data: unknown, status: number): Response {
 
 export async function GET(): Promise<Response> {
   try {
+    // custom 슬롯은 등록(업로드 색인 완료)된 경우에만 상태 노출
+    // (미등록 placeholder 가 UI 에 새지 않게 — SQL tables 와 동일 사상).
+    const domains = SEARCH_DOMAINS.filter(
+      (d) => d !== CUSTOM_SEARCH_DOMAIN || isCustomSearchRegistered(),
+    );
     // 도메인별 병렬 조회. 인덱스 없으면 count=null(미색인).
     const entries = await Promise.all(
-      SEARCH_DOMAINS.map(async (d) => {
-        const count = await indexDocCount(DOMAIN_SPEC[d].index);
+      domains.map(async (d) => {
+        const count = await indexDocCount(getSearchDomainSpec(d).index);
         return [d, count] as const;
       }),
     );

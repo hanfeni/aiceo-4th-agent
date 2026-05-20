@@ -14,9 +14,22 @@ export const SEARCH_DOMAINS = [
   "finance",
   "legal",
   "policy",
+  // 동적 커스텀 슬롯 — 사용자가 로컬 jsonl 을 업로드하면 이 슬롯이
+  // 채워진다. 고정 5개와 달리 spec(corpusFile/label)이 런타임에
+  // 결정되므로 DOMAIN_SPEC 의 정적 항목은 placeholder 이고 실제 값은
+  // dynamicDomains.ts 의 레지스트리에서 getSearchDomainSpec 이 덮어쓴다.
+  // index 명(searchlab-custom)만은 보안상 항상 고정(식별자 위조 차단).
+  // SQL 메뉴(sqllab/domains.ts)의 custom 슬롯과 동일 사상.
+  "custom",
 ] as const;
 
 export type SearchDomain = (typeof SEARCH_DOMAINS)[number];
+
+/** 동적 커스텀 도메인 식별자(단일 슬롯). */
+export const CUSTOM_SEARCH_DOMAIN = "custom" as const satisfies SearchDomain;
+
+/** custom 슬롯의 고정 인덱스명 — 사용자 입력이 식별자에 끼지 않음. */
+export const CUSTOM_SEARCH_INDEX = "searchlab-custom" as const;
 
 export interface DomainSpec {
   /** OpenSearch 인덱스명 (실습 전용 prefix) */
@@ -60,6 +73,17 @@ export const DOMAIN_SPEC: Record<SearchDomain, DomainSpec> = {
     label: "정책 / 거버넌스",
     audience: "공공·정책",
   },
+  // custom — placeholder. 실제 라벨은 업로드 시 동적 레지스트리에
+  // 등록되고 getSearchDomainSpec 이 이 placeholder 대신 반환한다.
+  // index(searchlab-custom)는 보안 가드(임의 인덱스 차단)를 위해 동적
+  // 등록 시에도 고정된다(dynamicDomains.ts). corpusFile 은 미사용
+  // (custom 은 GitHub raw 가 아니라 업로드 문서를 색인 — fetchCorpus 우회).
+  custom: {
+    index: CUSTOM_SEARCH_INDEX,
+    corpusFile: "custom.jsonl",
+    label: "내 데이터 (업로드)",
+    audience: "사용자 업로드",
+  },
 };
 
 export function isSearchDomain(v: string): v is SearchDomain {
@@ -84,6 +108,11 @@ export const RAW_BASE =
   "https://raw.githubusercontent.com/hanfeni/aiceo-4th-training/main/poc/data";
 
 export function corpusUrl(domain: SearchDomain): string {
+  if (domain === CUSTOM_SEARCH_DOMAIN) {
+    throw new Error(
+      "custom 도메인은 GitHub 원본이 없습니다 — 로컬 jsonl 업로드로만 색인됩니다.",
+    );
+  }
   return `${RAW_BASE}/${domain}/${DOMAIN_SPEC[domain].corpusFile}`;
 }
 

@@ -1,10 +1,8 @@
 import { tool } from "langchain";
 import { z } from "zod";
 import { search } from "@/lib/searchlab/search";
-import {
-  DOMAIN_SPEC,
-  type SearchDomain,
-} from "@/lib/searchlab/domains";
+import { type SearchDomain } from "@/lib/searchlab/domains";
+import { getSearchDomainSpec } from "@/lib/searchlab/dynamicDomains";
 
 /**
  * 인덱스 검색 ClientTool — 챗 에이전트에 검색 실습 코퍼스를 도구로
@@ -35,7 +33,8 @@ const TOOL_TOP_K = 6; // 컨텍스트로 넣을 상위 문서 수(웹검색 정�
  * @param domain 세션에서 고른 검색 코퍼스(클로저 바인딩).
  */
 export function makeIndexSearchTool(domain: SearchDomain) {
-  const label = DOMAIN_SPEC[domain].label;
+  // 정적 5개 + 동적 custom resolver 경유(custom 라벨은 업로드 시 결정).
+  const label = getSearchDomainSpec(domain).label;
   return tool(
     async ({
       query,

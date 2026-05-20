@@ -12,7 +12,8 @@
 
 import { getSearchClient } from "./client";
 import { embedOne } from "./embed";
-import { DOMAIN_SPEC, type SearchDomain } from "./domains";
+import { type SearchDomain } from "./domains";
+import { getSearchDomainSpec } from "./dynamicDomains";
 
 export type SearchMode = "lexical" | "vector" | "hybrid";
 export type HybridMethod = "default" | "rrf";
@@ -182,7 +183,8 @@ function rrfFuse(
 export async function search(params: SearchParams): Promise<SearchHit[]> {
   const { domain, query, mode } = params;
   const topK = params.topK ?? 8;
-  const index = DOMAIN_SPEC[domain].index;
+  // 정적 5개 + 동적 custom resolver 경유(custom index 는 searchlab-custom 고정).
+  const index = getSearchDomainSpec(domain).index;
 
   if (mode === "lexical") {
     const hits = await runOs(

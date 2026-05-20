@@ -22,16 +22,24 @@ import { embedTexts } from "./embed";
 import { chunkText } from "./chunk";
 import { ensureOpenSearch, type InfraEvent } from "./ensure-infra";
 import {
-  DOMAIN_SPEC,
   fetchCorpus,
   corpusUrl,
+  CUSTOM_SEARCH_DOMAIN,
   type SearchDomain,
+  type CorpusDoc,
 } from "./domains";
+import { getSearchDomainSpec } from "./dynamicDomains";
 
 const EMBED_BATCH = 64;
 
 export interface IndexRunParams {
   domain: SearchDomain;
+  /**
+   * 업로드 문서 직접 주입(custom 전용). 지정 시 GitHub raw fetch
+   * (fetchCorpus/corpusUrl)를 우회하고 이 배열을 그대로 색인한다.
+   * 고정 5개 도메인은 미지정(원격 fetch). limit 은 여기에도 적용.
+   */
+  docs?: CorpusDoc[];
   /** 색인 문서 수 상한 (규모·비용 제어). 미지정=전체 */
   limit?: number;
   /** Nori 복합어 분해 정도. 미지정=mixed(기존 동작) */
@@ -71,7 +79,9 @@ export async function* runIndexing(
   params: IndexRunParams,
 ): AsyncGenerator<IndexEvent> {
   const { domain } = params;
-  const spec = DOMAIN_SPEC[domain];
+  // 정적 5개 + 동적 custom 을 합친 resolver 경유(custom 의 index 는
+  // searchlab-custom 고정, 라벨만 동적). 직접 DOMAIN_SPEC 인덱싱 금지.
+  const spec = getSearchDomainSpec(domain);
   // 색인 파라미터 1회 해석(미지정 = 기존 동작). 임베딩 모델 →
   // knn 차원은 EMBED_MODELS 단일 진실원으로 변환(차원 락인 일치).
   const embedModel = params.embedModel ?? EMBED_MODEL;
@@ -81,12 +91,24 @@ export async function* runIndexing(
   // chunkText 가 문서 전체 1청크 반환 → 기존 문서=1벡터 동작 동일.
   const chunkSize = params.chunkSize ?? 0;
   const chunkOverlap = params.chunkOverlap ?? 0;
-  yield { type: "start", domain, url: corpusUrl(domain) };
+  // custom(업로드)은 GitHub 원본이 없어 corpusUrl 이 throw → url 생략.
+  const startUrl =
+    domain === CUSTOM_SEARCH_DOMAIN ? "(업로드 문서)" : corpusUrl(domain);
+  yield { type: "start", domain, url: startUrl };
 
-  // ── #1 원격 문서 확인 (GitHub raw fetch) ──────────────
-  let docs;
+  // ── #1 문서 확보 ──────────────────────────────────────
+  // custom 은 업로드 문서(params.docs)를 직접 색인(fetch 우회), 고정
+  // 5개는 GitHub raw fetch. 둘 다 limit 적용(앞 N건).
+  let docs: CorpusDoc[];
   try {
-    docs = await fetchCorpus(domain, params.limit);
+    if (params.docs) {
+      docs =
+        typeof params.limit === "number"
+          ? params.docs.slice(0, params.limit)
+          : params.docs;
+    } else {
+      docs = await fetchCorpus(domain, params.limit);
+    }
   } catch (e) {
     yield {
       type: "error",

@@ -34,8 +34,12 @@ export function sourceKindOf(mode: string): SourceKind {
     : "index";
 }
 
-/** (소스종류 → 도메인 → 추천 질의 배열). 각 3개 내외. */
-type RecMatrix = Record<SourceKind, Record<SearchDomain, string[]>>;
+/**
+ * (소스종류 → 도메인 → 추천 질의 배열). 각 3개 내외.
+ * Partial — custom(업로드 도메인)은 사용자 데이터라 추천 질의를
+ * 미리 정의하지 않는다(recommendationsFor 가 `?? []` 로 폴백).
+ */
+type RecMatrix = Record<SourceKind, Partial<Record<SearchDomain, string[]>>>;
 
 export const RECOMMENDATIONS: RecMatrix = {
   // ── 인덱스 계열: 색인 문서 대상 자연어 검색·요약 ──────────

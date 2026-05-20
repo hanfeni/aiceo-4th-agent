@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -57,8 +58,12 @@ const CHUNK_OVERLAPS = [100, 200, 500, 1000] as const;
 interface IndexInfo {
   index: string;
   domain?: string;
+  label?: string;
   docCount: number;
 }
+
+/** custom 슬롯 고정 인덱스명(domains.ts CUSTOM_SEARCH_INDEX 와 동일). */
+const CUSTOM_INDEX = "searchlab-custom";
 
 const card: CSSProperties = {
   background: "var(--surface-default)",
@@ -106,6 +111,27 @@ export function IndexLabView(): ReactNode {
   const [showCorpus, setShowCorpus] = useState(false);
   const [corpusDocs, setCorpusDocs] = useState<CorpusDocItem[]>([]);
   const [corpusLoading, setCorpusLoading] = useState(false);
+  // 로컬 jsonl 업로드(동적 custom 도메인) 상태.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadLabel, setUploadLabel] = useState<string>("");
+  const [uploading, setUploading] = useState(false);
+
+  // 색인된 custom 인덱스의 동적 라벨(indices API 의 custom 행). null =
+  // 미색인(custom 도메인 칩·선택 숨김). 고정 5개 + (있으면) custom.
+  const customRow = indices.find((ix) => ix.index === CUSTOM_INDEX);
+  const customLabel = customRow?.label ?? null;
+  const allDomains: { id: string; label: string; audience: string }[] =
+    customLabel
+      ? [
+          ...DOMAINS,
+          {
+            id: "custom",
+            label: customLabel,
+            audience: "사용자 업로드",
+          },
+        ]
+      : [...DOMAINS];
 
   // 도메인 선택 시 원본 총 개수 조회. setState 는 async 경계(await)
   // 뒤에서만 — effect 본문 동기 setState 금지(cascading render) 준수.
@@ -113,6 +139,13 @@ export function IndexLabView(): ReactNode {
   useEffect(() => {
     let alive = true;
     void (async () => {
+      // custom 은 GitHub 원본이 없다(업로드 색인) — corpus-count 건너뜀.
+      // setState 는 async 경계 뒤에서만(effect 동기 setState 금지 준수).
+      if (domain === "custom") {
+        await Promise.resolve();
+        if (alive) setTotal(null);
+        return;
+      }
       try {
         const r = await fetch(
           `/api/search-lab/corpus-count?domain=${domain}`,
@@ -237,6 +270,74 @@ export function IndexLabView(): ReactNode {
     }
   }
 
+  async function runUpload(): Promise<void> {
+    if (uploading || !uploadFile) return;
+    setUploading(true);
+    setErr(null);
+    setIndexLog([`▶ 로컬 jsonl 업로드 색인 시작… (${uploadFile.name})`]);
+    try {
+      const fd = new FormData();
+      fd.append("file", uploadFile);
+      if (uploadLabel.trim()) fd.append("label", uploadLabel.trim());
+      // 위 ② 색인 파라미터를 그대로 적용(고정 도메인 색인과 동일 UX).
+      fd.append("limit", String(limit));
+      fd.append("decompoundMode", decompound);
+      fd.append("embedModel", embedModel);
+      fd.append("chunkSize", String(chunkSize));
+      if (chunkSize > 0) fd.append("chunkOverlap", String(chunkOverlap));
+      const res = await fetch("/api/search-lab/upload", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok || !res.body) {
+        const d = await res.json().catch(() => ({}));
+        setErr(d.error ?? `업로드 실패 (HTTP ${res.status})`);
+        return;
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop() ?? "";
+        for (const f of frames) {
+          const line = f.trim();
+          if (!line.startsWith("data:")) continue;
+          const ev = JSON.parse(line.slice(5).trim());
+          if (ev.type === "start")
+            setIndexLog((l) => [...l, `· 업로드 문서 파싱·색인 준비`]);
+          else if (ev.type === "fetched")
+            setIndexLog((l) => [...l, `· ${ev.total}건 파싱`]);
+          else if (ev.type === "infra")
+            setIndexLog((l) => [...l, `· ${ev.text}`]);
+          else if (ev.type === "infra_log")
+            setIndexLog((l) => [...l, `    ${ev.text}`]);
+          else if (ev.type === "infra_error")
+            setIndexLog((l) => [...l, `  ⚠ ${ev.text}`]);
+          else if (ev.type === "progress")
+            setIndexLog((l) => [
+              ...l.slice(0, -1).filter((x) => !x.startsWith("  ")),
+              `  ${ev.indexed}/${ev.total} 색인 중…`,
+            ]);
+          else if (ev.type === "done")
+            setIndexLog((l) => [
+              ...l,
+              `✓ 완료: ${ev.indexed}건 → 인덱스 ${ev.index} (검색·챗 드롭다운에 "내 데이터" 등장)`,
+            ]);
+          else if (ev.type === "error") setErr(ev.message);
+        }
+      }
+      await loadIndices();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "네트워크 오류");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function deleteIndex(name: string): Promise<void> {
     setConfirmDel(null);
     try {
@@ -286,7 +387,7 @@ export function IndexLabView(): ReactNode {
         <div style={card}>
           <div style={sectionTitle}>① 색인할 도메인 선택</div>
           <div style={chipRow}>
-            {DOMAINS.map((d) => (
+            {allDomains.map((d) => (
               <button
                 key={d.id}
                 type="button"
@@ -310,26 +411,35 @@ export function IndexLabView(): ReactNode {
               flexWrap: "wrap",
             }}
           >
-            <span>
-              원본 문서 총{" "}
-              <strong style={{ color: "var(--cf-soft-text)" }}>
-                {total === null
-                  ? "조회 중…"
-                  : `${total.toLocaleString()}개`}
-              </strong>
-              {total !== null &&
-                total < limit &&
-                " (선택 수보다 적어 전체 색인)"}
-            </span>
-            <button
-              type="button"
-              className="cf-btn"
-              style={{ height: 26, padding: "0 12px", fontSize: 11.5 }}
-              onClick={openCorpus}
-              disabled={total === null}
-            >
-              문서 원본 보기
-            </button>
+            {domain === "custom" ? (
+              <span>
+                업로드 도메인 — 아래 ③ 에서 jsonl 을 올려 색인합니다
+                (GitHub 원본 없음).
+              </span>
+            ) : (
+              <>
+                <span>
+                  원본 문서 총{" "}
+                  <strong style={{ color: "var(--cf-soft-text)" }}>
+                    {total === null
+                      ? "조회 중…"
+                      : `${total.toLocaleString()}개`}
+                  </strong>
+                  {total !== null &&
+                    total < limit &&
+                    " (선택 수보다 적어 전체 색인)"}
+                </span>
+                <button
+                  type="button"
+                  className="cf-btn"
+                  style={{ height: 26, padding: "0 12px", fontSize: 11.5 }}
+                  onClick={openCorpus}
+                  disabled={total === null}
+                >
+                  문서 원본 보기
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -433,16 +543,81 @@ export function IndexLabView(): ReactNode {
         </div>
 
         {/* 실행 버튼 — 설정 카드 밖 독립 줄(설정 ≠ 액션 시각 분리,
-            사용자 요청). 우측 정렬 유지. */}
+            사용자 요청). 우측 정렬 유지. custom 은 GitHub 색인 대상이
+            아니라 업로드 색인(아래 ③) — 버튼 비활성. */}
         <div style={{ ...btnRow, marginBottom: 16 }}>
           <button
             type="button"
             onClick={runIndex}
-            disabled={indexing}
+            disabled={indexing || domain === "custom"}
+            title={
+              domain === "custom"
+                ? "내 데이터(custom)는 아래 ③ jsonl 업로드로 색인합니다"
+                : undefined
+            }
             className="cf-btn cf-btn--primary"
           >
             {indexing ? "색인 중…" : "이 도메인 색인 시작"}
           </button>
+        </div>
+
+        {/* 로컬 jsonl 업로드 — 동적 "내 데이터(custom)" 도메인 추가.
+            고정 5개와 별개로 사용자가 직접 고른 jsonl 을 색인한다.
+            색인 후 검색 실습·챗(인덱스검색 드롭다운)에 "내 데이터" 등장.
+            위 ② 색인 파라미터(토크나이저·임베딩·청크·문서 수)가 함께
+            적용된다. */}
+        <div style={card}>
+          <div style={sectionTitle}>③ 내 jsonl 업로드 (선택)</div>
+          <div style={fieldLabel}>
+            로컬 jsonl 파일(한 줄 = 한 JSON 문서, doc_id·title·body 권장)을
+            올리면 6번째 “내 데이터” 도메인으로 OpenSearch 에 색인되어,
+            검색 실습과 챗(인덱스검색 드롭다운)에서 바로 검색할 수 있습니다.
+            위 ② 색인 파라미터가 함께 적용됩니다.
+          </div>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 10 }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".jsonl"
+              disabled={uploading || indexing}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                setUploadFile(f);
+                if (f && !uploadLabel)
+                  setUploadLabel(f.name.replace(/\.jsonl$/i, ""));
+              }}
+              style={{ fontSize: 12, color: "var(--text-default)" }}
+            />
+            <input
+              type="text"
+              value={uploadLabel}
+              disabled={uploading || indexing}
+              placeholder="표시 라벨 (예: 우리 회사 문서, 미입력 시 파일명)"
+              maxLength={60}
+              onChange={(e) => setUploadLabel(e.target.value)}
+              style={{
+                fontSize: 12,
+                padding: "6px 10px",
+                borderRadius: "var(--r-md, 8px)",
+                border: "1px solid var(--t-neutral-8)",
+                background: "var(--surface-default)",
+                color: "var(--text-default)",
+                maxWidth: 360,
+              }}
+            />
+          </div>
+          <div style={btnRow}>
+            <button
+              type="button"
+              onClick={runUpload}
+              disabled={uploading || indexing || !uploadFile}
+              className="cf-btn cf-btn--primary"
+            >
+              {uploading ? "업로드 색인 중…" : "이 jsonl 업로드 색인"}
+            </button>
+          </div>
         </div>
 
         {err && (
@@ -595,7 +770,7 @@ export function IndexLabView(): ReactNode {
       {showCorpus && (
         <CorpusModal
           domainLabel={
-            DOMAINS.find((d) => d.id === domain)?.label ?? domain
+            allDomains.find((d) => d.id === domain)?.label ?? domain
           }
           docs={corpusDocs}
           loading={corpusLoading}

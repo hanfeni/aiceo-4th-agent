@@ -9,6 +9,7 @@
 
 import { getSearchClient } from "./client";
 import { DOMAIN_SPEC, SEARCH_DOMAINS, type SearchDomain } from "./domains";
+import { getSearchDomainSpec } from "./dynamicDomains";
 
 /** 실습 인덱스 공통 prefix — 이 외 인덱스는 절대 건드리지 않는다. */
 export const SEARCHLAB_PREFIX = "searchlab-";
@@ -21,6 +22,8 @@ export interface IndexInfo {
   index: string;
   /** 매핑되는 도메인(있으면). 알 수 없으면 undefined. */
   domain?: SearchDomain;
+  /** 도메인 한글 라벨(있으면 — custom 은 동적 라벨). 매핑 실패 시 undefined. */
+  label?: string;
   docCount: number;
   /** 바이트 크기(가능 시). 없으면 undefined. */
   sizeBytes?: number;
@@ -49,12 +52,17 @@ export async function listSearchlabIndices(): Promise<IndexInfo[]> {
   }>;
   return rows
     .filter((r) => typeof r.index === "string" && isSearchlabIndex(r.index))
-    .map((r) => ({
-      index: r.index as string,
-      domain: domainOf(r.index as string),
-      docCount: Number(r["docs.count"] ?? 0),
-      sizeBytes: r["store.size"] ? Number(r["store.size"]) : undefined,
-    }))
+    .map((r) => {
+      const dom = domainOf(r.index as string);
+      return {
+        index: r.index as string,
+        domain: dom,
+        // custom 은 동적 라벨, 정적 도메인은 고정 라벨(없으면 undefined).
+        label: dom ? getSearchDomainSpec(dom).label : undefined,
+        docCount: Number(r["docs.count"] ?? 0),
+        sizeBytes: r["store.size"] ? Number(r["store.size"]) : undefined,
+      };
+    })
     .sort((a, b) => a.index.localeCompare(b.index));
 }
 

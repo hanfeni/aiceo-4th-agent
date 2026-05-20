@@ -12,7 +12,8 @@
  */
 
 import { getSearchClient } from "@/lib/searchlab/client";
-import { DOMAIN_SPEC, isSearchDomain } from "@/lib/searchlab/domains";
+import { isSearchDomain } from "@/lib/searchlab/domains";
+import { getSearchDomainSpec } from "@/lib/searchlab/dynamicDomains";
 
 export const runtime = "nodejs";
 
@@ -48,7 +49,8 @@ export async function GET(req: Request): Promise<Response> {
   const size = Number.isFinite(rawSize)
     ? Math.min(Math.max(Math.trunc(rawSize), 1), 50)
     : 50;
-  const index = DOMAIN_SPEC[domain].index;
+  // resolver 경유(custom index 는 searchlab-custom 고정).
+  const index = getSearchDomainSpec(domain).index;
 
   try {
     const client = getSearchClient();
