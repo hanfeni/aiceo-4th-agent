@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   pickFormat,
   isSupportedFile,
@@ -6,6 +9,11 @@ import {
   extractTextFromFile,
   type FileFormat,
 } from "@/lib/files/extractText";
+
+const FIXTURES = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../fixtures/files",
+);
 
 // extractText 단위 테스트 — 파일 텍스트 추출 (LLM 비의존, 무과금·결정적).
 // Plan Critic H1: 파일 추출은 결정적이라 라이브러리 모킹 불필요 — 순수
@@ -143,5 +151,19 @@ describe("extractTextFromFile — HWPX (jszip 실동작)", () => {
     await expect(extractTextFromFile(file)).rejects.toThrow(
       /section|본문/i,
     );
+  });
+
+  // 실파일 회귀: 한컴 프로그램이 실제 생성한 HWPX(neolord0/hwpxlib,
+  // Apache-2.0). 합성 fixture 와 실제 <hs:sec>/hp: 네임스페이스 구조가
+  // 일치함을 보장(웹 샘플 검증 결과 고정). fixtures/files/README.md 참조.
+  it("실제 한글 HWPX 파일에서 본문 텍스트를 추출한다", async () => {
+    const buf = readFileSync(join(FIXTURES, "sample.hwpx"));
+    const file = new File([buf], "sample.hwpx", {
+      type: "application/octet-stream",
+    });
+    const out = await extractTextFromFile(file);
+    // HeaderFooter 샘플 — 머리말/꼬리말 텍스트가 추출돼야 함.
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).toMatch(/머리말|꼬리말/);
   });
 });
