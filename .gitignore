@@ -2,10 +2,10 @@
 node_modules/
 .pnpm-store/
 
-# next.js
+# next.js (루트 빌드 산출물만 — src/.../build/ 라우트는 추적)
 .next/
 out/
-build/
+/build/
 next-env.d.ts
 *.tsbuildinfo
 
