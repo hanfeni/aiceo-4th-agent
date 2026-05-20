@@ -18,6 +18,12 @@ import {
   sqlQueryToolDisplayName,
   sqlQueryToolDescription,
 } from "./sqlQueryTool.meta";
+// graph_query 도 데이터셋별 팩토리(makeGraphQueryTool) — 동일하게
+// 정적 배열 미포함, registry 가 조건부 합성(수업1·3 연결).
+import {
+  graphQueryToolDisplayName,
+  graphQueryToolDescription,
+} from "./graphQueryTool.meta";
 
 /**
  * H4 커스텀 도구 등록 지점 (스펙 디렉토리 원칙의 re-export
@@ -77,5 +83,10 @@ export const HARNESS_TOOL_DISPLAY_NAMES: {
     name: "sql_query",
     displayName: sqlQueryToolDisplayName,
     description: sqlQueryToolDescription,
+  },
+  {
+    name: "graph_query",
+    displayName: graphQueryToolDisplayName,
+    description: graphQueryToolDescription,
   },
 ];
