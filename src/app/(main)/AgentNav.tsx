@@ -62,14 +62,14 @@ const NAV_GROUPS: NavGroup[] = [
         href: "/chat",
       },
       {
-        icon: <SlidersHorizontal size={14} aria-hidden />,
-        label: "하네스 구성",
-        href: "/harness",
-      },
-      {
         icon: <Pill size={14} aria-hidden />,
         label: "DART 기업분석",
         href: "/dart",
+      },
+      {
+        icon: <SlidersHorizontal size={14} aria-hidden />,
+        label: "하네스 구성",
+        href: "/harness",
       },
     ],
   },

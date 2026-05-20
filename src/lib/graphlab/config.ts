@@ -71,6 +71,21 @@ export interface GraphDataset {
     /** 관계 한글명 (SEC: 보유) */
     relation: string;
   };
+  /**
+   * Neo4j 실제 노드/관계 라벨(데이터셋별 분리 — 사용자 결정 2026-05-20:
+   * 여러 데이터셋 동시 공존). 데이터셋마다 고유 라벨을 써서 한 Neo4j 에
+   * 영화·논문·SEC 가 섞이지 않고 공존한다(전환 시 재구축 불필요). SEC 는
+   * 기존 라벨(Manager/Company/OWNS/...) 유지 — 기존 적재분 호환.
+   * load/compare/도구/탐색/status 가 이 라벨을 데이터셋별로 사용한다.
+   */
+  cypher: {
+    subjectLabel: string; // 주체 노드 라벨 (SEC: Manager)
+    objectLabel: string; // 대상 노드 라벨 (SEC: Company)
+    relType: string; // 단순 관계 타입 (SEC: OWNS)
+    positionLabel: string; // 포지션 중간노드 (SEC: Position)
+    holdsType: string; // 주체→포지션 (SEC: HOLDS)
+    ofType: string; // 포지션→대상 (SEC: OF)
+  };
   /** GraphRAG 패널 LLM 에게 줄 스키마 서술(데이터셋별 의미 부여). */
   schemaPrompt: string;
   /** SQL 대조군 LLM 에게 줄 테이블 서술. */
@@ -86,6 +101,14 @@ export const GRAPH_DATASETS: GraphDataset[] = [
     blurb: "유명 13F 기관 64곳의 주식 보유 — 공동보유·교집합 멀티홉",
     rawBase: process.env.GRAPH_RAW_BASE ?? `${RAW_ROOT}/sec-edgar`,
     slots: { subject: "기관", object: "종목", relation: "보유" },
+    cypher: {
+      subjectLabel: "Manager",
+      objectLabel: "Company",
+      relType: "OWNS",
+      positionLabel: "Position",
+      holdsType: "HOLDS",
+      ofType: "OF",
+    },
     schemaPrompt:
       "(:Manager {accession, cik, name, city, state})\n" +
       "(:Company {cusip, name, holder_count, total_value_usd})\n" +
@@ -169,20 +192,27 @@ export const GRAPH_DATASETS: GraphDataset[] = [
     blurb: "유명 배우들의 영화 출연 — 공동출연·연결고리(케빈 베이컨) 멀티홉",
     rawBase: process.env.GRAPH_MOVIES_BASE ?? `${RAW_ROOT}/movies`,
     slots: { subject: "배우", object: "영화", relation: "출연" },
+    cypher: {
+      subjectLabel: "Actor",
+      objectLabel: "Movie",
+      relType: "ACTED_IN",
+      positionLabel: "Role",
+      holdsType: "PLAYED",
+      ofType: "IN_MOVIE",
+    },
     schemaPrompt:
-      "(:Manager {accession, cik, name, city, state})\n" +
-      "  └ 의미: 배우. name=배우명. (그래프 라벨은 공통 골격 Manager " +
-      "지만 이 데이터셋에선 '배우'를 뜻함.)\n" +
-      "(:Company {cusip, name, holder_count, total_value_usd})\n" +
-      "  └ 의미: 영화. name=영화 제목. holder_count=이 영화에 출연한 " +
+      "(:Actor {accession, cik, name, city, state})\n" +
+      "  └ 배우. name=배우명. accession=배우 고유 id.\n" +
+      "(:Movie {cusip, name, holder_count, total_value_usd})\n" +
+      "  └ 영화. name=영화 제목. holder_count=이 영화에 출연한 " +
       "배우 수(앙상블 규모). total_value_usd=흥행수익 등 가중치.\n" +
-      "(:Position {accession, cusip, value_usd, shares, put_call})\n" +
-      "  └ 의미: 한 배우의 한 영화 배역. value_usd=배역 비중.\n" +
+      "(:Role {accession, cusip, value_usd, shares, put_call})\n" +
+      "  └ 한 배우의 한 영화 배역. value_usd=배역 비중.\n" +
       "관계:\n" +
-      "(:Manager)-[:OWNS]->(:Company)\n" +
-      "  └ 의미: 배우가 영화에 '출연'. 공동출연·연결고리 멀티홉에 적합.\n" +
-      "(:Manager)-[:HOLDS]->(:Position)-[:OF]->(:Company)\n" +
-      "  └ 배역 단위 질의에 적합(인기 상위 영화만 Position 적재).",
+      "(:Actor)-[:ACTED_IN]->(:Movie)\n" +
+      "  └ 배우가 영화에 '출연'. 공동출연·연결고리 멀티홉에 적합.\n" +
+      "(:Actor)-[:PLAYED]->(:Role)-[:IN_MOVIE]->(:Movie)\n" +
+      "  └ 배역 단위 질의에 적합(인기 상위 영화만 Role 적재).",
     sqlPrompt:
       "테이블은 holdings(accession, cusip, issuer, value_usd, shares, " +
       "put_call) 하나뿐입니다. 이 데이터셋에서 accession=배우 식별, " +
@@ -215,19 +245,27 @@ export const GRAPH_DATASETS: GraphDataset[] = [
     blurb: "연구자들의 논문 집필 — 공동연구·인용 네트워크 멀티홉",
     rawBase: process.env.GRAPH_PAPERS_BASE ?? `${RAW_ROOT}/papers`,
     slots: { subject: "저자", object: "논문", relation: "집필" },
+    cypher: {
+      subjectLabel: "Author",
+      objectLabel: "Paper",
+      relType: "AUTHORED",
+      positionLabel: "Contribution",
+      holdsType: "CONTRIBUTED",
+      ofType: "TO_PAPER",
+    },
     schemaPrompt:
-      "(:Manager {accession, cik, name, city, state})\n" +
-      "  └ 의미: 저자/연구자. name=저자명. city/state=소속 기관.\n" +
-      "(:Company {cusip, name, holder_count, total_value_usd})\n" +
-      "  └ 의미: 논문. name=논문 제목. holder_count=공저자 수. " +
+      "(:Author {accession, cik, name, city, state})\n" +
+      "  └ 저자/연구자. name=저자명. city/state=소속 기관.\n" +
+      "(:Paper {cusip, name, holder_count, total_value_usd})\n" +
+      "  └ 논문. name=논문 제목. holder_count=공저자 수. " +
       "total_value_usd=피인용 수 등 영향력 지표.\n" +
-      "(:Position {accession, cusip, value_usd, shares, put_call})\n" +
-      "  └ 의미: 한 저자의 한 논문 기여. value_usd=기여도.\n" +
+      "(:Contribution {accession, cusip, value_usd, shares, put_call})\n" +
+      "  └ 한 저자의 한 논문 기여. value_usd=기여도.\n" +
       "관계:\n" +
-      "(:Manager)-[:OWNS]->(:Company)\n" +
-      "  └ 의미: 저자가 논문을 '집필'. 공동연구·공저 네트워크 멀티홉.\n" +
-      "(:Manager)-[:HOLDS]->(:Position)-[:OF]->(:Company)\n" +
-      "  └ 기여 단위 질의에 적합(피인용 상위 논문만 Position 적재).",
+      "(:Author)-[:AUTHORED]->(:Paper)\n" +
+      "  └ 저자가 논문을 '집필'. 공동연구·공저 네트워크 멀티홉.\n" +
+      "(:Author)-[:CONTRIBUTED]->(:Contribution)-[:TO_PAPER]->(:Paper)\n" +
+      "  └ 기여 단위 질의에 적합(피인용 상위 논문만 Contribution 적재).",
     sqlPrompt:
       "테이블은 holdings(accession, cusip, issuer, value_usd, shares, " +
       "put_call) 하나뿐입니다. 이 데이터셋에서 accession=저자 식별, " +
@@ -278,27 +316,6 @@ export function subsetUrl(
 ): string {
   return `${getDataset(datasetId).rawBase}/${SUBSET_FILES[file]}`;
 }
-
-/**
- * Neo4j 그래프 노드/엣지 라벨 SSOT (Cypher·UI·LLM 프롬프트 일관).
- *
- * 스키마 진화(2026-05-20, 웹 사례 기반 — Neo4j 공식 mutual-fund
- * 패턴 + 13F crowding 실무):
- *  - Company 에 crowding 속성(holder_count·total_value) 부여
- *    → "허브 종목" 류 질의를 매번 count 재계산 않고 속성 직조회
- *  - (:Position) 중간 노드 — Neo4j 공식 Holdings 패턴.
- *    (Manager)-[HOLDS]->(Position {value_usd,shares,put_call})
- *    -[OF]->(Company). 포지션 자체에 대한 질의(옵션 보유 등) 가능.
- *    기존 (Manager)-[OWNS]->(Company) 는 호환 위해 유지(병존).
- */
-export const GRAPH_SCHEMA = {
-  managerLabel: "Manager",
-  companyLabel: "Company",
-  ownsRel: "OWNS",
-  positionLabel: "Position",
-  holdsRel: "HOLDS",
-  ofRel: "OF",
-} as const;
 
 /**
  * Position 노드는 holder_count(인기) 상위 N개 종목에 대해서만

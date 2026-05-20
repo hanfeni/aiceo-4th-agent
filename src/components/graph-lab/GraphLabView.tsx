@@ -29,8 +29,6 @@ interface GraphStats {
   companies: number;
   owns: number;
   positions: number;
-  /** 현재 Neo4j 에 적재된 데이터셋 id(없으면 null=미상). */
-  loadedDatasetId: string | null;
 }
 
 // 추천 질의는 데이터셋별 config.demoQueries SSOT 에서 가져온다
@@ -54,6 +52,9 @@ const sectionTitle: CSSProperties = {
 
 export function GraphLabView(): ReactNode {
   const [stats, setStats] = useState<GraphStats | null>(null);
+  // 현재 Neo4j 에 공존 적재된 데이터셋 id 목록(라벨 분리 — 여러 개
+  // 동시 적재 가능). 어느 데이터셋이 이미 구축됐는지 칩에 표시.
+  const [loaded, setLoaded] = useState<string[]>([]);
   const [building, setBuilding] = useState(false);
   const [buildLog, setBuildLog] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -74,35 +75,46 @@ export function GraphLabView(): ReactNode {
   // DB 구조 보기 모달(인터랙티브 그래프 탐색 — 사용자 결정)
   const [showExplore, setShowExplore] = useState(false);
 
-  // 버튼 콜백(runBuild 후 재조회)에서도 재사용 → useCallback 유지.
-  const loadStatus = useCallback(async () => {
+  // 선택 데이터셋 현황 조회(datasetId 별 stats + 공존 적재 목록).
+  // 버튼 콜백(runBuild 후)·데이터셋 전환에서 재사용 → useCallback.
+  const loadStatus = useCallback(async (dsId: string) => {
     try {
-      const r = await fetch("/api/graph-lab/status");
+      const r = await fetch(
+        `/api/graph-lab/status?datasetId=${encodeURIComponent(dsId)}`,
+      );
       const d = await r.json();
       setStats(d.stats ?? null);
+      setLoaded(Array.isArray(d.loaded) ? d.loaded : []);
     } catch {
       setStats(null);
+      setLoaded([]);
     }
   }, []);
 
-  // 마운트 시 1회 현황 조회. setState 는 await 경계(IIFE) 뒤에서만
-  // — effect 본문 동기 setState 금지(cascading render) 준수.
-  // alive 가드로 언마운트 후 setState 방지(IndexLabView 동형 패턴).
+  // 마운트 + 데이터셋 전환 시 현황 조회(선택 데이터셋 기준). setState
+  // 는 await 경계(IIFE) 뒤에서만. alive 가드로 언마운트 후 방지.
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
-        const r = await fetch("/api/graph-lab/status");
+        const r = await fetch(
+          `/api/graph-lab/status?datasetId=${encodeURIComponent(datasetId)}`,
+        );
         const d = await r.json();
-        if (alive) setStats(d.stats ?? null);
+        if (!alive) return;
+        setStats(d.stats ?? null);
+        setLoaded(Array.isArray(d.loaded) ? d.loaded : []);
       } catch {
-        if (alive) setStats(null);
+        if (alive) {
+          setStats(null);
+          setLoaded([]);
+        }
       }
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [datasetId]);
 
   async function consumeSse(
     res: Response,
@@ -173,7 +185,7 @@ export function GraphLabView(): ReactNode {
           ]);
         }
       });
-      await loadStatus();
+      await loadStatus(datasetId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "네트워크 오류");
     } finally {
@@ -183,11 +195,12 @@ export function GraphLabView(): ReactNode {
 
   async function runCompare(q: string): Promise<void> {
     if (comparing || !q.trim()) return;
-    // 선택 ≠ 적재면 비교 차단(엉뚱한 데이터로 답하는 혼동 방지).
-    if (datasetMismatch) {
+    // 이 데이터셋이 아직 적재 안 됐으면 비교 차단(공존 — 다른
+    // 데이터셋이 적재돼 있어도 이건 별도). "그래프 구축" 안내.
+    if (!isLoaded) {
       setErr(
-        `현재 적재된 데이터(${loadedLabel})와 선택한 데이터셋(${activeDataset.label})이 ` +
-          `다릅니다. "① 그래프 구축"으로 데이터를 교체한 뒤 비교하세요.`,
+        `${activeDataset.label} 데이터가 아직 적재되지 않았습니다. ` +
+          `"① 그래프 구축"을 먼저 실행한 뒤 비교하세요.`,
       );
       return;
     }
@@ -238,7 +251,11 @@ export function GraphLabView(): ReactNode {
     setDeleting(true);
     setErr(null);
     try {
-      const r = await fetch("/api/graph-lab/reset", { method: "POST" });
+      const r = await fetch("/api/graph-lab/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ datasetId }),
+      });
       const d = await r.json();
       if (!r.ok) {
         setErr(d.error ?? `삭제 실패 (HTTP ${r.status})`);
@@ -246,7 +263,7 @@ export function GraphLabView(): ReactNode {
       }
       setBuildLog([]);
       setPanels(emptyPanels());
-      await loadStatus();
+      await loadStatus(datasetId);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "네트워크 오류");
     } finally {
@@ -254,21 +271,12 @@ export function GraphLabView(): ReactNode {
     }
   }
 
-  const built = stats !== null;
-  // 선택한 데이터셋과 실제 적재된 데이터셋 불일치 — Neo4j 는 단일
-  // 인스턴스라 데이터셋 전환 후 "그래프 구축"을 다시 눌러야 한다.
-  // 불일치면 비교 결과가 엉뚱한(이전) 데이터로 나오므로 경고·차단.
-  const datasetMismatch =
-    built &&
-    stats.loadedDatasetId !== null &&
-    stats.loadedDatasetId !== datasetId;
-  // 실제 적재된 데이터셋(모달·경고 문구용). 미상이면 선택 데이터셋 폴백.
-  const loadedDataset =
-    GRAPH_DATASETS.find((d) => d.id === stats?.loadedDatasetId) ??
-    activeDataset;
-  const loadedLabel = stats?.loadedDatasetId
-    ? loadedDataset.label
-    : "(미상)";
+  // 이 데이터셋이 적재됐는지(공존 — loaded 목록 기반). 비교·탐색은
+  // 적재된 경우에만. built = 선택 데이터셋 stats 존재(= 적재됨).
+  const isLoaded = loaded.includes(datasetId);
+  const built = stats !== null && isLoaded;
+  // 모달·표시용 — 선택 데이터셋 기준(공존이라 선택=표시 대상).
+  const loadedLabel = activeDataset.label;
 
   return (
     <div
@@ -349,27 +357,44 @@ export function GraphLabView(): ReactNode {
               );
             })}
           </div>
-          {/* 선택 ≠ 적재 경고 — Neo4j 단일 인스턴스라 전환 후 재구축 필요. */}
-          {datasetMismatch && (
-            <div
-              style={{
-                marginTop: 12,
-                padding: "10px 12px",
-                borderRadius: 8,
-                background:
-                  "color-mix(in srgb, var(--t-warning-9, #f59e0b) 12%, transparent)",
-                border: "1px solid var(--t-warning-9, #f59e0b)",
-                fontSize: 12,
-                color: "var(--text-default)",
-                lineHeight: 1.5,
-              }}
-            >
-              ⚠ 현재 Neo4j 에는 <strong>{loadedLabel}</strong> 데이터가
-              적재돼 있습니다. <strong>{activeDataset.label}</strong> 로
-              질의하려면 아래 <strong>① 그래프 구축</strong>을 다시 눌러
-              데이터를 교체하세요. (그래프는 한 번에 한 데이터셋만 담깁니다.)
-            </div>
-          )}
+          {/* 적재 상태 안내(공존) — 여러 데이터셋이 라벨 분리로 동시
+              적재 가능. 선택 데이터셋이 적재됐는지/안 됐는지만 표시. */}
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: isLoaded
+                ? "color-mix(in srgb, var(--t-success-9, #22c55e) 10%, transparent)"
+                : "color-mix(in srgb, var(--t-warning-9, #f59e0b) 12%, transparent)",
+              border: isLoaded
+                ? "1px solid var(--t-success-9, #22c55e)"
+                : "1px solid var(--t-warning-9, #f59e0b)",
+              fontSize: 12,
+              color: "var(--text-default)",
+              lineHeight: 1.5,
+            }}
+          >
+            {isLoaded ? (
+              <>
+                ✓ <strong>{activeDataset.label}</strong> 데이터가 적재돼
+                있습니다. 바로 ② 비교·탐색이 가능합니다.
+                {loaded.length > 1 && (
+                  <>
+                    {" "}
+                    (현재 {loaded.length}개 데이터셋이 함께 적재됨 — 데이터셋을
+                    바꿔도 재구축 없이 전환됩니다.)
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                ⚠ <strong>{activeDataset.label}</strong> 데이터가 아직
+                적재되지 않았습니다. 아래 <strong>① 그래프 구축</strong>을
+                실행하세요. (다른 데이터셋과 별도로 공존 적재됩니다.)
+              </>
+            )}
+          </div>
         </div>
 
         {/* ① 그래프 구축 */}
@@ -592,8 +617,9 @@ export function GraphLabView(): ReactNode {
       {showExplore && (
         <GraphExploreModal
           onClose={() => setShowExplore(false)}
-          datasetLabel={loadedLabel}
-          slots={loadedDataset.slots}
+          datasetId={datasetId}
+          datasetLabel={activeDataset.label}
+          slots={activeDataset.slots}
         />
       )}
     </div>

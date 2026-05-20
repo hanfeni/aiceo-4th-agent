@@ -19,13 +19,20 @@
  */
 
 import { runCypher } from "@/lib/graphlab/client";
-import { GRAPH_SCHEMA } from "@/lib/graphlab/config";
+import {
+  DEFAULT_DATASET_ID,
+  GRAPH_DATASET_IDS,
+  getDataset,
+  type GraphDataset,
+} from "@/lib/graphlab/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const { managerLabel, companyLabel, ownsRel, positionLabel, holdsRel, ofRel } =
-  GRAPH_SCHEMA;
+/** 데이터셋별 Neo4j 라벨 묶음(getDataset(id).cypher). 모듈 고정
+ *  상수(SEC) 대신 요청 datasetId 로 해석해 헬퍼에 주입한다 —
+ *  영화/논문 등 동시 공존 라벨 인지(2026-05-20). */
+type GraphLabels = GraphDataset["cypher"];
 
 interface GNode {
   id: string;
@@ -54,8 +61,14 @@ function fmtUsd(usd: number): string {
   return `$${usd.toFixed(0)}`;
 }
 
-/** OWNS 모드 행 → {mid,mname,cid,cname} 평면 행 */
-async function ownsRows(seed: string | null): Promise<Record<string, unknown>[]> {
+/** OWNS 모드 행 → {mid,mname,cid,cname} 평면 행. 라벨은 데이터셋별
+ *  주입(L) — 모듈 고정 상수 미사용. */
+async function ownsRows(
+  seed: string | null,
+  L: GraphLabels,
+): Promise<Record<string, unknown>[]> {
+  const { subjectLabel: managerLabel, objectLabel: companyLabel, relType: ownsRel } =
+    L;
   if (!seed) {
     return runCypher(
       `MATCH (c:${companyLabel})<-[:${ownsRel}]-(:${managerLabel})
@@ -91,10 +104,19 @@ async function ownsRows(seed: string | null): Promise<Record<string, unknown>[]>
 }
 
 /** Position 모드 행 → {mid,mname,pid,pput,cid,cname} 평면 행.
- *  Position 식별자 pid = "<accession>|<cusip>" (load.ts MERGE 키). */
+ *  Position 식별자 pid = "<accession>|<cusip>" (load.ts MERGE 키).
+ *  라벨은 데이터셋별 주입(L). */
 async function positionRows(
   seed: string | null,
+  L: GraphLabels,
 ): Promise<Record<string, unknown>[]> {
+  const {
+    subjectLabel: managerLabel,
+    objectLabel: companyLabel,
+    positionLabel,
+    holdsType: holdsRel,
+    ofType: ofRel,
+  } = L;
   const ret = `RETURN m.accession AS mid, m.name AS mname,
               p.accession AS pa, p.cusip AS pc, p.put_call AS pput,
               p.value_usd AS pval, p.shares AS psh,
@@ -156,6 +178,14 @@ export async function GET(req: Request): Promise<Response> {
   const sp = new URL(req.url).searchParams;
   const seed = sp.get("seed");
   const mode: Mode = sp.get("mode") === "position" ? "position" : "owns";
+  // datasetId 화이트리스트 검증 — 임의 문자열이 Cypher 라벨로
+  // 들어가면 인젝션. 미지정/미존재는 기본(SEC) → 회귀 0.
+  const reqDataset = sp.get("datasetId");
+  const datasetId =
+    reqDataset && GRAPH_DATASET_IDS.includes(reqDataset)
+      ? reqDataset
+      : DEFAULT_DATASET_ID;
+  const L = getDataset(datasetId).cypher;
   try {
     const nodeMap = new Map<string, GNode>();
     const edges: GEdge[] = [];
@@ -164,7 +194,7 @@ export async function GET(req: Request): Promise<Response> {
     };
 
     if (mode === "owns") {
-      for (const r of await ownsRows(seed)) {
+      for (const r of await ownsRows(seed, L)) {
         const cid = `c:${r.cid as string}`;
         const mid = `m:${r.mid as string}`;
         if (!nodeMap.has(cid))
@@ -182,7 +212,7 @@ export async function GET(req: Request): Promise<Response> {
         addEdge(mid, cid);
       }
     } else {
-      for (const r of await positionRows(seed)) {
+      for (const r of await positionRows(seed, L)) {
         const cid = `c:${r.cid as string}`;
         const mid = `m:${r.mid as string}`;
         const pid = `p:${r.pa as string}|${r.pc as string}`;

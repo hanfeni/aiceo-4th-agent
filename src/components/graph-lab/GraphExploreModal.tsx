@@ -168,11 +168,14 @@ interface DatasetSlots {
 
 export function GraphExploreModal({
   onClose,
+  datasetId,
   datasetLabel,
   slots,
 }: {
   onClose: () => void;
-  /** 실제 적재된 데이터셋 라벨(헤더 제목). */
+  /** 탐색할 데이터셋 id(sample/summary 에 동봉 — 공존 라벨 분리). */
+  datasetId: string;
+  /** 적재된 데이터셋 라벨(헤더 제목). */
   datasetLabel: string;
   /** 노드/관계 한글 라벨(데이터셋별 — SEC 하드코딩 제거). */
   slots: DatasetSlots;
@@ -239,7 +242,7 @@ export function GraphExploreModal({
       setLoading(true);
       setErr(null);
       try {
-        const qs = new URLSearchParams({ mode: m });
+        const qs = new URLSearchParams({ mode: m, datasetId });
         if (seed) qs.set("seed", seed);
         const r = await fetch(`/api/graph-lab/sample?${qs.toString()}`);
         const d = await r.json();
@@ -258,7 +261,7 @@ export function GraphExploreModal({
         setLoading(false);
       }
     },
-    [mergeInto],
+    [mergeInto, datasetId],
   );
 
   /**
@@ -339,6 +342,7 @@ export function GraphExploreModal({
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            datasetId,
             path: path.map((c) => ({ id: c.id, label: c.label })),
           }),
         });
@@ -358,7 +362,7 @@ export function GraphExploreModal({
     return () => {
       alive = false;
     };
-  }, [path]);
+  }, [path, datasetId]);
 
   // 마운트 시 1회 초기 그래프 로드. setState 는 await 경계(IIFE)
   // 뒤에서만 — effect 본문 동기 setState 금지(GraphLabView 동형).
@@ -368,7 +372,9 @@ export function GraphExploreModal({
     void (async () => {
       try {
         // 초기 로드는 owns 모드 고정(서버 기본값과 동일, 명시).
-        const r = await fetch("/api/graph-lab/sample?mode=owns");
+        const r = await fetch(
+          `/api/graph-lab/sample?mode=owns&datasetId=${encodeURIComponent(datasetId)}`,
+        );
         const d = await r.json();
         if (!alive) return;
         if (!r.ok) {
@@ -391,7 +397,9 @@ export function GraphExploreModal({
     return () => {
       alive = false;
     };
-  }, []);
+    // datasetId 는 모달 생명주기 동안 고정(props)이라 사실상 마운트
+    // 1회. lint 정합 위해 deps 명시.
+  }, [datasetId]);
 
   const hint =
     path.length === 0

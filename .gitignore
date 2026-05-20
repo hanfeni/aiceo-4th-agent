@@ -27,6 +27,9 @@ test-results/
 playwright-report/
 .playwright/
 
+# Claude Code 로컬 하네스 설정 (교육용 — 추적 제외)
+.claude/
+
 # misc
 .DS_Store
 *.log

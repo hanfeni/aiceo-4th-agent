@@ -21,12 +21,19 @@
 
 import { z } from "zod";
 import { runCypher } from "@/lib/graphlab/client";
-import { GRAPH_SCHEMA } from "@/lib/graphlab/config";
+import {
+  DEFAULT_DATASET_ID,
+  GRAPH_DATASET_IDS,
+  getDataset,
+  type GraphDataset,
+} from "@/lib/graphlab/config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const { managerLabel, companyLabel, ownsRel } = GRAPH_SCHEMA;
+/** 데이터셋별 Neo4j 라벨 묶음. 모듈 고정 상수(SEC) 대신 요청
+ *  datasetId 로 해석해 헬퍼에 주입(2026-05-20 동시 공존). */
+type GraphLabels = GraphDataset["cypher"];
 
 /** 경로가 더 길어도 통찰은 최근 N개 노드까지만(비용 캡). */
 const MAX_PATH = 6;
@@ -35,6 +42,9 @@ const bodySchema = z.object({
   path: z
     .array(z.object({ id: z.string(), label: z.string() }))
     .max(50),
+  /** 데이터셋 식별자(미지정=기본 SEC EDGAR, 회귀 0). 화이트리스트
+   *  검증은 핸들러에서 — 임의값은 기본 데이터셋으로 폴백. */
+  datasetId: z.string().optional(),
 });
 
 /** "<kind>:<raw>" → {kind,raw}. p: 는 raw 가 "accn|cusip". */
@@ -50,9 +60,10 @@ function fmtUsd(usd: number): string {
   return `$${usd.toFixed(0)}`;
 }
 
-/** 옛 스키마 감지: OWNS 엣지에 value_usd 가 하나도 없으면 true
- *  (그래프 재구축 전 — 가치 통찰은 0이라 안내 필요). */
-async function needsRebuild(): Promise<boolean> {
+/** 옛 스키마 감지: 관계 엣지에 value_usd 가 하나도 없으면 true
+ *  (그래프 재구축 전 — 가치 통찰은 0이라 안내 필요). 라벨 주입(L). */
+async function needsRebuild(L: GraphLabels): Promise<boolean> {
+  const { relType: ownsRel } = L;
   const [row] = (await runCypher(
     `MATCH ()-[o:${ownsRel}]->()
      WITH count(o) AS tot, count(o.value_usd) AS withV
@@ -61,12 +72,22 @@ async function needsRebuild(): Promise<boolean> {
   return !!row && row.tot > 0 && row.withV === 0;
 }
 
-/** 1홉: 단일 노드의 사실 요약 문장(노드 종류별로 다른 통찰). */
+/** 1홉: 단일 노드의 사실 요약 문장(노드 종류별로 다른 통찰).
+ *  라벨은 데이터셋별 주입(L). */
 async function nodeFact(
   kind: string,
   raw: string,
   hasValue: boolean,
+  L: GraphLabels,
 ): Promise<string[]> {
+  const {
+    subjectLabel: managerLabel,
+    objectLabel: companyLabel,
+    relType: ownsRel,
+    positionLabel,
+    holdsType: holdsRel,
+    ofType: ofRel,
+  } = L;
   if (kind === "c:") {
     const [r] = (await runCypher(
       `MATCH (c:${companyLabel} {cusip: $raw})
@@ -121,9 +142,9 @@ async function nodeFact(
     // ─────────────────────────────────────────────────────
     const [pa, pc] = raw.split("|");
     const [r] = (await runCypher(
-      `MATCH (m:${managerLabel})-[:${GRAPH_SCHEMA.holdsRel}]->
-             (p:${GRAPH_SCHEMA.positionLabel} {accession:$pa, cusip:$pc})
-             -[:${GRAPH_SCHEMA.ofRel}]->(c:${companyLabel})
+      `MATCH (m:${managerLabel})-[:${holdsRel}]->
+             (p:${positionLabel} {accession:$pa, cusip:$pc})
+             -[:${ofRel}]->(c:${companyLabel})
        RETURN m.name AS mgr, c.name AS co,
               p.put_call AS pc, p.value_usd AS v`,
       { pa, pc },
@@ -156,7 +177,16 @@ async function nodeFact(
 async function multiHopInsight(
   ids: { kind: string; raw: string }[],
   hasValue: boolean,
+  L: GraphLabels,
 ): Promise<string[]> {
+  const {
+    subjectLabel: managerLabel,
+    objectLabel: companyLabel,
+    relType: ownsRel,
+    positionLabel,
+    holdsType: holdsRel,
+    ofType: ofRel,
+  } = L;
   const companies = ids.filter((x) => x.kind === "c:").map((x) => x.raw);
   const managers = ids.filter((x) => x.kind === "m:").map((x) => x.raw);
   // Position(p:<accession>|<cusip>) — 3-노드 모드 전용. cusip/
@@ -330,8 +360,8 @@ async function multiHopInsight(
   if (positions.length > 0) {
     const last = positions[positions.length - 1];
     const rows = (await runCypher(
-      `MATCH (:${managerLabel})-[:${GRAPH_SCHEMA.holdsRel}]->
-             (p:${GRAPH_SCHEMA.positionLabel})-[:${GRAPH_SCHEMA.ofRel}]->
+      `MATCH (:${managerLabel})-[:${holdsRel}]->
+             (p:${positionLabel})-[:${ofRel}]->
              (c:${companyLabel} {cusip:$cu})
        WITH coalesce(p.put_call,'') AS kind, count(*) AS k
        RETURN kind, k ORDER BY k DESC`,
@@ -381,10 +411,19 @@ export async function POST(req: Request): Promise<Response> {
       { status: 400, headers: { "content-type": "application/json" } },
     );
   }
-  const { path } = parsed.data;
+  const { path, datasetId: reqDataset } = parsed.data;
+  // datasetId 화이트리스트 검증 — 임의 문자열이 Cypher 라벨로
+  // 들어가면 인젝션. 미지정/미존재는 기본(SEC) → 회귀 0.
+  const datasetId =
+    reqDataset && GRAPH_DATASET_IDS.includes(reqDataset)
+      ? reqDataset
+      : DEFAULT_DATASET_ID;
+  const L = getDataset(datasetId).cypher;
+  const { subjectLabel: managerLabel, objectLabel: companyLabel, relType: ownsRel } =
+    L;
 
   try {
-    const rebuild = await needsRebuild();
+    const rebuild = await needsRebuild(L);
     const hasValue = !rebuild;
     const lines: string[] = [];
 
@@ -405,12 +444,12 @@ export async function POST(req: Request): Promise<Response> {
       // 1홉 — 마지막 클릭 노드의 사실
       const ids = path.map((c) => parseId(c.id));
       const last = ids[ids.length - 1];
-      lines.push(...(await nodeFact(last.kind, last.raw, hasValue)));
+      lines.push(...(await nodeFact(last.kind, last.raw, hasValue, L)));
 
       // 2홉+ — 경로 전체(최근 MAX_PATH) 멀티홉 통찰
       if (ids.length >= 2) {
         const recent = ids.slice(-MAX_PATH);
-        lines.push(...(await multiHopInsight(recent, hasValue)));
+        lines.push(...(await multiHopInsight(recent, hasValue, L)));
       }
     }
 

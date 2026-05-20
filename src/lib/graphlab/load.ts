@@ -13,10 +13,10 @@
 import { runCypher, getNeo4jDriver } from "./client";
 import {
   subsetUrl,
-  GRAPH_SCHEMA,
   POSITION_TOP_N,
   DEFAULT_DATASET_ID,
   getDataset,
+  GRAPH_DATASETS,
 } from "./config";
 
 export type LoadEvent =
@@ -152,7 +152,9 @@ async function fetchCsv(
  * Neo4j 가 이미 떠 있다고 가정(ensureNeo4j 가 선행).
  *
  * @param datasetId 적재할 데이터셋(미지정=기본 SEC EDGAR, 회귀 0).
- *   노드/관계 골격은 데이터셋 공통(GRAPH_SCHEMA) — rawBase·라벨만 다름.
+ *   노드/관계 골격(2부 그래프+Position)은 데이터셋 공통이나, 실제
+ *   Neo4j 라벨은 데이터셋별로 분리(config.cypher) — 여러 데이터셋이
+ *   한 Neo4j 에 라벨로 격리돼 공존한다(전환 시 재구축 불필요).
  */
 export async function* loadGraph(
   datasetId: string = DEFAULT_DATASET_ID,
@@ -197,39 +199,50 @@ export async function* loadGraph(
     text: `수신: 기관 ${managers.length}개 · 보유 ${holdings.length.toLocaleString()}건`,
   };
 
+  // 데이터셋별 Cypher 라벨(공존 — 여러 데이터셋이 한 Neo4j 에
+  // 섞이지 않게 라벨로 분리). SEC 는 기존 Manager/Company 유지.
+  const L = ds.cypher;
+  // 제약 이름은 라벨 기반으로 고유화(데이터셋마다 별도 제약).
+  const cn = (suffix: string): string =>
+    `${L.subjectLabel.toLowerCase()}_${suffix}`;
+
   // ── #2 Neo4j 적재 ───────────────────────────────────
-  yield { type: "load", phase: "reset", text: "기존 그래프 정리 + 제약 생성…" };
+  yield { type: "load", phase: "reset", text: `기존 ${ds.label} 그래프 정리 + 제약 생성…` };
   try {
-    await runCypher("MATCH (n) DETACH DELETE n");
+    // 전체 삭제(MATCH (n))가 아니라 이 데이터셋 라벨 노드만 삭제 —
+    // 다른 데이터셋(공존)을 건드리지 않는다(사용자 결정 2026-05-20).
     await runCypher(
-      `CREATE CONSTRAINT mgr_acc IF NOT EXISTS
-       FOR (m:${GRAPH_SCHEMA.managerLabel}) REQUIRE m.accession IS UNIQUE`,
+      `MATCH (n) WHERE n:${L.subjectLabel} OR n:${L.objectLabel} OR n:${L.positionLabel} DETACH DELETE n`,
     );
     await runCypher(
-      `CREATE CONSTRAINT co_cusip IF NOT EXISTS
-       FOR (c:${GRAPH_SCHEMA.companyLabel}) REQUIRE c.cusip IS UNIQUE`,
+      `CREATE CONSTRAINT ${cn("acc")} IF NOT EXISTS
+       FOR (m:${L.subjectLabel}) REQUIRE m.accession IS UNIQUE`,
+    );
+    await runCypher(
+      `CREATE CONSTRAINT ${cn("cusip")} IF NOT EXISTS
+       FOR (c:${L.objectLabel}) REQUIRE c.cusip IS UNIQUE`,
     );
 
-    // 기관 노드
-    yield { type: "load", phase: "managers", text: "기관(Manager) 노드 적재…" };
+    // 주체 노드(기관/배우/저자)
+    yield { type: "load", phase: "managers", text: `${ds.slots.subject}(${L.subjectLabel}) 노드 적재…` };
     await runCypher(
       `UNWIND $rows AS r
-       MERGE (m:${GRAPH_SCHEMA.managerLabel} {accession: r.accession})
+       MERGE (m:${L.subjectLabel} {accession: r.accession})
        SET m.cik=r.cik, m.name=r.name, m.city=r.city, m.state=r.state`,
       { rows: managers },
     );
 
-    // 보유 엣지 (배치 — 46만 행이라 청크 UNWIND)
-    yield { type: "load", phase: "owns", text: "보유(OWNS) 엣지 적재…" };
+    // 관계 엣지 (배치 — 청크 UNWIND)
+    yield { type: "load", phase: "owns", text: `${ds.slots.relation}(${L.relType}) 엣지 적재…` };
     const BATCH = 5000;
     for (let i = 0; i < holdings.length; i += BATCH) {
       const chunk = holdings.slice(i, i + BATCH);
       await runCypher(
         `UNWIND $rows AS r
-         MATCH (m:${GRAPH_SCHEMA.managerLabel} {accession: r.accession})
-         MERGE (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
+         MATCH (m:${L.subjectLabel} {accession: r.accession})
+         MERGE (c:${L.objectLabel} {cusip: r.cusip})
            ON CREATE SET c.name = r.issuer
-         MERGE (m)-[o:${GRAPH_SCHEMA.ownsRel}]->(c)
+         MERGE (m)-[o:${L.relType}]->(c)
          SET o.value_usd = r.valueUsd, o.shares = r.shares`,
         { rows: chunk },
       );
@@ -260,7 +273,7 @@ export async function* loadGraph(
     }));
     await runCypher(
       `UNWIND $rows AS r
-       MATCH (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
+       MATCH (c:${L.objectLabel} {cusip: r.cusip})
        SET c.holder_count = r.holderCount,
            c.total_value_usd = r.totalValueUsd`,
       { rows: topIssuers },
@@ -273,13 +286,13 @@ export async function* loadGraph(
     // holder_count 상위 N종목만(데이터량↓, 노드 종류 유지).
     // crowding 속성이 그래프 진실원 → Neo4j 에서 상위 cusip
     // 집합을 구해 JS 필터(배치 UNWIND 와 정합).
-    yield { type: "load", phase: "positions", text: `Position 중간 노드 적재(인기 상위 ${POSITION_TOP_N}${ds.slots.object})…` };
+    yield { type: "load", phase: "positions", text: `${L.positionLabel} 중간 노드 적재(인기 상위 ${POSITION_TOP_N}${ds.slots.object})…` };
     const topCusipRows = (await runCypher(
       // LIMIT 은 정수만 허용. JS number 를 파라미터로 넘기면
       // 드라이버가 float('300.0')로 직렬화 → "not a valid value"
       // 런타임 에러. Cypher 내부 toInteger() 로 강제 정수화
       // (드라이버 의존 없는 가장 견고한 방식 — 실 HTTP 검증서 발견).
-      `MATCH (c:${GRAPH_SCHEMA.companyLabel})
+      `MATCH (c:${L.objectLabel})
        WHERE c.holder_count IS NOT NULL
        RETURN c.cusip AS cusip
        ORDER BY c.holder_count DESC LIMIT toInteger($n)`,
@@ -290,15 +303,15 @@ export async function* loadGraph(
     const PBATCH = 5000;
     for (let i = 0; i < posRows.length; i += PBATCH) {
       const chunk = posRows.slice(i, i + PBATCH);
-      // (accession,cusip) MERGE — 같은 기관·종목 여러 로트는
+      // (accession,cusip) MERGE — 같은 주체·대상 여러 로트는
       // Position 1개로 합치되 value/shares 는 합산(로트 손실 X).
       await runCypher(
         `UNWIND $rows AS r
-         MATCH (m:${GRAPH_SCHEMA.managerLabel} {accession: r.accession})
-         MATCH (c:${GRAPH_SCHEMA.companyLabel} {cusip: r.cusip})
-         MERGE (m)-[:${GRAPH_SCHEMA.holdsRel}]->
-               (p:${GRAPH_SCHEMA.positionLabel} {accession: r.accession, cusip: r.cusip})
-         MERGE (p)-[:${GRAPH_SCHEMA.ofRel}]->(c)
+         MATCH (m:${L.subjectLabel} {accession: r.accession})
+         MATCH (c:${L.objectLabel} {cusip: r.cusip})
+         MERGE (m)-[:${L.holdsType}]->
+               (p:${L.positionLabel} {accession: r.accession, cusip: r.cusip})
+         MERGE (p)-[:${L.ofType}]->(c)
          ON CREATE SET p.value_usd = r.valueUsd, p.shares = r.shares,
                        p.put_call = r.putCall
          ON MATCH SET p.value_usd = p.value_usd + r.valueUsd,
@@ -320,17 +333,17 @@ export async function* loadGraph(
   setMemStore({ datasetId: ds.id, holdings, managers, loadedAt: Date.now() });
 
   const [{ companies = 0 } = {}] = (await runCypher(
-    `MATCH (c:${GRAPH_SCHEMA.companyLabel}) RETURN count(c) AS companies`,
+    `MATCH (c:${L.objectLabel}) RETURN count(c) AS companies`,
   )) as { companies?: number }[];
-  // crowding 속성이 실제 부여된 Company 수(UI 보고용)
+  // crowding 속성이 실제 부여된 대상 노드 수(UI 보고용)
   const [{ enriched = 0 } = {}] = (await runCypher(
-    `MATCH (c:${GRAPH_SCHEMA.companyLabel})
+    `MATCH (c:${L.objectLabel})
      WHERE c.holder_count IS NOT NULL
      RETURN count(c) AS enriched`,
   )) as { enriched?: number }[];
   // 적재된 Position 노드 수(UI 보고용)
   const [{ positions = 0 } = {}] = (await runCypher(
-    `MATCH (p:${GRAPH_SCHEMA.positionLabel}) RETURN count(p) AS positions`,
+    `MATCH (p:${L.positionLabel}) RETURN count(p) AS positions`,
   )) as { positions?: number }[];
 
   yield {
@@ -343,30 +356,31 @@ export async function* loadGraph(
   };
 }
 
-/** 그래프 현황 (UI "이미 구축됨" 표시용). 없으면 0.
+/** 특정 데이터셋의 그래프 현황 (UI "이미 구축됨" 표시용). 없으면 null.
  *
- *  loadedDatasetId: 현재 Neo4j 에 적재된 데이터셋 id(MemStore 에서).
- *  Neo4j 는 단일 인스턴스라 한 번에 한 데이터셋만 적재된다 → UI 가
- *  "선택한 데이터셋 ≠ 적재된 데이터셋"을 감지해 재구축을 안내하기 위함
- *  (데이터셋 전환 시 build 안 누르면 이전 데이터가 남는 혼동 방지). */
-export async function graphStats(): Promise<{
+ *  데이터셋 공존(사용자 결정 2026-05-20): 여러 데이터셋이 라벨로 분리돼
+ *  한 Neo4j 에 동시 적재된다 → 데이터셋별로 자기 라벨 노드만 카운트.
+ *  @param datasetId 조회할 데이터셋(미지정=기본 SEC EDGAR).
+ */
+export async function graphStats(
+  datasetId: string = DEFAULT_DATASET_ID,
+): Promise<{
   managers: number;
   companies: number;
   owns: number;
   positions: number;
-  loadedDatasetId: string | null;
 } | null> {
+  const L = getDataset(datasetId).cypher;
   try {
     const driver = getNeo4jDriver();
     await driver.verifyConnectivity();
-    // 패턴을 한 MATCH 로 묶으면 카테시안 곱(64×11961×…)이
-    // 되어 count 가 폭발한다(실측 7,985만). CALL 서브쿼리로 각
-    // count 를 독립 산출 — 정확한 값.
+    // CALL 서브쿼리로 각 count 독립 산출(카테시안 곱 폭발 방지).
+    // 이 데이터셋 라벨만 — 공존하는 다른 데이터셋은 미집계.
     const [row] = (await runCypher(
-      `CALL { MATCH (m:${GRAPH_SCHEMA.managerLabel}) RETURN count(m) AS managers }
-       CALL { MATCH (c:${GRAPH_SCHEMA.companyLabel}) RETURN count(c) AS companies }
-       CALL { MATCH ()-[o:${GRAPH_SCHEMA.ownsRel}]->() RETURN count(o) AS owns }
-       CALL { MATCH (p:${GRAPH_SCHEMA.positionLabel}) RETURN count(p) AS positions }
+      `CALL { MATCH (m:${L.subjectLabel}) RETURN count(m) AS managers }
+       CALL { MATCH (c:${L.objectLabel}) RETURN count(c) AS companies }
+       CALL { MATCH ()-[o:${L.relType}]->() RETURN count(o) AS owns }
+       CALL { MATCH (p:${L.positionLabel}) RETURN count(p) AS positions }
        RETURN managers, companies, owns, positions`,
     )) as {
       managers: number;
@@ -375,10 +389,27 @@ export async function graphStats(): Promise<{
       positions: number;
     }[];
     if (!row || row.managers === 0) return null;
-    // 적재 데이터셋 식별 — MemStore(적재 시 setMemStore 가 datasetId 기록).
-    // 그래프는 있는데 MemStore 가 비면(서버 재시작 등) null(미상).
-    return { ...row, loadedDatasetId: getMemStore()?.datasetId ?? null };
+    return row;
   } catch {
     return null;
+  }
+}
+
+/** 현재 Neo4j 에 적재된 데이터셋 id 목록(공존 — UI 가 어느 데이터셋이
+ *  이미 구축됐는지 표시). 각 데이터셋 주체 라벨 노드 존재로 판정. */
+export async function loadedDatasetIds(): Promise<string[]> {
+  try {
+    const driver = getNeo4jDriver();
+    await driver.verifyConnectivity();
+    const loaded: string[] = [];
+    for (const ds of GRAPH_DATASETS) {
+      const [{ n = 0 } = {}] = (await runCypher(
+        `MATCH (m:${ds.cypher.subjectLabel}) RETURN count(m) AS n`,
+      )) as { n?: number }[];
+      if (n > 0) loaded.push(ds.id);
+    }
+    return loaded;
+  } catch {
+    return [];
   }
 }
