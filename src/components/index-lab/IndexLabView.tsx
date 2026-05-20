@@ -9,6 +9,37 @@ import {
   type ReactNode,
 } from "react";
 import { CorpusModal, type CorpusDocItem } from "./CorpusModal";
+import { pickFormat, extractTextFromFile } from "@/lib/files/extractText";
+
+/**
+ * 업로드 파일을 색인용 jsonl File 로 정규화한다.
+ *  - .jsonl: 그대로(한 줄 = 한 JSON 문서, 서버 parseJsonl 이 처리).
+ *  - pdf/docx/hwpx/txt 등: 클라이언트에서 텍스트 추출 → 문서 1건짜리
+ *    jsonl({doc_id,title,body}) 로 감싸 동일 업로드 경로로 보낸다
+ *    (서버 무변경 — search-lab/upload 가 .jsonl 만 받으므로).
+ */
+async function toIndexJsonlFile(file: File): Promise<File> {
+  if (/\.jsonl$/i.test(file.name)) return file;
+  const fmt = pickFormat(file.name);
+  if (fmt === null) {
+    throw new Error(
+      `지원하지 않는 파일 형식입니다: ${file.name} ` +
+        `(.jsonl / 텍스트 / .pdf / .docx / .hwpx 만 가능)`,
+    );
+  }
+  const text = await extractTextFromFile(file);
+  if (!text.trim()) {
+    throw new Error(
+      `${file.name} 에서 추출된 텍스트가 없습니다 ` +
+        `(빈 문서이거나 이미지 기반 PDF 일 수 있습니다).`,
+    );
+  }
+  const base = file.name.replace(/\.[^.]+$/, "");
+  const doc = { doc_id: base, title: base, body: text };
+  return new File([JSON.stringify(doc) + "\n"], `${base}.jsonl`, {
+    type: "application/x-ndjson",
+  });
+}
 
 /**
  * IndexLabView — 도메인 색인 실습 (검색 실습과 별도 메뉴).
@@ -274,10 +305,22 @@ export function IndexLabView(): ReactNode {
     if (uploading || !uploadFile) return;
     setUploading(true);
     setErr(null);
-    setIndexLog([`▶ 로컬 jsonl 업로드 색인 시작… (${uploadFile.name})`]);
+    setIndexLog([`▶ 로컬 문서 업로드 색인 시작… (${uploadFile.name})`]);
     try {
+      // jsonl 외 포맷(pdf/docx/hwpx/txt)은 클라이언트에서 텍스트 추출 →
+      // jsonl 1건으로 정규화. 추출 실패(암호화·이미지 PDF)는 여기서 throw.
+      let jsonlFile: File;
+      try {
+        if (!/\.jsonl$/i.test(uploadFile.name)) {
+          setIndexLog((l) => [...l, `· ${uploadFile.name} 텍스트 추출 중…`]);
+        }
+        jsonlFile = await toIndexJsonlFile(uploadFile);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : "파일 추출 실패");
+        return;
+      }
       const fd = new FormData();
-      fd.append("file", uploadFile);
+      fd.append("file", jsonlFile);
       if (uploadLabel.trim()) fd.append("label", uploadLabel.trim());
       // 위 ② 색인 파라미터를 그대로 적용(고정 도메인 색인과 동일 UX).
       fd.append("limit", String(limit));
@@ -567,12 +610,13 @@ export function IndexLabView(): ReactNode {
             위 ② 색인 파라미터(토크나이저·임베딩·청크·문서 수)가 함께
             적용된다. */}
         <div style={card}>
-          <div style={sectionTitle}>③ 내 jsonl 업로드 (선택)</div>
+          <div style={sectionTitle}>③ 내 문서 업로드 (선택)</div>
           <div style={fieldLabel}>
-            로컬 jsonl 파일(한 줄 = 한 JSON 문서, doc_id·title·body 권장)을
-            올리면 6번째 “내 데이터” 도메인으로 OpenSearch 에 색인되어,
-            검색 실습과 챗(인덱스검색 드롭다운)에서 바로 검색할 수 있습니다.
-            위 ② 색인 파라미터가 함께 적용됩니다.
+            로컬 문서(<strong>PDF · Word(.docx) · 한글(.hwpx) · 텍스트</strong>{" "}
+            또는 jsonl)를 올리면 6번째 “내 데이터” 도메인으로 OpenSearch 에
+            색인되어, 검색 실습과 챗(인덱스검색 드롭다운)에서 바로 검색할 수
+            있습니다. PDF·Word·한글은 본문 텍스트가 자동 추출되어 한 문서로
+            색인됩니다. 위 ② 색인 파라미터가 함께 적용됩니다.
           </div>
           <div
             style={{ display: "flex", flexDirection: "column", gap: 10 }}
@@ -583,13 +627,13 @@ export function IndexLabView(): ReactNode {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".jsonl"
+              accept=".jsonl,.pdf,.docx,.hwpx,.txt,.md,.csv,.json"
               disabled={uploading || indexing}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
                 setUploadFile(f);
                 if (f && !uploadLabel)
-                  setUploadLabel(f.name.replace(/\.jsonl$/i, ""));
+                  setUploadLabel(f.name.replace(/\.[^.]+$/, ""));
               }}
               style={{ display: "none" }}
             />
@@ -601,7 +645,7 @@ export function IndexLabView(): ReactNode {
                 className="cf-btn"
                 style={{ flexShrink: 0 }}
               >
-                📁 jsonl 파일 선택
+                📁 문서 파일 선택
               </button>
               <span
                 style={{

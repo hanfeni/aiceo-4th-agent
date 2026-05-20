@@ -8,6 +8,30 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { isXlsxFile, xlsxToCsv } from "@/lib/files/xlsxToCsv";
+
+/**
+ * 업로드 파일을 적재용 csv File 로 정규화한다.
+ *  - .csv: 그대로(서버 parseCsv 가 처리).
+ *  - .xlsx/.xls: 클라이언트에서 첫 시트를 CSV 로 변환해 동일 업로드
+ *    경로로 보낸다(서버 무변경 — sql-lab/upload 가 .csv 만 받으므로).
+ */
+async function toLoadCsvFile(file: File): Promise<File> {
+  if (/\.csv$/i.test(file.name)) return file;
+  if (isXlsxFile(file)) {
+    const csv = await xlsxToCsv(file);
+    if (!csv.trim()) {
+      throw new Error(
+        `${file.name} 의 첫 시트에 데이터가 없습니다.`,
+      );
+    }
+    const base = file.name.replace(/\.[^.]+$/, "");
+    return new File([csv], `${base}.csv`, { type: "text/csv" });
+  }
+  throw new Error(
+    `지원하지 않는 파일 형식입니다: ${file.name} (.csv / .xlsx 만 가능)`,
+  );
+}
 
 /**
  * DataLoadView — CSV → SQLite 데이터 적재 (Text-to-SQL 실습 준비).
@@ -196,10 +220,21 @@ export function DataLoadView(): ReactNode {
     if (uploading || !uploadFile) return;
     setUploading(true);
     setErr(null);
-    setLog([`▶ 로컬 CSV 업로드 적재 시작… (${uploadFile.name})`]);
+    setLog([`▶ 로컬 파일 업로드 적재 시작… (${uploadFile.name})`]);
     try {
+      // 엑셀(.xlsx/.xls)은 클라이언트에서 첫 시트를 CSV 로 변환 후 전송.
+      let csvFile: File;
+      try {
+        if (isXlsxFile(uploadFile)) {
+          setLog((l) => [...l, `· ${uploadFile.name} 첫 시트 → CSV 변환 중…`]);
+        }
+        csvFile = await toLoadCsvFile(uploadFile);
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : "파일 변환 실패");
+        return;
+      }
       const fd = new FormData();
-      fd.append("file", uploadFile);
+      fd.append("file", csvFile);
       if (uploadLabel.trim()) fd.append("label", uploadLabel.trim());
       fd.append("limit", String(limit));
       const res = await fetch("/api/sql-lab/upload", {
@@ -415,11 +450,12 @@ export function DataLoadView(): ReactNode {
             고정 5개와 별개로 사용자가 직접 고른 CSV 를 적재한다.
             적재 후 챗 드롭다운(데이터조회)에 "내 데이터" 가 등장. */}
         <div style={card}>
-          <div style={sectionTitle}>③ 내 CSV 업로드 (선택)</div>
+          <div style={sectionTitle}>③ 내 표 데이터 업로드 (선택)</div>
           <div style={fieldLabel}>
-            로컬 CSV 파일을 올리면 6번째 “내 데이터” 도메인으로 적재되어,
-            검색 실습과 챗(데이터조회 드롭다운)에서 바로 질의할 수
-            있습니다. 위 ② 적재 행수 상한이 함께 적용됩니다.
+            로컬 <strong>CSV 또는 엑셀(.xlsx)</strong> 파일을 올리면 6번째
+            “내 데이터” 도메인으로 적재되어, 검색 실습과 챗(데이터조회
+            드롭다운)에서 바로 질의할 수 있습니다. 엑셀은 첫 시트가 CSV 로
+            변환되어 적재됩니다. 위 ② 적재 행수 상한이 함께 적용됩니다.
           </div>
           <div
             style={{
@@ -433,13 +469,13 @@ export function DataLoadView(): ReactNode {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv"
+              accept=".csv,.xlsx,.xls"
               disabled={uploading}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
                 setUploadFile(f);
                 if (f && !uploadLabel)
-                  setUploadLabel(f.name.replace(/\.csv$/i, ""));
+                  setUploadLabel(f.name.replace(/\.[^.]+$/, ""));
               }}
               style={{ display: "none" }}
             />
@@ -451,7 +487,7 @@ export function DataLoadView(): ReactNode {
                 className="cf-btn"
                 style={{ flexShrink: 0 }}
               >
-                📁 csv 파일 선택
+                📁 CSV·엑셀 파일 선택
               </button>
               <span
                 style={{

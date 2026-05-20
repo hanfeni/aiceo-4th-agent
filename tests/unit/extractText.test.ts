@@ -30,14 +30,18 @@ describe("pickFormat — 확장자 → 포맷 분기 (순수)", () => {
     ["spec.docx", "docx"],
     ["PAPER.PDF", "pdf"],
     ["Doc.DOCX", "docx"],
+    ["report.hwpx", "hwpx"],
+    ["Report.HWPX", "hwpx"],
   ])("'%s' → %s", (name, expected) => {
     expect(pickFormat(name)).toBe(expected);
   });
 
-  it("미지원 확장자 → null (xls/png/zip 등)", () => {
+  it("미지원 확장자 → null (xls/png/zip/hwp 등)", () => {
     expect(pickFormat("sheet.xls")).toBeNull();
     expect(pickFormat("photo.png")).toBeNull();
     expect(pickFormat("archive.zip")).toBeNull();
+    // 구버전 한글(.hwp 바이너리 OLE)은 미지원 — .hwpx 만 처리.
+    expect(pickFormat("old.hwp")).toBeNull();
     expect(pickFormat("noext")).toBeNull();
   });
 });
@@ -47,6 +51,7 @@ describe("isSupportedFile — 지원 여부 판정", () => {
     expect(isSupportedFile(textFile("a.txt", "x"))).toBe(true);
     expect(isSupportedFile(textFile("a.pdf", "x"))).toBe(true);
     expect(isSupportedFile(textFile("a.docx", "x"))).toBe(true);
+    expect(isSupportedFile(textFile("a.hwpx", "x"))).toBe(true);
     expect(isSupportedFile(textFile("a.png", "x"))).toBe(false);
   });
 
@@ -82,5 +87,61 @@ describe("extractTextFromFile — 텍스트 계열 (FileReader jsdom 실동작)"
     await expect(
       extractTextFromFile(textFile("sheet.xls", "x")),
     ).rejects.toThrow(/지원하지 않는|unsupported/i);
+  });
+});
+
+describe("extractTextFromFile — HWPX (jszip 실동작)", () => {
+  /** 최소 HWPX(ZIP) 파일 생성 — Contents/section*.xml 에 <hp:t> 본문. */
+  async function hwpxFile(
+    name: string,
+    sections: string[],
+  ): Promise<File> {
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    sections.forEach((xml, i) => {
+      zip.file(`Contents/section${i}.xml`, xml);
+    });
+    const blob = await zip.generateAsync({ type: "arraybuffer" });
+    return new File([blob], name, {
+      type: "application/octet-stream",
+    });
+  }
+
+  it("section XML 의 <hp:t> 텍스트만 줄바꿈으로 모은다", async () => {
+    const file = await hwpxFile("doc.hwpx", [
+      `<hs:sec xmlns:hp="x"><hp:p><hp:t>첫째 문단</hp:t></hp:p>` +
+        `<hp:p><hp:t>둘째 문단</hp:t></hp:p></hs:sec>`,
+    ]);
+    const out = await extractTextFromFile(file);
+    expect(out).toBe("첫째 문단\n둘째 문단");
+  });
+
+  it("여러 section 을 번호 순서대로 이어 붙인다", async () => {
+    const file = await hwpxFile("multi.hwpx", [
+      `<hp:p><hp:t>섹션0</hp:t></hp:p>`,
+      `<hp:p><hp:t>섹션1</hp:t></hp:p>`,
+    ]);
+    const out = await extractTextFromFile(file);
+    expect(out).toBe("섹션0\n섹션1");
+  });
+
+  it("XML 엔티티(&amp; &lt; 등)를 디코드한다", async () => {
+    const file = await hwpxFile("ent.hwpx", [
+      `<hp:p><hp:t>A &amp; B &lt;tag&gt;</hp:t></hp:p>`,
+    ]);
+    expect(await extractTextFromFile(file)).toBe("A & B <tag>");
+  });
+
+  it("본문 section 이 없으면 명확한 Error", async () => {
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    zip.file("mimetype", "application/hwp+zip");
+    const blob = await zip.generateAsync({ type: "arraybuffer" });
+    const file = new File([blob], "empty.hwpx", {
+      type: "application/octet-stream",
+    });
+    await expect(extractTextFromFile(file)).rejects.toThrow(
+      /section|본문/i,
+    );
   });
 });
