@@ -25,3 +25,9 @@ export const MAX_IMAGE_DATA_URL_LEN = 1_400_000;
  */
 export const IMAGE_DATA_URL_RE =
   /^data:image\/(png|jpe?g|webp|gif);base64,/;
+
+/**
+ * 로컬 CSV 업로드(동적 custom 도메인) 파일 크기 상한(바이트).
+ * 강의장 메모리·SQLite 적재 시간 보호 — 20MB(공공 CSV 샘플 충분).
+ */
+export const MAX_UPLOAD_CSV_BYTES = 20 * 1024 * 1024;

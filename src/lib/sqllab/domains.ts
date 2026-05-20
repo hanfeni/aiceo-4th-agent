@@ -18,9 +18,19 @@ export const SQL_DOMAINS = [
   "finance",
   "legal",
   "policy",
+  // 동적 커스텀 슬롯 — 사용자가 로컬 CSV 를 업로드하면 이 슬롯이
+  // 채워진다. 고정 5개와 달리 spec(csvFile/table/label)이 런타임에
+  // 결정되므로 SQL_DOMAIN_SPEC 의 정적 항목은 placeholder 이고
+  // 실제 값은 dynamicDomains.ts 의 레지스트리에서 getSqlDomainSpec
+  // 이 덮어쓴다. as const 제약(런타임 추가 불가) 회피 — 슬롯은 1개로
+  // 고정하되 내용만 동적(가장 신속한 단일 슬롯 방식).
+  "custom",
 ] as const;
 
 export type SqlDomain = (typeof SQL_DOMAINS)[number];
+
+/** 동적 커스텀 도메인 식별자(단일 슬롯). */
+export const CUSTOM_SQL_DOMAIN = "custom" as const satisfies SqlDomain;
 
 export interface SqlDomainSpec {
   /** poc/data/<dir>/ 하위 구조화 CSV 파일명 */
@@ -83,6 +93,18 @@ export const SQL_DOMAIN_SPEC: Record<SqlDomain, SqlDomainSpec> = {
     label: "정책 / 거버넌스",
     audience: "공공·정책",
     sampleQuestion: "기관별 예산 총액을 큰 순으로 보여줘",
+  },
+  // custom — placeholder. 실제 값은 업로드 시 동적 레지스트리에
+  // 등록되고 getSqlDomainSpec 이 이 placeholder 대신 반환한다.
+  // table/dbFile prefix(sqllab_)는 보안 가드(임의 테이블 차단)를
+  // 위해 동적 등록 시에도 강제된다(dynamicDomains.ts).
+  custom: {
+    csvFile: "custom.csv",
+    table: "sqllab_custom",
+    dbFile: "custom.db",
+    label: "내 데이터 (CSV 업로드)",
+    audience: "사용자 업로드",
+    sampleQuestion: "업로드한 데이터에서 무엇이든 물어보세요.",
   },
 };
 

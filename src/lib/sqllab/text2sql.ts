@@ -19,7 +19,8 @@ import { createModel, type ModelEnv } from "@/lib/agent/harness/model";
 import { extractContentText } from "@/lib/agent/utils/chunkFilter";
 import { getDb } from "./db";
 import { getSchema } from "./load";
-import { SQL_DOMAIN_SPEC, type SqlDomain } from "./domains";
+import { type SqlDomain } from "./domains";
+import { getSqlDomainSpec } from "./dynamicDomains";
 
 export interface Text2SqlParams {
   domain: SqlDomain;
@@ -132,7 +133,7 @@ export async function* runText2Sql(
   yield {
     type: "stage_io",
     step: "schema",
-    input: `[도메인] ${SQL_DOMAIN_SPEC[params.domain].label}`,
+    input: `[도메인] ${getSqlDomainSpec(params.domain).label}`,
     output: schemaPrompt,
   };
 

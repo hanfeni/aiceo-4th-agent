@@ -11,9 +11,14 @@ import { z } from "zod";
 import { tableInfo, dropTable } from "@/lib/sqllab/db";
 import {
   SQL_DOMAINS,
-  SQL_DOMAIN_SPEC,
+  CUSTOM_SQL_DOMAIN,
   isSqlDomain,
 } from "@/lib/sqllab/domains";
+import {
+  getSqlDomainSpec,
+  isCustomRegistered,
+  unregisterCustomDomain,
+} from "@/lib/sqllab/dynamicDomains";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,12 +32,18 @@ function json(data: unknown, status: number): Response {
 
 export async function GET(): Promise<Response> {
   try {
-    const tables = SQL_DOMAINS.map((d) => {
+    // custom 슬롯은 등록(업로드 적재 완료)된 경우에만 목록에 노출
+    // (미등록 placeholder 가 드롭다운/현황에 새지 않게).
+    const domains = SQL_DOMAINS.filter(
+      (d) => d !== CUSTOM_SQL_DOMAIN || isCustomRegistered(),
+    );
+    const tables = domains.map((d) => {
+      const spec = getSqlDomainSpec(d);
       const info = tableInfo(d);
       return {
         domain: d,
-        label: SQL_DOMAIN_SPEC[d].label,
-        table: SQL_DOMAIN_SPEC[d].table,
+        label: spec.label,
+        table: spec.table,
         loaded: info !== null,
         rowCount: info?.rowCount ?? 0,
       };
@@ -66,6 +77,8 @@ export async function DELETE(req: Request): Promise<Response> {
   }
   try {
     dropTable(domain);
+    // custom 초기화는 동적 메타도 함께 해제(드롭다운에서 사라지게).
+    if (domain === CUSTOM_SQL_DOMAIN) unregisterCustomDomain();
     return json({ domain, dropped: true }, 200);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

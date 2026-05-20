@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -108,6 +109,11 @@ export function DataLoadView(): ReactNode {
   const [showPreview, setShowPreview] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // 로컬 CSV 업로드(동적 custom 도메인) 상태.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadLabel, setUploadLabel] = useState<string>("");
+  const [uploading, setUploading] = useState(false);
 
   const loadTables = useCallback(async () => {
     try {
@@ -183,6 +189,66 @@ export function DataLoadView(): ReactNode {
       setErr(e instanceof Error ? e.message : "네트워크 오류");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function runUpload(): Promise<void> {
+    if (uploading || !uploadFile) return;
+    setUploading(true);
+    setErr(null);
+    setLog([`▶ 로컬 CSV 업로드 적재 시작… (${uploadFile.name})`]);
+    try {
+      const fd = new FormData();
+      fd.append("file", uploadFile);
+      if (uploadLabel.trim()) fd.append("label", uploadLabel.trim());
+      fd.append("limit", String(limit));
+      const res = await fetch("/api/sql-lab/upload", {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok || !res.body) {
+        const d = await res.json().catch(() => ({}));
+        setErr(d.error ?? `업로드 실패 (HTTP ${res.status})`);
+        return;
+      }
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const frames = buf.split("\n\n");
+        buf = frames.pop() ?? "";
+        for (const f of frames) {
+          const line = f.trim();
+          if (!line.startsWith("data:")) continue;
+          const ev = JSON.parse(line.slice(5).trim());
+          if (ev.type === "start")
+            setLog((l) => [...l, `· ${ev.message ?? "업로드 파일 파싱"}`]);
+          else if (ev.type === "fetched")
+            setLog((l) => [
+              ...l,
+              `· ${ev.total.toLocaleString()}행 파싱 — 테이블 생성`,
+            ]);
+          else if (ev.type === "progress")
+            setLog((l) => [
+              ...l.slice(0, -1).filter((x) => !x.startsWith("  ")),
+              `  ${ev.loaded.toLocaleString()}/${ev.total.toLocaleString()} 적재 중…`,
+            ]);
+          else if (ev.type === "done")
+            setLog((l) => [
+              ...l,
+              `✓ 완료: ${ev.loaded.toLocaleString()}행 → 테이블 ${ev.table} (챗 드롭다운에 "내 데이터" 등장)`,
+            ]);
+          else if (ev.type === "error") setErr(ev.message);
+        }
+      }
+      await loadTables();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "네트워크 오류");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -343,6 +409,66 @@ export function DataLoadView(): ReactNode {
           >
             {loading ? "적재 중…" : "이 도메인 적재 시작"}
           </button>
+        </div>
+
+        {/* 로컬 CSV 업로드 — 동적 "내 데이터(custom)" 도메인 추가.
+            고정 5개와 별개로 사용자가 직접 고른 CSV 를 적재한다.
+            적재 후 챗 드롭다운(데이터조회)에 "내 데이터" 가 등장. */}
+        <div style={card}>
+          <div style={sectionTitle}>③ 내 CSV 업로드 (선택)</div>
+          <div style={fieldLabel}>
+            로컬 CSV 파일을 올리면 6번째 “내 데이터” 도메인으로 적재되어,
+            검색 실습과 챗(데이터조회 드롭다운)에서 바로 질의할 수
+            있습니다. 위 ② 적재 행수 상한이 함께 적용됩니다.
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              disabled={uploading}
+              onChange={(e) => {
+                const f = e.target.files?.[0] ?? null;
+                setUploadFile(f);
+                if (f && !uploadLabel)
+                  setUploadLabel(f.name.replace(/\.csv$/i, ""));
+              }}
+              style={{ fontSize: 12, color: "var(--text-default)" }}
+            />
+            <input
+              type="text"
+              value={uploadLabel}
+              disabled={uploading}
+              placeholder="표시 라벨 (예: 우리 회사 매출, 미입력 시 파일명)"
+              maxLength={60}
+              onChange={(e) => setUploadLabel(e.target.value)}
+              style={{
+                fontSize: 12,
+                padding: "6px 10px",
+                borderRadius: "var(--r-md, 8px)",
+                border: "1px solid var(--t-neutral-8)",
+                background: "var(--surface-default)",
+                color: "var(--text-default)",
+                maxWidth: 360,
+              }}
+            />
+          </div>
+          <div style={btnRow}>
+            <button
+              type="button"
+              onClick={runUpload}
+              disabled={uploading || !uploadFile}
+              className="cf-btn cf-btn--primary"
+            >
+              {uploading ? "업로드 적재 중…" : "이 CSV 업로드 적재"}
+            </button>
+          </div>
         </div>
 
         {err && (

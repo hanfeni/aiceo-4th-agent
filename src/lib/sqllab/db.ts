@@ -14,7 +14,8 @@ import Database from "better-sqlite3";
 import type { Database as DB } from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { SQL_DOMAIN_SPEC, type SqlDomain } from "./domains";
+import { type SqlDomain } from "./domains";
+import { getSqlDomainSpec } from "./dynamicDomains";
 
 const SQLLAB_DIR = join(process.cwd(), ".data", "sqllab");
 
@@ -36,7 +37,7 @@ export function getDb(domain: SqlDomain): DB {
   if (cached && cached.open) return cached;
 
   mkdirSync(SQLLAB_DIR, { recursive: true });
-  const file = join(SQLLAB_DIR, SQL_DOMAIN_SPEC[domain].dbFile);
+  const file = join(SQLLAB_DIR, getSqlDomainSpec(domain).dbFile);
   const db = new Database(file);
   // WAL: 적재(쓰기) 중 다른 도메인 조회(읽기) 동시성 — 강의장
   // 한 노트북 내 적재↔질의 병행 안전.
@@ -50,7 +51,7 @@ export function tableInfo(
   domain: SqlDomain,
 ): { table: string; rowCount: number } | null {
   const db = getDb(domain);
-  const { table } = SQL_DOMAIN_SPEC[domain];
+  const { table } = getSqlDomainSpec(domain);
   const exists = db
     .prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
@@ -66,6 +67,6 @@ export function tableInfo(
 /** 적재 테이블 삭제(실습 초기화). prefix 테이블만 — 안전. */
 export function dropTable(domain: SqlDomain): void {
   const db = getDb(domain);
-  const { table } = SQL_DOMAIN_SPEC[domain];
+  const { table } = getSqlDomainSpec(domain);
   db.prepare(`DROP TABLE IF EXISTS "${table}"`).run();
 }
