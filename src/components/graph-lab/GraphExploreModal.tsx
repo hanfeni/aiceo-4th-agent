@@ -149,10 +149,12 @@ function layout(
   return { nodes, edges };
 }
 
+// blur overlay — 시안 B/ConfirmModal 톤 정합(backdrop blur).
 const overlay: CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "rgba(0,0,0,.45)",
+  background: "rgba(15,23,42,.45)",
+  backdropFilter: "blur(4px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -412,7 +414,10 @@ export function GraphExploreModal({
         onClick={(e) => e.stopPropagation()}
         style={{
           background: "var(--surface-default)",
-          borderRadius: 12,
+          border: "1px solid var(--t-neutral-8)",
+          borderRadius: 14,
+          boxShadow:
+            "0 24px 64px rgba(15,23,42,.22), 0 4px 16px rgba(15,23,42,.08)",
           width: "min(960px, 92vw)",
           height: "min(680px, 88vh)",
           display: "flex",

@@ -4,11 +4,12 @@ import {
   useState,
   useEffect,
   useCallback,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 import { ComparePanels, type PanelState, emptyPanels } from "./ComparePanels";
 import { GraphExploreModal } from "./GraphExploreModal";
+import { StatusPill, Metric, Terminal } from "@/components/common/LabWorkbench";
+import { ConfirmModal } from "@/components/common/ConfirmModal";
 import { GRAPH_DATASETS } from "@/lib/graphlab/config";
 import type { LoadedDataset } from "@/lib/graphlab/load";
 
@@ -22,7 +23,9 @@ import type { LoadedDataset } from "@/lib/graphlab/load";
  *
  * 강의 메시지(사용자 결정): "GraphRAG 이 RAG·Text-to-SQL 보다
  * 우월함을 설명하기 좋은 케이스" — 같은 질문, 3방식, 결과가 갈림.
- * 디자인: cf-* 클래스(검색·라벨링 그룹 = blue). index-lab 정합.
+ * 디자인: 실험(B) 워크벤치 — 헤더 eyebrow + il-bench(좌 320px 설정 ·
+ * 우 1fr 비교판). index-lab/meta-lab 과 동일 톤. CSS 는 globals.css
+ * 의 il-/cf- 클래스 재사용(이 파일은 CSS 정의 없음).
  */
 
 interface GraphStats {
@@ -36,20 +39,6 @@ interface GraphStats {
 // (activeDataset.demoQueries). 라벨 끝 표식(🟦=GraphRAG 압승 ·
 // 🟨=SQL도 가능 · ⚪=RAG 한계)으로 학생이 3패널 결과 전 가설을
 // 세우게 한다(교육 설계).
-
-const card: CSSProperties = {
-  background: "var(--surface-default)",
-  border: "1px solid var(--t-neutral-8)",
-  borderRadius: "var(--r-lg)",
-  padding: 20,
-  marginBottom: 16,
-};
-const sectionTitle: CSSProperties = {
-  fontSize: 13,
-  fontWeight: 700,
-  color: "var(--text-default)",
-  marginBottom: 10,
-};
 
 export function GraphLabView(): ReactNode {
   const [stats, setStats] = useState<GraphStats | null>(null);
@@ -285,400 +274,477 @@ export function GraphLabView(): ReactNode {
   // 삭제 확인 모달에 표시할 데이터셋 라벨.
   const confirmLabel =
     GRAPH_DATASETS.find((d) => d.id === confirmDel)?.label ?? confirmDel;
+  // 워크벤치 상태칩(좌측 구축 카드 + 우측 비교 카드). build/compare 진행
+  // → run, 둘 다 idle 이며 적재됨 → done, 아니면 idle.
+  const benchStatus = building || comparing
+    ? "running"
+    : built
+      ? "done"
+      : "idle";
 
   return (
     <div
       className="thin-scroll"
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px" }}>
-        <h1
-          style={{
-            fontSize: 18,
-            fontWeight: 800,
-            color: "var(--text-default)",
-            marginBottom: 4,
-          }}
-        >
-          온톨로지 — GraphRAG vs RAG vs Text-to-SQL
-        </h1>
-        <p
-          style={{
-            fontSize: 12.5,
-            color: "var(--text-subtle)",
-            marginBottom: 20,
-          }}
-        >
-          유명 온톨로지 케이스 데이터셋을 Neo4j 그래프로 적재하고,{" "}
-          <strong>같은 질문</strong>을 세 방식으로 돌려 결과·한계를
-          나란히 비교합니다. {activeDataset.slots.subject}-
-          {activeDataset.slots.object} {activeDataset.slots.relation}{" "}
-          관계는 멀티홉 추론이라 GraphRAG 우월성이 선명히 드러납니다.
-        </p>
-
-        {/* 데이터셋 선택 — 같은 비교 흐름에 데이터 소스만 교체 */}
-        <div style={card}>
-          <div style={sectionTitle}>데이터셋 선택</div>
-          <div
+      <div
+        style={{ maxWidth: 1320, margin: "0 auto", padding: "28px 24px 64px" }}
+      >
+        {/* 헤더(시안 LabPage) — accent 칩 + 타이틀 + 서브타이틀 */}
+        <div style={{ marginBottom: 24 }}>
+          <span
             style={{
-              fontSize: 11.5,
-              color: "var(--text-subtle)",
-              marginBottom: 10,
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: "0.08em",
+              color: "var(--blue-600)",
+              textTransform: "uppercase",
+              background: "var(--lab-blue-bg-2)",
+              padding: "3px 8px",
+              borderRadius: 4,
             }}
           >
-            {activeDataset.blurb}
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {GRAPH_DATASETS.map((d) => {
-              const on = d.id === datasetId;
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => {
-                    if (building || comparing) return;
-                    setDatasetId(d.id);
-                    // 데이터셋 바꾸면 기존 비교 패널·로그 초기화
-                    // (다른 데이터 적재 전까지 stale 결과 방지).
-                    setPanels(emptyPanels());
-                    setQuery("");
-                  }}
-                  disabled={building || comparing}
-                  title={d.blurb}
-                  style={{
-                    padding: "8px 14px",
-                    borderRadius: 8,
-                    border: on
-                      ? "1.5px solid var(--blue-500)"
-                      : "1px solid var(--t-neutral-8)",
-                    background: on
-                      ? "color-mix(in srgb, var(--blue-500) 10%, transparent)"
-                      : "var(--surface-default)",
-                    color: on ? "var(--blue-500)" : "var(--text-default)",
-                    fontSize: 12.5,
-                    fontWeight: on ? 700 : 500,
-                    cursor: building || comparing ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {d.label}
-                </button>
-              );
-            })}
-          </div>
-          {/* 적재 상태 안내(공존) — 여러 데이터셋이 라벨 분리로 동시
-              적재 가능. 선택 데이터셋이 적재됐는지/안 됐는지만 표시. */}
-          <div
+            ⑤ 검색 · 라벨링 실습
+          </span>
+          <h1
             style={{
-              marginTop: 12,
-              padding: "10px 12px",
-              borderRadius: 8,
-              background: isLoaded
-                ? "color-mix(in srgb, var(--t-success-9, #22c55e) 10%, transparent)"
-                : "color-mix(in srgb, var(--t-warning-9, #f59e0b) 12%, transparent)",
-              border: isLoaded
-                ? "1px solid var(--t-success-9, #22c55e)"
-                : "1px solid var(--t-warning-9, #f59e0b)",
-              fontSize: 12,
+              fontSize: 22,
+              fontWeight: 800,
               color: "var(--text-default)",
-              lineHeight: 1.5,
+              margin: "8px 0 0",
+              letterSpacing: "-0.015em",
             }}
           >
-            {isLoaded ? (
-              <>
-                ✓ <strong>{activeDataset.label}</strong> 데이터가 적재돼
-                있습니다. 바로 ② 비교·탐색이 가능합니다.
-                {loaded.length > 1 && (
-                  <>
-                    {" "}
-                    (현재 {loaded.length}개 데이터셋이 함께 적재됨 — 데이터셋을
-                    바꿔도 재구축 없이 전환됩니다.)
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                ⚠ <strong>{activeDataset.label}</strong> 데이터가 아직
-                적재되지 않았습니다. 아래 <strong>① 그래프 구축</strong>을
-                실행하세요. (다른 데이터셋과 별도로 공존 적재됩니다.)
-              </>
-            )}
-          </div>
+            온톨로지 워크벤치 — GraphRAG vs RAG vs Text-to-SQL
+          </h1>
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-subtle)",
+              margin: "6px 0 0",
+              lineHeight: 1.55,
+              maxWidth: 720,
+            }}
+          >
+            좌측에서 데이터셋·질의를 고르고 워크벤치에서{" "}
+            <strong>같은 질문</strong>을 세 방식으로 동시에 돌립니다.{" "}
+            {activeDataset.slots.subject}-{activeDataset.slots.object}{" "}
+            {activeDataset.slots.relation} 관계는 멀티홉 추론이라 GraphRAG
+            우월성이 선명히 드러납니다.
+          </p>
         </div>
 
-        {/* ① 그래프 구축 */}
-        <div style={card}>
-          <div style={sectionTitle}>
-            ① 그래프 구축 ({activeDataset.label} → Neo4j)
-          </div>
-          <div
-            style={{
-              fontSize: 11.5,
-              color: "var(--text-subtle)",
-              marginBottom: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            {built ? (
-              <span style={{ color: "var(--cf-soft-text)" }}>
-                ✓ 구축됨 — 기관{" "}
-                <strong>{stats.managers}</strong> · 종목{" "}
-                <strong>{stats.companies.toLocaleString()}</strong> ·
-                보유엣지{" "}
-                <strong>{stats.owns.toLocaleString()}</strong>
-                {stats.positions > 0 && (
-                  <>
-                    {" "}
-                    · 포지션노드{" "}
-                    <strong>{stats.positions.toLocaleString()}</strong>
-                  </>
-                )}
-              </span>
-            ) : (
-              <span>아직 그래프가 없습니다. 버튼을 눌러 구축하세요.</span>
-            )}
-          </div>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 8,
-            }}
-          >
-            {built && (
+        <div className="il-bench" style={{ gridTemplateColumns: "320px 1fr" }}>
+          {/* ─── 좌측: 설정 패널 (sticky) ─── */}
+          <div className="il-bench-aside">
+            {/* 데이터셋 + 그래프 액션 카드 */}
+            <div className="il-card il-config">
+              <div className="il-config-title">데이터셋</div>
+              <div
+                className="il-flabel-hint"
+                style={{ marginBottom: 10 }}
+              >
+                {activeDataset.blurb}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  marginBottom: 14,
+                }}
+              >
+                {GRAPH_DATASETS.map((d) => {
+                  const on = d.id === datasetId;
+                  // 이 데이터셋이 적재돼 있는지(공존 — 초록 dot 표식).
+                  const dsLoaded = loaded.some((l) => l.id === d.id);
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className="il-domain-btn"
+                      aria-pressed={on}
+                      onClick={() => {
+                        if (building || comparing) return;
+                        setDatasetId(d.id);
+                        // 데이터셋 바꾸면 기존 비교 패널·로그 초기화
+                        // (다른 데이터 적재 전까지 stale 결과 방지).
+                        setPanels(emptyPanels());
+                        setQuery("");
+                      }}
+                      disabled={building || comparing}
+                      title={d.blurb}
+                    >
+                      <span
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {d.label.split(" (")[0]}
+                      </span>
+                      {dsLoaded && (
+                        <span
+                          title="적재됨"
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: 99,
+                            background: "var(--green-400, #22c55e)",
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* DB 구조 보기 · 그래프 탐색 — 둘 다 GraphExploreModal 진입
+                  (상단 스키마 도해 + 하단 인터랙티브 탐색이 한 모달에). */}
               <button
                 type="button"
-                onClick={() => setShowExplore(true)}
-                disabled={building || deleting}
                 className="cf-btn"
-                title="Neo4j 그래프 구조를 인터랙티브로 탐색"
+                style={{ width: "100%", justifyContent: "center" }}
+                onClick={() => setShowExplore(true)}
+                disabled={!built || building || deleting}
+                title={
+                  built
+                    ? "Neo4j 스키마 + 그래프 구조를 인터랙티브로 탐색"
+                    : "그래프를 먼저 구축하세요"
+                }
               >
                 DB 구조 보기
               </button>
-            )}
-            {built && (
               <button
                 type="button"
-                onClick={() => setConfirmDel(datasetId)}
-                disabled={building || deleting}
                 className="cf-btn"
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  marginTop: 6,
+                }}
+                onClick={() => setShowExplore(true)}
+                disabled={!built || building || deleting}
+                title={
+                  built ? "노드를 클릭해 멀티홉 경로를 펼침" : "그래프를 먼저 구축하세요"
+                }
               >
-                {deleting ? "삭제 중…" : "그래프 삭제"}
+                그래프 탐색
               </button>
-            )}
-            <button
-              type="button"
-              onClick={runBuild}
-              disabled={building || deleting}
-              className="cf-btn cf-btn--primary"
-            >
-              {building
-                ? "구축 중…"
-                : built
-                  ? "그래프 재구축"
-                  : "그래프 구축"}
-            </button>
-          </div>
-          {buildLog.length > 0 && (
-            <pre
-              style={{
-                marginTop: 14,
-                marginBottom: 0,
-                padding: "10px 12px",
-                fontSize: 11,
-                lineHeight: 1.55,
-                color: "var(--text-subtle)",
-                background: "var(--cf-soft-bg)",
-                borderRadius: "var(--r-md, 8px)",
-                whiteSpace: "pre-wrap",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                maxHeight: 220,
-                overflowY: "auto",
-              }}
-            >
-              {buildLog.join("\n")}
-            </pre>
-          )}
-        </div>
-
-        {/* ② 3방식 비교 */}
-        <div style={card}>
-          <div style={sectionTitle}>② 같은 질문, 3방식 비교</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-            {activeDataset.demoQueries.map((d) => (
-              <button
-                key={d.label}
-                type="button"
-                className="cf-pill"
-                onClick={() => setQuery(d.query)}
-                disabled={comparing}
-                title={d.query}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
-          <textarea
-            className="cf-field"
-            style={{ width: "100%", minHeight: 64, resize: "vertical" }}
-            placeholder="질문을 입력하거나 위 프리셋을 누르세요 (예: MS와 엔비디아를 둘 다 보유한 기관은?)"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            disabled={comparing}
-          />
-          <div
-            style={{
-              marginTop: 10,
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            {!built && (
-              <span style={{ fontSize: 11.5, color: "var(--t-danger-11, #e5484d)" }}>
-                먼저 그래프를 구축하세요
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => runCompare(query)}
-              disabled={comparing || !built || !query.trim()}
-              className="cf-btn cf-btn--primary"
-            >
-              {comparing ? "비교 중…" : "3방식 비교 실행"}
-            </button>
-          </div>
-        </div>
-
-        {err && (
-          <div
-            style={{
-              ...card,
-              borderColor: "var(--t-danger-8, #e5484d)",
-              color: "var(--t-danger-11, #e5484d)",
-              fontSize: 12.5,
-            }}
-          >
-            ⚠️ {err}
-          </div>
-        )}
-
-        <ComparePanels panels={panels} />
-
-        {/* 적재된 데이터셋 (실습용) — 공존 목록 + 개별 삭제.
-            다른 메뉴(색인된 인덱스·적재된 테이블)와 동형 패턴. */}
-        <div style={card}>
-          <div style={sectionTitle}>적재된 데이터셋 (실습용)</div>
-          {loaded.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
-              아직 적재된 데이터셋이 없습니다. 위에서 데이터셋을 골라
-              ① 그래프 구축을 실행하세요.
             </div>
-          ) : (
-            <div
-              style={{ display: "flex", flexDirection: "column", gap: 8 }}
-            >
-              {loaded.map((l) => {
-                const ds = GRAPH_DATASETS.find((d) => d.id === l.id);
-                const label = ds?.label ?? l.id;
-                return (
-                  <div
-                    key={l.id}
+
+            {/* ① 그래프 구축 카드 */}
+            <div className="il-card il-config" style={{ marginTop: 12 }}>
+              <div className="il-config-title">
+                ① 그래프 구축 → Neo4j
+              </div>
+              {/* 그래프 통계(Metric 타일) — 적재됐을 때만 수치, 아니면 안내. */}
+              {built ? (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 8,
+                    marginBottom: 12,
+                  }}
+                >
+                  <Metric
+                    label={activeDataset.slots.subject}
+                    value={stats.managers.toLocaleString()}
+                  />
+                  <Metric
+                    label={activeDataset.slots.object}
+                    value={stats.companies.toLocaleString()}
+                  />
+                  <Metric
+                    label={`${activeDataset.slots.relation}엣지`}
+                    value={stats.owns.toLocaleString()}
+                    highlight
+                  />
+                  <Metric
+                    label="포지션노드"
+                    value={
+                      stats.positions > 0
+                        ? stats.positions.toLocaleString()
+                        : "—"
+                    }
+                  />
+                </div>
+              ) : (
+                <div
+                  className="il-flabel-hint"
+                  style={{ marginBottom: 12 }}
+                >
+                  아직 그래프가 없습니다. 아래 버튼으로 {activeDataset.label}{" "}
+                  서브셋을 Neo4j 에 적재하세요. (다른 데이터셋과 공존 적재)
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={runBuild}
+                disabled={building || deleting}
+                className="cf-btn cf-btn--primary"
+                style={{ width: "100%", justifyContent: "center" }}
+              >
+                {building
+                  ? "구축 중…"
+                  : built
+                    ? "그래프 재구축"
+                    : "그래프 구축"}
+              </button>
+              {built && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDel(datasetId)}
+                  disabled={building || deleting}
+                  className="cf-btn"
+                  style={{
+                    width: "100%",
+                    justifyContent: "center",
+                    marginTop: 6,
+                  }}
+                >
+                  {deleting ? "삭제 중…" : "그래프 삭제"}
+                </button>
+              )}
+            </div>
+
+            {/* ② 질의 — 프리셋 + textarea + 실행 */}
+            <div className="il-card il-config" style={{ marginTop: 12 }}>
+              <div className="il-config-title">② 질의 (3방식 비교)</div>
+              <div className="il-flabel">질의 프리셋</div>
+              <div
+                className="thin-scroll"
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginBottom: 12,
+                  maxHeight: 168,
+                  overflowY: "auto",
+                }}
+              >
+                {activeDataset.demoQueries.map((d) => (
+                  <button
+                    key={d.label}
+                    type="button"
+                    className="cf-pill"
+                    onClick={() => setQuery(d.query)}
+                    disabled={comparing}
+                    title={d.query}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <div className="il-flabel">질의문</div>
+              <textarea
+                className="cf-field"
+                style={{
+                  width: "100%",
+                  minHeight: 80,
+                  resize: "vertical",
+                  marginBottom: 10,
+                }}
+                placeholder="질문을 입력하거나 위 프리셋을 누르세요 (예: MS와 엔비디아를 둘 다 보유한 기관은?)"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                disabled={comparing}
+              />
+              {!built && (
+                <div
+                  className="il-flabel-hint"
+                  style={{
+                    color: "var(--t-danger-11, #e5484d)",
+                    marginBottom: 8,
+                  }}
+                >
+                  먼저 그래프를 구축하세요
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => runCompare(query)}
+                disabled={comparing || !built || !query.trim()}
+                className="cf-btn cf-btn--primary"
+                style={{ width: "100%", justifyContent: "center" }}
+              >
+                {comparing ? "비교 중…" : "3방식 동시 실행"}
+              </button>
+            </div>
+          </div>
+
+          {/* ─── 우측: 워크벤치 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {err && (
+              <div className="il-error" style={{ marginBottom: 16 }}>
+                ⚠️ {err}
+              </div>
+            )}
+
+            {/* 01 · 3방식 비교 결과 */}
+            <div className="il-card" style={{ marginBottom: 16 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 14,
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <span className="il-bench-label">01</span>
+                  <span
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "8px 12px",
-                      border: "1px solid var(--t-neutral-8)",
-                      borderRadius: "var(--r-md, 8px)",
-                      fontSize: 12.5,
+                      fontSize: 13.5,
+                      fontWeight: 700,
+                      color: "var(--text-default)",
                     }}
                   >
-                    <span style={{ color: "var(--text-default)" }}>
-                      <strong>{label}</strong>
-                      <span
-                        style={{
-                          marginLeft: 8,
-                          color: "var(--text-subtle)",
-                        }}
-                      >
-                        {ds?.slots.subject ?? "주체"}{" "}
-                        {l.subjects.toLocaleString()} ·{" "}
-                        {ds?.slots.object ?? "대상"}{" "}
-                        {l.objects.toLocaleString()}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      className="cf-btn"
-                      style={{ height: 28, padding: "0 12px", fontSize: 12 }}
-                      disabled={deleting}
-                      onClick={() => setConfirmDel(l.id)}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                );
-              })}
+                    같은 질문, 3방식 비교
+                  </span>
+                </div>
+                <StatusPill status={benchStatus} />
+              </div>
+
+              {/* 진행 로그(다크 터미널) — 구축 SSE. */}
+              {buildLog.length > 0 && (
+                <div style={{ marginBottom: 14 }}>
+                  <Terminal title="neo4j-build · stream" lines={buildLog} />
+                </div>
+              )}
+
+              {/* 3패널 비교(데이터·실행 로직 보존 — ComparePanels). 패널이
+                  하나라도 활성일 때만 렌더, 아니면 안내. */}
+              {Object.values(panels).some((p) => p.status !== "idle") ? (
+                <ComparePanels panels={panels} />
+              ) : (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-subtle)",
+                    padding: "20px 0",
+                    textAlign: "center",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  좌측에서 데이터셋·질의를 고르고{" "}
+                  <strong>3방식 동시 실행</strong>을 누르면 GraphRAG · RAG ·
+                  Text-to-SQL 결과가 여기에 나란히 흐릅니다.
+                </div>
+              )}
             </div>
-          )}
+
+            {/* 02 · 적재된 데이터셋 인벤토리 (공존 목록 + 개별 삭제). */}
+            <div className="il-card">
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 14,
+                  gap: 12,
+                }}
+              >
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <span className="il-bench-label">02</span>
+                  <span
+                    style={{
+                      fontSize: 13.5,
+                      fontWeight: 700,
+                      color: "var(--text-default)",
+                    }}
+                  >
+                    적재된 데이터셋
+                  </span>
+                </div>
+                <span
+                  className="il-mono"
+                  style={{ fontSize: 11, color: "var(--text-subtle)" }}
+                >
+                  {loaded.length} datasets
+                </span>
+              </div>
+
+              {loaded.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+                  아직 적재된 데이터셋이 없습니다. 좌측에서 데이터셋을 골라
+                  ① 그래프 구축을 실행하세요.
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  {loaded.map((l) => {
+                    const ds = GRAPH_DATASETS.find((d) => d.id === l.id);
+                    const label = ds?.label ?? l.id;
+                    return (
+                      <div key={l.id} className="il-ix-row">
+                        <div style={{ minWidth: 0 }}>
+                          <div className="il-ix-name">{label}</div>
+                          <div
+                            style={{
+                              fontSize: 10.5,
+                              color: "var(--text-subtle)",
+                              marginTop: 2,
+                            }}
+                          >
+                            {ds?.slots.subject ?? "주체"}{" "}
+                            {l.subjects.toLocaleString()} ·{" "}
+                            {ds?.slots.object ?? "대상"}{" "}
+                            {l.objects.toLocaleString()}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="cf-btn"
+                          style={{
+                            height: 28,
+                            padding: "0 12px",
+                            fontSize: 12,
+                          }}
+                          disabled={deleting}
+                          onClick={() => setConfirmDel(l.id)}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* 그래프 삭제 확인 모달 (오클릭 방지 — index-lab 동형) */}
+      {/* 그래프 삭제 확인 모달 (공통 ConfirmModal — 오클릭 방지) */}
       {confirmDel && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
-          onClick={() => setConfirmDel(null)}
+        <ConfirmModal
+          title="그래프 삭제 확인"
+          confirmLabel="삭제"
+          onCancel={() => setConfirmDel(null)}
+          onConfirm={() => confirmDel && void runDelete(confirmDel)}
         >
-          <div
-            style={{ ...card, maxWidth: 400, margin: 0 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={sectionTitle}>그래프 삭제 확인</div>
-            <p
-              style={{
-                fontSize: 12.5,
-                color: "var(--text-subtle)",
-                lineHeight: 1.6,
-                marginBottom: 16,
-              }}
-            >
-              <strong>{confirmLabel}</strong> 데이터셋의 노드·관계를
-              삭제합니다(다른 데이터셋은 보존). 이 데이터셋으로 다시
-              비교·탐색하려면 재구축해야 합니다. 계속할까요?
-            </p>
-            <div
-              style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}
-            >
-              <button
-                type="button"
-                className="cf-btn"
-                onClick={() => setConfirmDel(null)}
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                className="cf-btn cf-btn--primary"
-                onClick={() => confirmDel && void runDelete(confirmDel)}
-              >
-                삭제
-              </button>
-            </div>
-          </div>
-        </div>
+          <strong style={{ color: "var(--text-default)" }}>
+            {confirmLabel}
+          </strong>{" "}
+          데이터셋의 노드·관계를 삭제합니다(다른 데이터셋은 보존). 이
+          데이터셋으로 다시 비교·탐색하려면 재구축해야 합니다. 계속할까요?
+        </ConfirmModal>
       )}
 
       {showExplore && (

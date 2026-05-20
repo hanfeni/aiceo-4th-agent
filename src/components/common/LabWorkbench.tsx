@@ -1,13 +1,171 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import type { StageStatus, StageNodeMeta } from "./pipelineNodes";
 
 /**
  * LabWorkbench — 검색·라벨링 실습 워크벤치 공용 표현 컴포넌트.
  *
- * 실험(B) 시안의 진행 메트릭 타일(Metric)·다크 터미널 로그(Terminal)를
- * index-lab·data-load 등에서 재사용한다(중복 정의 제거). il-* 토큰 사용.
+ * 실험(B) 시안: 진행 메트릭(Metric)·다크 터미널(Terminal)·상태칩
+ * (StatusPill)·hero 파이프라인 카드 노드(PipelineNode/Connector/Row)를
+ * index-lab·data-load·meta-lab·search-lab 에서 재사용(중복 제거). il-* 토큰.
  */
+
+/** 상태칩(idle/running/done/error). il-status CSS 매핑(running→run). */
+export function StatusPill({ status }: { status: StageStatus }): ReactNode {
+  const map: Record<StageStatus, { cls: string; label: string }> = {
+    idle: { cls: "idle", label: "대기" },
+    running: { cls: "run", label: "진행 중" },
+    done: { cls: "done", label: "완료" },
+    error: { cls: "run", label: "실패" },
+  };
+  const m = map[status] ?? map.idle;
+  return <span className={`il-status il-status--${m.cls}`}>{m.label}</span>;
+}
+
+/**
+ * PipelineNode — hero 파이프라인 카드 노드(시안 라이트판). 상태별
+ * ring/bg/badge + emphasis(🤖 LLM) 배지 + 상태 dot. onClick 없으면 클릭 불가.
+ */
+export function PipelineNode({
+  node,
+  status,
+  onClick,
+}: {
+  node: { stage: number; label: string; hint: string; emphasis?: boolean };
+  status: StageStatus;
+  onClick?: () => void;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      className="il-pipe-card"
+      data-status={status}
+      data-emphasis={node.emphasis ? "true" : "false"}
+      data-clickable={onClick ? "true" : "false"}
+      disabled={!onClick}
+      onClick={onClick}
+    >
+      <div
+        style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}
+      >
+        <span className="il-pipe-badge">
+          {status === "done" ? "✓" : node.stage}
+        </span>
+        {node.emphasis && <span className="il-pipe-llm">🤖 LLM</span>}
+        <span style={{ flex: 1 }} />
+        <span className="il-pipe-dot" data-status={status}>
+          {status === "done"
+            ? "완료"
+            : status === "running"
+              ? "진행"
+              : status === "error"
+                ? "실패"
+                : "대기"}
+        </span>
+      </div>
+      <div className="il-pipe-label">{node.label}</div>
+      <div className="il-pipe-hint">{node.hint}</div>
+    </button>
+  );
+}
+
+/** PipelineConnector — 노드 사이 SVG 화살표. passed/active blue, done green. */
+export function PipelineConnector({
+  fromStatus,
+  toStatus,
+}: {
+  fromStatus: StageStatus;
+  toStatus: StageStatus;
+}): ReactNode {
+  const active =
+    toStatus === "running" || (fromStatus === "done" && toStatus === "done");
+  const stroke = active
+    ? "var(--blue-500)"
+    : fromStatus === "done"
+      ? "var(--green-400)"
+      : "#d4d8df";
+  const dashed = toStatus === "running";
+  const markerId = `il-pl-arrow-${stroke.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <div className="il-pipe-conn">
+      <svg
+        width="28"
+        height="14"
+        viewBox="0 0 28 14"
+        style={{ overflow: "visible" }}
+      >
+        <defs>
+          <marker
+            id={markerId}
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="6"
+            markerHeight="6"
+            orient="auto"
+          >
+            <path d="M0,0 L10,5 L0,10 z" fill={stroke} />
+          </marker>
+        </defs>
+        <line
+          x1="0"
+          y1="7"
+          x2="22"
+          y2="7"
+          stroke={stroke}
+          strokeWidth="1.8"
+          strokeDasharray={dashed ? "4 3" : undefined}
+          markerEnd={`url(#${markerId})`}
+        >
+          {dashed && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="14"
+              to="0"
+              dur="0.8s"
+              repeatCount="indefinite"
+            />
+          )}
+        </line>
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * PipelineRow — 노드 카드 + 커넥터를 가로 균등 분배로 렌더(시안 PipelineRow).
+ * stage→status 매핑 함수와 노드 클릭 핸들러를 받는다.
+ */
+export function PipelineRow({
+  nodes,
+  statusOf,
+  onNodeClick,
+}: {
+  nodes: readonly StageNodeMeta[];
+  statusOf: (stage: number) => StageStatus;
+  onNodeClick?: (stage: number) => void;
+}): ReactNode {
+  return (
+    <div className="il-pipe">
+      {nodes.map((n, i) => (
+        <Fragment key={n.stage}>
+          <PipelineNode
+            node={n}
+            status={statusOf(n.stage)}
+            onClick={onNodeClick ? () => onNodeClick(n.stage) : undefined}
+          />
+          {i < nodes.length - 1 && (
+            <PipelineConnector
+              fromStatus={statusOf(n.stage)}
+              toStatus={statusOf(nodes[i + 1].stage)}
+            />
+          )}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
 
 /** 진행 메트릭 타일(시안 BenchMetric). */
 export function Metric({

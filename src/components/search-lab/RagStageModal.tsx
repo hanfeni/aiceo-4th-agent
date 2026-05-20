@@ -22,6 +22,7 @@ const overlay: CSSProperties = {
   position: "fixed",
   inset: 0,
   background: "rgba(0,0,0,0.42)",
+  backdropFilter: "blur(2px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -38,27 +39,6 @@ const panel: CSSProperties = {
   flexDirection: "column",
   boxShadow: "0 24px 64px rgba(0,0,0,0.22)",
 };
-const tabBtn = (active: boolean): CSSProperties => ({
-  appearance: "none",
-  border: "none",
-  background: "transparent",
-  padding: "10px 14px",
-  fontSize: 12.5,
-  fontWeight: 700,
-  cursor: "pointer",
-  color: active ? "var(--text-default)" : "var(--text-subtle)",
-  borderBottom: active
-    ? "2px solid var(--t-blue-9, #3b82f6)"
-    : "2px solid transparent",
-});
-const pre: CSSProperties = {
-  whiteSpace: "pre-wrap",
-  fontSize: 11.5,
-  lineHeight: 1.55,
-  color: "var(--text-default)",
-  margin: 0,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-};
 
 export function RagStageModal({
   meta,
@@ -66,9 +46,11 @@ export function RagStageModal({
   onClose,
 }: RagStageModalProps): ReactNode {
   const [tab, setTab] = useState<"input" | "output">("output");
+  // 상태칩(idle/running/done/error). il-status CSS 매핑(running·error→run).
+  const pillCls = io.status === "done" ? "done" : "run";
   const statusLabel =
     io.status === "running"
-      ? "진행 중…"
+      ? "진행 중"
       : io.status === "done"
         ? "완료"
         : io.status === "error"
@@ -84,9 +66,10 @@ export function RagStageModal({
             alignItems: "center",
             justifyContent: "space-between",
             padding: "16px 18px 0",
+            gap: 12,
           }}
         >
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div
               style={{
                 fontSize: 15,
@@ -96,16 +79,6 @@ export function RagStageModal({
             >
               {meta.emphasis ? "🤖 " : ""}
               {meta.stage}. {meta.label}
-              <span
-                style={{
-                  marginLeft: 8,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--text-subtle)",
-                }}
-              >
-                · {statusLabel}
-              </span>
             </div>
             <div
               style={{
@@ -117,26 +90,32 @@ export function RagStageModal({
               {meta.hint}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="닫기"
-            style={{
-              appearance: "none",
-              border: "none",
-              background: "transparent",
-              fontSize: 20,
-              lineHeight: 1,
-              cursor: "pointer",
-              color: "var(--text-subtle)",
-              padding: 4,
-            }}
-          >
-            ×
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className={`il-status il-status--${pillCls}`}>
+              {statusLabel}
+            </span>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="닫기"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "transparent",
+                fontSize: 20,
+                lineHeight: 1,
+                cursor: "pointer",
+                color: "var(--text-subtle)",
+                padding: 4,
+              }}
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div
+          role="tablist"
           style={{
             display: "flex",
             gap: 4,
@@ -146,14 +125,18 @@ export function RagStageModal({
         >
           <button
             type="button"
-            style={tabBtn(tab === "input")}
+            role="tab"
+            className="il-modal-tab"
+            aria-selected={tab === "input"}
             onClick={() => setTab("input")}
           >
             입력 (검색어·프롬프트)
           </button>
           <button
             type="button"
-            style={tabBtn(tab === "output")}
+            role="tab"
+            className="il-modal-tab"
+            aria-selected={tab === "output"}
             onClick={() => setTab("output")}
           >
             출력 (근거·답변)
@@ -165,7 +148,7 @@ export function RagStageModal({
           style={{ overflowY: "auto", padding: 18, minHeight: 120 }}
         >
           {tab === "input" ? (
-            <pre style={pre}>
+            <pre className="il-code">
               {io.input ?? "(이 단계 입력이 아직 없습니다)"}
             </pre>
           ) : io.status === "running" ? (
@@ -179,7 +162,7 @@ export function RagStageModal({
               ▶ 진행 중 — 완료되면 결과가 표시됩니다.
             </div>
           ) : io.output ? (
-            <pre style={pre}>{io.output}</pre>
+            <pre className="il-code">{io.output}</pre>
           ) : (
             <div
               style={{

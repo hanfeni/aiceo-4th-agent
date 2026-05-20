@@ -14,6 +14,11 @@ import {
   STEP_TO_STAGE,
 } from "./metaStageNodes";
 import { StageModal } from "./StageModal";
+import {
+  StatusPill,
+  PipelineNode,
+  PipelineConnector,
+} from "@/components/common/LabWorkbench";
 
 /**
  * MetaLabView — 메타 스키마/라벨링 실습 (client).
@@ -849,138 +854,6 @@ function CaseCard({ item }: { item: StageCase }): ReactNode {
           {item.text || "…"}
         </pre>
       )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// StatusPill — 상태칩(idle/running/done/error). il-status CSS 와
-// 매핑(running→run). hero·OUTPUT 헤더 공용.
-// ─────────────────────────────────────────────────────────────
-function StatusPill({ status }: { status: StageStatus }): ReactNode {
-  const map: Record<StageStatus, { cls: string; label: string }> = {
-    idle: { cls: "idle", label: "대기" },
-    running: { cls: "run", label: "진행 중" },
-    done: { cls: "done", label: "완료" },
-    error: { cls: "run", label: "실패" },
-  };
-  const m = map[status] ?? map.idle;
-  return <span className={`il-status il-status--${m.cls}`}>{m.label}</span>;
-}
-
-// ─────────────────────────────────────────────────────────────
-// PipelineNode — hero 파이프라인 카드 노드(시안 갱신 라이트판).
-// 상태별 ring/bg/badge + emphasis(🤖 LLM) 배지 + 상태 dot.
-// 클릭 → StageModal(onClick).
-// ─────────────────────────────────────────────────────────────
-function PipelineNode({
-  node,
-  status,
-  onClick,
-}: {
-  node: { stage: number; label: string; hint: string; emphasis?: boolean };
-  status: StageStatus;
-  /** 없으면 클릭 불가 노드(단발 모드 — 입출력 모달 없음). */
-  onClick?: () => void;
-}): ReactNode {
-  return (
-    <button
-      type="button"
-      className="il-pipe-card"
-      data-status={status}
-      data-emphasis={node.emphasis ? "true" : "false"}
-      data-clickable={onClick ? "true" : "false"}
-      disabled={!onClick}
-      onClick={onClick}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 8,
-        }}
-      >
-        <span className="il-pipe-badge">
-          {status === "done" ? "✓" : node.stage}
-        </span>
-        {node.emphasis && <span className="il-pipe-llm">🤖 LLM</span>}
-        <span style={{ flex: 1 }} />
-        <span className="il-pipe-dot" data-status={status}>
-          {status === "done"
-            ? "완료"
-            : status === "running"
-              ? "진행"
-              : status === "error"
-                ? "실패"
-                : "대기"}
-        </span>
-      </div>
-      <div className="il-pipe-label">{node.label}</div>
-      <div className="il-pipe-hint">{node.hint}</div>
-    </button>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// PipelineConnector — 노드 사이 SVG 화살표(시안 갱신).
-// passed(done→done)·active(다음 running)는 blue, done→대기는 green,
-// 그 외 muted. running 진입선은 dash 애니메이션.
-// ─────────────────────────────────────────────────────────────
-function PipelineConnector({
-  fromStatus,
-  toStatus,
-}: {
-  fromStatus: StageStatus;
-  toStatus: StageStatus;
-}): ReactNode {
-  const active =
-    toStatus === "running" ||
-    (fromStatus === "done" && toStatus === "done");
-  const stroke = active
-    ? "var(--blue-500)"
-    : fromStatus === "done"
-      ? "var(--green-400)"
-      : "#d4d8df";
-  const dashed = toStatus === "running";
-  const markerId = `il-pl-arrow-${stroke.replace(/[^a-z0-9]/gi, "")}`;
-  return (
-    <div className="il-pipe-conn">
-      <svg width="28" height="14" viewBox="0 0 28 14" style={{ overflow: "visible" }}>
-        <defs>
-          <marker
-            id={markerId}
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="6"
-            markerHeight="6"
-            orient="auto"
-          >
-            <path d="M0,0 L10,5 L0,10 z" fill={stroke} />
-          </marker>
-        </defs>
-        <line
-          x1="0"
-          y1="7"
-          x2="22"
-          y2="7"
-          stroke={stroke}
-          strokeWidth="1.8"
-          strokeDasharray={dashed ? "4 3" : undefined}
-          markerEnd={`url(#${markerId})`}
-        >
-          {dashed && (
-            <animate
-              attributeName="stroke-dashoffset"
-              from="14"
-              to="0"
-              dur="0.8s"
-              repeatCount="indefinite"
-            />
-          )}
-        </line>
-      </svg>
     </div>
   );
 }

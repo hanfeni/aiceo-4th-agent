@@ -46,6 +46,7 @@ const overlay: CSSProperties = {
   position: "fixed",
   inset: 0,
   background: "rgba(0,0,0,0.42)",
+  backdropFilter: "blur(2px)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -76,15 +77,6 @@ const navBtn = (disabled: boolean): CSSProperties => ({
   opacity: disabled ? 0.5 : 1,
   flexShrink: 0,
 });
-const pre: CSSProperties = {
-  whiteSpace: "pre-wrap",
-  fontSize: 11.5,
-  lineHeight: 1.6,
-  color: "var(--text-default)",
-  margin: 0,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-};
-
 /** 임베딩 벡터 압축: "[1536-d] 앞 8개: 0.013, -0.21, …" */
 function embedSummary(v: number[] | undefined, dim?: number): string {
   if (!v || v.length === 0) return "(임베딩 없음 — 색인 시 키 누락?)";
@@ -212,26 +204,41 @@ export function IndexDocsModal({
             borderBottom: "1px solid var(--t-neutral-8)",
           }}
         >
-          <div
-            style={{
-              fontSize: 13.5,
-              fontWeight: 700,
-              color: "var(--text-default)",
-            }}
-          >
-            색인된 문서 — {domainLabel}
-            {total > 0 && (
-              <span
-                style={{
-                  marginLeft: 8,
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: "var(--text-subtle)",
-                }}
-              >
-                총 {total.toLocaleString()}건 (50개씩 로드)
-              </span>
-            )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                fontSize: 13.5,
+                fontWeight: 700,
+                color: "var(--text-default)",
+              }}
+            >
+              색인된 문서 — {domainLabel}
+              {total > 0 && (
+                <span
+                  style={{
+                    marginLeft: 8,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    color: "var(--text-subtle)",
+                  }}
+                >
+                  총 {total.toLocaleString()}건 (50개씩 로드)
+                </span>
+              )}
+            </div>
+            <span
+              className="il-mono"
+              style={{
+                fontSize: 10.5,
+                color: "var(--blue-700)",
+                fontWeight: 700,
+                background: "var(--lab-blue-bg)",
+                padding: "4px 8px",
+                borderRadius: 4,
+              }}
+            >
+              OpenSearch · searchlab-{domain}
+            </span>
           </div>
           <button
             type="button"
@@ -309,9 +316,7 @@ export function IndexDocsModal({
               {/* 실제 OpenSearch 색인 도큐먼트 전체(raw). 임베딩
                   벡터는 1536-d 라 차원+앞 8개로 압축(정보 손실 0
                   — 존재·차원·형태 확인). 사용자 결정 2026-05-19. */}
-              <pre style={pre}>
-                {renderRawDoc(cur)}
-              </pre>
+              <pre className="il-code">{renderRawDoc(cur)}</pre>
             </>
           )}
         </div>

@@ -43,24 +43,62 @@ export function emptyPanels(): Record<string, PanelState> {
   };
 }
 
+/**
+ * 방식별 메타 — 시안 B MethodPanel 톤. verdict 는 교육 결론 칩
+ * (RAG=한계 / SQL=부분 답 / GraphRAG=압승). GraphRAG 만 highlight
+ * (강조 카드 + 🏆). 결과 데이터 자체는 PanelState(실 SSE)에서 옴.
+ */
 const META: Record<
   string,
-  { title: string; sub: string; accent: string }
+  {
+    title: string;
+    sub: string;
+    accent: string;
+    verdict: string;
+    verdictKind: "ok" | "warn" | "err";
+    highlight?: boolean;
+  }
 > = {
   rag: {
-    title: "RAG",
+    title: "RAG (벡터 검색)",
     sub: "텍스트 검색 → LLM",
     accent: "var(--t-neutral-9, #8b8b8b)",
+    verdict: "한계",
+    verdictKind: "err",
   },
   sql: {
     title: "Text-to-SQL",
     sub: "단일 테이블 쿼리 (대조군)",
     accent: "var(--t-warning-9, #d4a017)",
+    verdict: "부분 답",
+    verdictKind: "warn",
   },
   graphrag: {
-    title: "GraphRAG",
+    title: "GraphRAG (Cypher)",
     sub: "Neo4j 멀티홉 경로",
     accent: "var(--blue-500, #2563eb)",
+    verdict: "압승",
+    verdictKind: "ok",
+    highlight: true,
+  },
+};
+
+/** verdict 칩 색(시안 lab-success/warn/danger 토큰). */
+const VERDICT_COLORS: Record<
+  "ok" | "warn" | "err",
+  { color: string; bg: string }
+> = {
+  ok: {
+    color: "var(--lab-success-text, #15803d)",
+    bg: "var(--lab-success-bg, #dcfce7)",
+  },
+  warn: {
+    color: "var(--lab-warn-text, #b45309)",
+    bg: "var(--lab-warn-bg, #fef3c7)",
+  },
+  err: {
+    color: "var(--lab-danger-text, #b91c1c)",
+    bg: "var(--lab-danger-bg, #fee2e2)",
   },
 };
 
@@ -93,47 +131,98 @@ function Panel({
   st: PanelState;
 }): ReactNode {
   const m = META[id];
+  const vc = VERDICT_COLORS[m.verdictKind];
   return (
     <div
       style={{
         flex: "1 1 0",
         minWidth: 0,
-        border: "1px solid var(--t-neutral-8)",
+        border: m.highlight
+          ? "1.5px solid var(--blue-300, #93c5fd)"
+          : "1px solid var(--t-neutral-8)",
         borderTop: `3px solid ${m.accent}`,
-        borderRadius: "var(--r-md, 8px)",
-        padding: 14,
+        borderRadius: 12,
+        padding: 16,
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        background: "var(--surface-default)",
+        background: m.highlight
+          ? "var(--lab-blue-bg, #eff6ff)"
+          : "var(--surface-default)",
+        boxShadow: m.highlight
+          ? "0 8px 24px rgba(33,148,243,.12)"
+          : "none",
       }}
     >
-      <div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            justifyContent: "space-between",
-          }}
-        >
-          <strong style={{ fontSize: 13, color: "var(--text-default)" }}>
-            {m.title}
-          </strong>
-          <span
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
             style={{
-              fontSize: 10,
-              color:
-                st.status === "error"
-                  ? "var(--t-danger-11, #e5484d)"
-                  : "var(--text-subtle)",
+              fontSize: 10.5,
+              fontWeight: 800,
+              letterSpacing: "0.06em",
+              textTransform: "uppercase",
+              color: m.highlight
+                ? "var(--blue-700, #1d4ed8)"
+                : "var(--text-subtle)",
             }}
           >
-            {STATUS_LABEL[st.status]}
-          </span>
+            {m.title}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginTop: 4,
+              flexWrap: "wrap",
+            }}
+          >
+            {/* verdict 칩(교육 결론) + 실행 상태(실 SSE 파생). */}
+            <span
+              style={{
+                fontSize: 10,
+                padding: "2px 8px",
+                borderRadius: 4,
+                background: vc.bg,
+                color: vc.color,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+            >
+              {m.verdict}
+            </span>
+            <span
+              style={{
+                fontSize: 10,
+                color:
+                  st.status === "error"
+                    ? "var(--t-danger-11, #e5484d)"
+                    : "var(--text-subtle)",
+              }}
+            >
+              {STATUS_LABEL[st.status]}
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 10.5,
+              color: "var(--text-subtle)",
+              marginTop: 4,
+            }}
+          >
+            {m.sub}
+          </div>
         </div>
-        <div style={{ fontSize: 10.5, color: "var(--text-subtle)" }}>
-          {m.sub}
-        </div>
+        {m.highlight && <span style={{ fontSize: 18 }}>🏆</span>}
       </div>
 
       {st.code && (
@@ -216,9 +305,10 @@ export function ComparePanels({
   return (
     <div
       style={{
-        display: "flex",
+        display: "grid",
+        // 3열 균등(시안 B). 좁은 폭에선 자동 줄바꿈(minmax 0 → 오버플로 방지).
+        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
         gap: 12,
-        flexWrap: "wrap",
         alignItems: "stretch",
       }}
     >
