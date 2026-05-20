@@ -461,7 +461,7 @@ export function IndexLabView(): ReactNode {
           >
             {domain === "custom" ? (
               <span>
-                업로드 도메인 — 아래 ③ 에서 jsonl 을 올려 색인합니다
+                업로드 도메인 — 아래 ③ 에서 문서를 올려 색인합니다
                 (GitHub 원본 없음).
               </span>
             ) : (
@@ -600,7 +600,7 @@ export function IndexLabView(): ReactNode {
             disabled={indexing || domain === "custom"}
             title={
               domain === "custom"
-                ? "내 데이터(custom)는 아래 ③ jsonl 업로드로 색인합니다"
+                ? "내 데이터(custom)는 아래 ③ 문서 업로드로 색인합니다"
                 : undefined
             }
             className="cf-btn cf-btn--primary"
@@ -692,7 +692,7 @@ export function IndexLabView(): ReactNode {
               disabled={uploading || indexing || !uploadFile}
               className="cf-btn cf-btn--primary"
             >
-              {uploading ? "업로드 색인 중…" : "이 jsonl 업로드 색인"}
+              {uploading ? "업로드 색인 중…" : "이 문서 업로드 색인"}
             </button>
           </div>
         </div>

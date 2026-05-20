@@ -528,7 +528,7 @@ export function DataLoadView(): ReactNode {
               disabled={uploading || !uploadFile}
               className="cf-btn cf-btn--primary"
             >
-              {uploading ? "업로드 적재 중…" : "이 CSV 업로드 적재"}
+              {uploading ? "업로드 적재 중…" : "이 파일 업로드 적재"}
             </button>
           </div>
         </div>
