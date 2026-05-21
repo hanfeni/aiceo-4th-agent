@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import {
@@ -191,12 +192,75 @@ function NavRow({
   );
 }
 
+/** 커스텀 에이전트 최소 메타(AgentNav 표시용). */
+interface CustomAgentMeta {
+  id: string;
+  name: string;
+}
+
+/**
+ * 커스텀 에이전트 목록을 /api/harness/agents 에서 fetch 한다.
+ * 마운트 시 1회 + CustomEvent('agentCreated') 수신 시 재조회.
+ * fetch 실패 시 [] 폴백(사이드바 전체 크래시 0 — TC-55.6).
+ */
+function useCustomAgents(): CustomAgentMeta[] {
+  const [agents, setAgents] = useState<CustomAgentMeta[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+
+    const fetchAgents = async (): Promise<void> => {
+      try {
+        const res = await fetch("/api/harness/agents");
+        if (!res.ok) return;
+        const data = (await res.json()) as { agents?: CustomAgentMeta[] };
+        if (alive) setAgents(data.agents ?? []);
+      } catch {
+        // 오류 시 [] 유지(graceful 폴백)
+      }
+    };
+
+    void fetchAgents();
+
+    // AgentBuilder 가 생성/삭제 후 dispatch 하는 이벤트 수신 → 재조회.
+    const onAgentCreated = (): void => { void fetchAgents(); };
+    window.addEventListener("agentCreated", onAgentCreated);
+
+    return () => {
+      alive = false;
+      window.removeEventListener("agentCreated", onAgentCreated);
+    };
+  }, []);
+
+  return agents;
+}
+
 export function AgentNav(): ReactNode {
   const pathname = usePathname();
+  const customAgents = useCustomAgents();
+
+  // "나의 에이전트" 동적 그룹 — customAgents 가 0개면 그룹 미렌더(TC-55.3).
+  const customGroup: NavGroup | null =
+    customAgents.length > 0
+      ? {
+          title: "나의 에이전트",
+          accent: AGENT_ACCENT,
+          items: customAgents.map((a) => ({
+            icon: <Bot size={14} aria-hidden />,
+            label: a.name,
+            href: `/custom-agent/${a.id}`,
+          })),
+        }
+      : null;
+
+  // 정적 3그룹 + 동적 그룹(있을 때만) 합성.
+  const allGroups: NavGroup[] = customGroup
+    ? [...NAV_GROUPS, customGroup]
+    : NAV_GROUPS;
 
   return (
     <>
-      {NAV_GROUPS.map((group) => (
+      {allGroups.map((group) => (
         // 그룹 = 독립 카드 박스(레퍼런스 medigate 사이드바 — 흰 배경
         // + 미세 보더 + radius + 그룹 간 여백). 헤더(accent 점 + 라벨)
         // 가 박스 상단에 위치. layout 의 "AI 에이전트" 헤더와 첫 그룹
