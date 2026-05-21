@@ -33,7 +33,7 @@ import { ContentModal } from "./ContentModal";
 import { FormDivider } from "./FormDivider";
 import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 import type { GeneratedAgentBundle, FlowStep } from "@/lib/harness-introspect/generate";
-import { AgentFlowDiagram, AgentBundleFlow } from "./AgentFlowDiagram";
+import { AgentBundleFlow } from "./AgentFlowDiagram";
 
 interface InstructionMeta {
   id: string;
@@ -421,9 +421,6 @@ export function AgentBuilder({ onCreated }: AgentBuilderProps): ReactNode {
             )
           }
         >
-          {/* ── 작동 원리 다이어그램 (bundle 생성 전에만 표시) ── */}
-          {!bundle && <AgentFlowDiagram />}
-
           {/* ── STEP 1: 요청 입력 ── */}
           <Step1
             prompt={prompt}
