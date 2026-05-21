@@ -33,6 +33,8 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
   const storeApi = useChatStoreApi();
   const { send } = useChat();
   const messageCount = useChatStore((s) => s.messages.length);
+  // 세션 제목(첫 질의 시 nano 생성). null 이면 "새 대화" 고정 표시.
+  const conversationTitle = useChatStore((s) => s.conversationTitle);
   // EmptyState 추천칩 → ChatInput 초기값 주입. key 변경으로 리마운트.
   const [seed, setSeed] = useState<{ value: string; key: number }>({
     value: "",
@@ -142,7 +144,7 @@ export function ChatPanel({ provider, model }: ChatPanelProps): ReactNode {
               lineHeight: 1,
             }}
           >
-            새 대화
+            {conversationTitle ?? "새 대화"}
           </span>
           <span
             style={{

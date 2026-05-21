@@ -16,6 +16,7 @@ import {
   Database,
   X,
 } from "lucide-react";
+import { useChatStore } from "@/store";
 
 // 첨부 노출 환경분기(Plan Critic D1): dev 에서만 첨부/이미지 실동작.
 // process.env.NODE_ENV 는 Next.js 가 빌드 타임 인라인 → prod 빌드에선
@@ -89,6 +90,10 @@ export function ChatInput({
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const attachEnabled = isAttachEnabled();
+  // 마크다운 렌더 토글(입력창 하단 스위치). store 직접 구독 — 입력창
+  // 전용 UI 상태라 prop 드릴링 대신 단일 소비처(MessageList 와 동일).
+  const markdownEnabled = useChatStore((s) => s.markdownEnabled);
+  const setMarkdownEnabled = useChatStore((s) => s.setMarkdownEnabled);
   // 텍스트 또는 첨부 중 하나라도 있으면 전송 가능(첨부만 보내기 허용).
   const hasContent = value.trim().length > 0 || files.length > 0;
   const canSend = hasContent && !streaming;
@@ -504,6 +509,65 @@ export function ChatInput({
             <button type="button" disabled title="준비 중" style={toolChip}>
               <Database size={11} aria-hidden />
               데이터 소스
+            </button>
+
+            {/* 마크다운 토글 — 행 오른쪽 끝(marginLeft auto). OFF 시
+                응답이 마크다운 해석 없이 원문 텍스트 그대로 표시된다. */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={markdownEnabled}
+              onClick={() => setMarkdownEnabled(!markdownEnabled)}
+              title={
+                markdownEnabled
+                  ? "마크다운 켜짐 — 끄면 원문 그대로 표시"
+                  : "마크다운 꺼짐 — 원문 그대로 표시 중"
+              }
+              style={{
+                marginLeft: "auto",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+                padding: "4px 2px",
+                fontSize: 11.5,
+                fontWeight: 500,
+                color: "var(--text-subtle)",
+              }}
+            >
+              <span style={{ whiteSpace: "nowrap" }}>마크다운</span>
+              {/* 트랙 + 노브 (순수 CSS 스위치) */}
+              <span
+                aria-hidden
+                style={{
+                  position: "relative",
+                  display: "inline-block",
+                  width: 30,
+                  height: 17,
+                  borderRadius: 999,
+                  background: markdownEnabled
+                    ? "var(--agent-500)"
+                    : "var(--t-neutral-12)",
+                  transition: "background .15s",
+                  flexShrink: 0,
+                }}
+              >
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    left: markdownEnabled ? 15 : 2,
+                    width: 13,
+                    height: 13,
+                    borderRadius: "50%",
+                    background: "white",
+                    boxShadow: "0 1px 3px rgba(15,23,42,.3)",
+                    transition: "left .15s",
+                  }}
+                />
+              </span>
             </button>
           </div>
         </div>

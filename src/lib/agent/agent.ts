@@ -5,6 +5,10 @@ import {
   type WorkspaceId,
   type HarnessOverrides,
 } from "./harness/profiles";
+import {
+  getWorkspaceSelection,
+  type WorkspaceSelection,
+} from "./harness/workspaceSelectionStore";
 import type { SearchDomain } from "@/lib/searchlab/domains";
 import type { SqlDomain } from "@/lib/sqllab/domains";
 import { tableInfo } from "@/lib/sqllab/db";
@@ -106,12 +110,19 @@ function buildGraph(
   instructionId?: string,
 ): DeepAgentGraph {
   const env = process.env as unknown as HarnessEnv;
+  // 워크스페이스(A/B/C) 스킬·서브에이전트 멀티선택 — profileId 기준으로
+  // .data/ 영속 store 에서 조회(클라이언트 body 미경유 — 서버 단일 소스).
+  // profileId 없으면(기존 /chat) 전체 선택(null) → 회귀 0.
+  const selection: WorkspaceSelection = profileId
+    ? getWorkspaceSelection(profileId)
+    : { skills: null, subagents: null };
   // HarnessConfig.tools/checkpointer 는 R8 에 따라 느슨한 계약(unknown[]/
   // unknown)이다. deepagents 의 정밀 타입으로의 narrowing 은 이 단일 호출
   // 경계에서만 일어난다(model.ts 의 `as unknown as` 선례와 동일 패턴).
   // idx/sqlDomain/graphDataset/overrides 는 registry 가 흡수(미지정=기존
   // 도구셋·env 디폴트 — R2 0줄 유지). 이 파일엔 if(toggle) 0줄.
   // instructionId → 동적 시스템 인스트럭션 본문 선택(미지정=default).
+  // selection → 스킬·서브에이전트 멀티선택 필터(미선택=전체).
   const options = buildAgentOptions(
     buildHarnessConfig(
       env,
@@ -119,22 +130,31 @@ function buildGraph(
       sqlDomain,
       overrides,
       graphDataset,
+      selection,
     ),
     createModel(env, model),
     getSystemPromptBody(instructionId),
     // profileSig — 같은 모델 키에 서로 다른 GP 정책 재등록 허용. 토글이
-    // 요청별이라 profileId+overrides 시그니처를 합쳐 unique signature 로.
-    graphSig(profileId, overrides, instructionId),
+    // 요청별이라 profileId+overrides+selection 시그니처를 합쳐 unique 로.
+    graphSig(profileId, overrides, instructionId, selection),
   ) as unknown as Parameters<typeof createDeepAgent>[0];
   return createDeepAgent(options) as unknown as DeepAgentGraph;
 }
 
-/** profileId + 토글 오버라이드 + 인스트럭션을 안정적 시그니처 문자열로
- *  (그래프 캐시 키·GP 재등록 sig 공용). 키 정렬로 결정성 보장. */
+/** 선택 목록(null=전체)을 결정적 문자열로. null 과 [] 를 구분(전체 vs 전부끔). */
+function selList(list: string[] | null | undefined): string {
+  if (list == null) return "*"; // 전체(기본)
+  return [...list].sort().join(",");
+}
+
+/** profileId + 토글 오버라이드 + 인스트럭션 + 워크스페이스 선택을 안정적
+ *  시그니처 문자열로(그래프 캐시 키·GP 재등록 sig 공용). 키 정렬로 결정성.
+ *  selection 변경(스킬·서브에이전트 멀티선택) 시 다른 sig → 새 그래프. */
 function graphSig(
   profileId?: WorkspaceId,
   overrides?: HarnessOverrides,
   instructionId?: string,
+  selection?: WorkspaceSelection,
 ): string {
   const ov = overrides
     ? Object.keys(overrides)
@@ -142,10 +162,17 @@ function graphSig(
         .map((k) => `${k}:${overrides[k as keyof HarnessOverrides] ? 1 : 0}`)
         .join(",")
     : "";
+  // selection 은 전체(*)가 기본이라, 전체일 때는 sig 에 더하지 않아 기존
+  // 캐시 키와 동일(회귀 0). 하나라도 선택되면 접미사 추가 → 새 그래프.
+  const sel =
+    selection && (selection.skills != null || selection.subagents != null)
+      ? `sk:${selList(selection.skills)};sa:${selList(selection.subagents)}`
+      : "";
   return (
     (profileId ?? "") +
     (ov ? `|ov:${ov}` : "") +
-    (instructionId ? `|in:${instructionId}` : "")
+    (instructionId ? `|in:${instructionId}` : "") +
+    (sel ? `|sel:${sel}` : "")
   );
 }
 
@@ -178,10 +205,14 @@ function getGraph(
   if (!g.__agent) g.__agent = {};
   if (!g.__agent.graphByModel) g.__agent.graphByModel = new Map();
   // 캐시 키에 idx/sqlDomain(+sql 적재상태) + profileId + graphDataset
-  // + overrides 시그니처 + instructionId 합성 — 변경 시 다른 키 → 새
-  // createDeepAgent= 세션 리프레시. 모두 없으면 키가 기존과 동일(기존
-  // 챗 회귀 0). bound: 토글 조합 유한(화이트리스트 — 무한증가 0).
-  const sig = graphSig(profileId, overrides, instructionId);
+  // + overrides 시그니처 + instructionId + 워크스페이스 선택 합성 — 변경
+  // 시 다른 키 → 새 createDeepAgent= 세션 리프레시. 모두 없으면 키가
+  // 기존과 동일(기존 챗 회귀 0). 선택은 PUT 으로 .data/ 에 저장된 뒤
+  // 클라이언트가 resetChat → 다음 요청에서 이 sig 가 새 그래프를 만든다.
+  const selection: WorkspaceSelection = profileId
+    ? getWorkspaceSelection(profileId)
+    : { skills: null, subagents: null };
+  const sig = graphSig(profileId, overrides, instructionId, selection);
   const key =
     (model ?? ENV_KEY) +
     (idxDomain ? `|idx:${idxDomain}` : "") +

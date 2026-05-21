@@ -72,6 +72,18 @@ export interface ChatState {
    * default 본문(body 미동봉, 회귀 0). 에이전트 패널에서 선택.
    */
   instructionId: string | null;
+  /**
+   * assistant 응답 렌더 방식 토글(입력창 하단 스위치). true=마크다운
+   * 렌더(ChatMarkdown, 기본), false=원문 텍스트 그대로(스타일/기호 해석
+   * 없이 pre). UI 표시 전용 — 서버 미전송, resetChat 보존.
+   */
+  markdownEnabled: boolean;
+  /**
+   * 세션 제목(헤더 왼쪽 표시). null=미생성 → "새 대화" 표시. 새 세션의
+   * 첫 질의 시 gpt-5.4-nano(/api/chat/title)로 생성해 채운다. resetChat
+   * 시 null 로 리셋(새 세션은 다시 "새 대화"부터).
+   */
+  conversationTitle: string | null;
 }
 
 export interface ChatActions {
@@ -104,7 +116,11 @@ export interface ChatActions {
    * 기존 thread+복원 messages). 분리 액션 2개로 쪼개면 복원 직후 send 가
    * 읽는 conversationId 가 중간 상태일 수 있어 새 thread 발급 위험.
    */
-  loadConversation: (conversationId: string, messages: ChatMessage[]) => void;
+  loadConversation: (
+    conversationId: string,
+    messages: ChatMessage[],
+    title?: string | null,
+  ) => void;
   /**
    * SSE 스트리밍을 store 싱글톤에서 시작·소비한다(메뉴 이동 지속의 핵심).
    *
@@ -166,6 +182,17 @@ export interface ChatActions {
   setHarnessOverrides: (overrides: HarnessOverrides) => void;
   /** 시스템 인스트럭션 선택(null=default). 변경 직후 resetChat. */
   setInstructionId: (instructionId: string | null) => void;
+  /** 마크다운 렌더 토글(입력창 하단 스위치). UI 전용 — resetChat 무관. */
+  setMarkdownEnabled: (enabled: boolean) => void;
+  /** 세션 제목 설정(첫 질의 → nano 생성분). null=미생성("새 대화"). */
+  setConversationTitle: (title: string | null) => void;
+  /**
+   * 첫 질의로 제목 생성을 요청한다(POST /api/chat/title → nano).
+   * 메인 SSE 와 독립(fire-and-forget). 성공 시 conversationTitle 갱신,
+   * 실패(키 없음·오류)는 조용히 무시("새 대화" 유지). startStream 이
+   * 첫 turn 에 호출.
+   */
+  requestTitle: (query: string) => Promise<void>;
   finalizeLastAssistant: () => void;
   setError: (error: string | null) => void;
   resetChat: () => void;
@@ -187,6 +214,8 @@ const initialState: ChatState = {
   profileId: null,
   harnessOverrides: {},
   instructionId: null,
+  markdownEnabled: true,
+  conversationTitle: null,
 };
 
 /**
@@ -359,6 +388,38 @@ export function createChatStore(): StoreApi<ChatStore> {
       })),
     setHarnessOverrides: (harnessOverrides) => set({ harnessOverrides }),
     setInstructionId: (instructionId) => set({ instructionId }),
+    setMarkdownEnabled: (markdownEnabled) => set({ markdownEnabled }),
+    setConversationTitle: (conversationTitle) => set({ conversationTitle }),
+
+    // 첫 질의 제목 생성(메인 SSE 와 독립 fire-and-forget). 별도 라우트
+    // /api/chat/title 가 nano 로 제목 1줄을 만들어 돌려준다. 실패·null
+    // 은 조용히 무시("새 대화" 유지). 이미 제목이 생긴 뒤(재호출)엔
+    // 덮어쓰지 않는다(과거 대화 복원 제목 보호).
+    requestTitle: async (query) => {
+      const seed = query.trim();
+      if (!seed) return;
+      try {
+        const res = await fetch("/api/chat/title", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ query: seed }),
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { title?: unknown };
+        const title =
+          typeof data.title === "string" && data.title.trim()
+            ? data.title.trim()
+            : null;
+        // 응답 도착 사이 사용자가 새 대화로 리셋했을 수 있다 — 현재
+        // 제목이 비어 있을 때만 채운다(stale 응답이 새 세션 헤더를
+        // 덮어쓰지 않게).
+        if (title && get().conversationTitle === null) {
+          set({ conversationTitle: title });
+        }
+      } catch {
+        // 네트워크 오류 등 — 제목 없이 진행("새 대화" 유지).
+      }
+    },
 
     // 스트림 종료 마커. 현재는 부수효과 없음(메시지 내용 보존, 멱등).
     // useChat 의 finally 입력-잠금-해제 회귀 가드 지점(TC-20.4).
@@ -374,6 +435,8 @@ export function createChatStore(): StoreApi<ChatStore> {
         error: null,
         isStreaming: false,
         lastStreamEvent: null,
+        // 새 세션 → 제목 리셋("새 대화"로). 첫 질의 시 다시 생성.
+        conversationTitle: null,
         provider: state.provider,
         model: state.model,
         // idx/sql/graph 도메인 보존 — resetChat 은 세션(thread)만
@@ -393,12 +456,14 @@ export function createChatStore(): StoreApi<ChatStore> {
     // 직후 useChat.send 가 이 conversationId 를 읽어 body 에 실으면
     // 서버 checkpointer 가 같은 thread 히스토리를 이어받는다(맥락 연속).
     // provider/model 은 보존(FR-07 — resetChat 동일 정책).
-    loadConversation: (conversationId, messages) =>
+    loadConversation: (conversationId, messages, title) =>
       set((state) => ({
         conversationId,
         messages,
         error: null,
         isStreaming: false,
+        // 복원 대화의 제목(목록 title). 미전달이면 null("새 대화").
+        conversationTitle: title ?? null,
         provider: state.provider,
         model: state.model,
         // 워크스페이스 정체성은 복원에도 불변(같은 워크스페이스 내 복원).
@@ -413,6 +478,17 @@ export function createChatStore(): StoreApi<ChatStore> {
       // 중복 가드(사용자 결정: 진행 중이면 무시). store 레벨로 끌어
       // 올려 어디서 호출돼도 단일 진실(이전엔 useChat 가드).
       if (get().isStreaming) return;
+
+      // 세션 첫 질의 판별 — messages 0개면 이번이 첫 질의다(user+assistant
+      // 를 아래 set 으로 추가하기 "전"에 캡처). 첫 질의면 nano 제목 생성을
+      // fire-and-forget 으로 병행(메인 SSE 와 독립 — 응답을 기다리지 않음).
+      // 입력은 displayContent(첨부 추출 전 사용자 원문) 우선 — 긴 합본 query
+      // 대신 사용자가 실제 친 텍스트로 제목을 짓는다.
+      const isFirstTurn = get().messages.length === 0;
+      if (isFirstTurn) {
+        const titleSeed = (displayContent ?? query).trim();
+        if (titleSeed) void get().requestTitle(titleSeed);
+      }
 
       // user + 빈 assistant 메시지를 원자 추가 + 스트리밍 시작(추가
       // 시점과 스트림 사이 race 차단 — loadConversation 원자성 정신).

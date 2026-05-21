@@ -142,6 +142,64 @@ function ReasoningBlock({
 }
 
 /**
+ * 번역 대기 중 reasoning step 스켈레톤.
+ *
+ * 사용자 요구: **사고 본문(content)만** 스켈레톤. 제목(라벨 '질문 분석 중'
+ * 등)은 그대로 텍스트로 둔다(스켈레톤 X).
+ *
+ * Layout shift 0 원리(웹검색 확인 — CSS-Tricks/MDN): placeholder 가 실제
+ * 콘텐츠와 동일한 요소·line-height·줄 수를 차지하면 높이가 안 바뀐다. 그래서
+ * 원문 본문을 ReasoningBlock 과 **동일하게** 렌더하고(같은 마크다운·같은
+ * THINKING_MD_CLASS·같은 박스), .thinking-skeleton-body 로 **글자 색만**
+ * 투명하게 + 글자 자리에 회색 배경만 입힌다. line-height/padding/margin 등
+ * 높이에 영향 주는 속성은 일절 건드리지 않는다 → 번역 전후 높이 완전 동일.
+ * box-decoration-break:clone 으로 wrap 된 줄마다 사각형이 자연히 끊긴다.
+ */
+function ReasoningSkeleton({
+  title,
+  content,
+}: {
+  title: string;
+  content: string;
+}): ReactNode {
+  const inProgress = isInProgress(title);
+  return (
+    <div>
+      {/* 제목 — 원문 그대로(스켈레톤 아님). ReasoningBlock 과 동일 스타일. */}
+      <div
+        style={{
+          fontSize: 12.5,
+          fontWeight: 600,
+          color: "var(--text-default)",
+          marginBottom: 6,
+        }}
+      >
+        {title}
+        {inProgress && <span aria-hidden> ...</span>}
+      </div>
+      {content.trim().length > 0 && (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderRadius: 6,
+            background: "rgba(156,163,175,0.10)",
+            color: "var(--neutral-600)",
+          }}
+        >
+          {/* 본문만 스켈레톤 — 원문과 동일 렌더(높이 일치), 글자만 회색 덮기. */}
+          <div aria-hidden className="thinking-skeleton-body">
+            <ChatMarkdown
+              content={preprocessThinking(content)}
+              className={THINKING_MD_CLASS}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * 접을 수 있는 I/O 값 (medigate-new IOPairPrimitives.FoldableValue
  * 모방). 한 줄 요약(ioSummary)만 노출하고, 정보가 잘렸으면(needsFold)
  * ▽ 토글로 원문 전체를 <pre> 펼침. 짧으면 요약만(클릭 불가).
@@ -367,11 +425,36 @@ function ToolBlock({
   );
 }
 
-function StepView({ step }: { step: ThinkingStep }): ReactNode {
-  return step.kind === "reasoning" ? (
-    <ReasoningBlock title={step.title} content={step.content} />
-  ) : (
-    <ToolBlock step={step} />
+/**
+ * 한 step 을 렌더한다. reasoning 은 번역 상태(translation/loading)를
+ * 반영한다(IO=tool step 은 번역 대상 아님 — 사용자 요구):
+ *  - loading=true  → 스켈레톤(번역 대기).
+ *  - translation 있음 → 번역된 title/content.
+ *  - 그 외 → 원문.
+ */
+function StepView({
+  step,
+  translation,
+  loading,
+}: {
+  step: ThinkingStep;
+  /** reasoning step 의 번역본({title,content}). 없으면 원문. */
+  translation?: { title: string; content: string };
+  /** 번역 진행 중(reasoning 만 스켈레톤). */
+  loading?: boolean;
+}): ReactNode {
+  if (step.kind !== "reasoning") {
+    return <ToolBlock step={step} />;
+  }
+  // 번역 중 스켈레톤은 원문 step 을 그대로 렌더(높이 일치 — 깜빡임 0).
+  if (loading) {
+    return <ReasoningSkeleton title={step.title} content={step.content} />;
+  }
+  return (
+    <ReasoningBlock
+      title={translation?.title ?? step.title}
+      content={translation?.content ?? step.content}
+    />
   );
 }
 
@@ -417,6 +500,60 @@ export function ThinkingPanel({
   // 의 "이펙트 내 동기 setState" 안티패턴 회피, 외부 이벤트 동기화).
   const outSeenAtRef = useRef<Map<number, number>>(new Map());
   const [liveVisible, setLiveVisible] = useState<ThinkingStep[]>([]);
+
+  // 사고 번역 상태(세션 메모리 — 컴포넌트 로컬). reasoning step 만 대상
+  // (IO=tool step 제외). order → {title,content} 번역본 맵. showTranslated
+  // 로 원문↔번역 토글, loading 시 reasoning 스켈레톤. 실패는 조용히 무시.
+  const [translations, setTranslations] = useState<Map<
+    number,
+    { title: string; content: string }
+  > | null>(null);
+  const [showTranslated, setShowTranslated] = useState(false);
+  const [translating, setTranslating] = useState(false);
+
+  // reasoning step 의 title+content 를 모아 한 번에 번역 요청한다(사용자
+  // 결정: 한 번의 호출로 일괄). title/content 를 한 항목당 2칸으로 평탄화해
+  // 보내고, 응답을 다시 step.order 별 {title,content} 로 복원한다.
+  const handleTranslate = async (): Promise<void> => {
+    // 이미 번역돼 있으면 재호출 없이 표시만 토글(원상복귀 ↔ 다시 보기).
+    if (translations) {
+      setShowTranslated((v) => !v);
+      return;
+    }
+    const targets = steps.filter(
+      (s): s is Extract<ThinkingStep, { kind: "reasoning" }> =>
+        s.kind === "reasoning",
+    );
+    if (targets.length === 0) return;
+    // [title0, content0, title1, content1, ...] 로 평탄화(빈 칸도 보존 —
+    // 인덱스 매핑 유지). 응답 배열도 같은 순서·길이로 온다.
+    const flat = targets.flatMap((s) => [s.title, s.content]);
+    setTranslating(true);
+    try {
+      const res = await fetch("/api/chat/translate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ texts: flat }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { translations?: unknown };
+      const out = data.translations;
+      if (!Array.isArray(out) || out.length !== flat.length) return;
+      const map = new Map<number, { title: string; content: string }>();
+      targets.forEach((s, i) => {
+        map.set(s.order, {
+          title: String(out[i * 2] ?? s.title),
+          content: String(out[i * 2 + 1] ?? s.content),
+        });
+      });
+      setTranslations(map);
+      setShowTranslated(true);
+    } catch {
+      // 네트워크 오류 — 번역 없이 원문 유지.
+    } finally {
+      setTranslating(false);
+    }
+  };
 
   useEffect(() => {
     if (!liveMode || !hasAny) {
@@ -472,50 +609,106 @@ export function ThinkingPanel({
       ? cyclingLabel || "답변 과정"
       : "답변 과정";
 
+  // 번역 버튼 노출 조건: 히스토리 모드(완료=!streaming) + 패널 열림 +
+  // 번역할 reasoning step 이 1개 이상(IO=tool 만 있으면 숨김). 스트리밍
+  // 중엔 사고가 계속 바뀌므로 노출하지 않는다(완료 후 열람용).
+  const hasReasoning = visibleSteps.some((s) => s.kind === "reasoning");
+  const showTranslateBtn = !streaming && open && hasReasoning;
+
   return (
     <div style={{ width: "100%" }}>
-      <button
-        type="button"
-        onClick={handleToggle}
-        aria-expanded={open}
-        aria-disabled={streaming}
-        disabled={streaming}
+      {/* 헤더 행 — 좌측 토글, 우측 번역 버튼(히스토리 모드). */}
+      <div
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
-          gap: 5,
-          padding: "4px 4px 4px 0",
-          border: "none",
-          background: "transparent",
-          fontSize: 12.5,
-          color: "var(--text-subtle)",
-          // 스트리밍 중엔 토글 불가 → 클릭 가능 신호(pointer) 제거.
-          cursor: streaming ? "default" : "pointer",
-          fontWeight: 500,
+          justifyContent: "space-between",
+          gap: 8,
         }}
       >
-        <span>{label}</span>
-        {/* 점 펄스 색을 헤더 텍스트(--text-subtle)와 통일 — DotPulse 는
-            currentColor 상속이므로 별도 color 오버라이드를 두지 않는다. */}
-        {streaming && <DotPulse />}
-        {/* 폴딩 마크(chevron)는 스트리밍 중 미렌더 — 실시간엔 자동
-            펼침 고정이라 폴딩 상태 표시가 혼란을 준다(요구사항).
-            완료 후에만 접기/펴기 마크 노출 → 그때부터 토글 가능. */}
-        {!streaming &&
-          (open ? (
-            <ChevronUp
-              size={13}
-              style={{ color: "var(--neutral-600)" }}
-              aria-hidden
-            />
-          ) : (
-            <ChevronDown
-              size={13}
-              style={{ color: "var(--neutral-600)" }}
-              aria-hidden
-            />
-          ))}
-      </button>
+        <button
+          type="button"
+          onClick={handleToggle}
+          aria-expanded={open}
+          aria-disabled={streaming}
+          disabled={streaming}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "4px 4px 4px 0",
+            border: "none",
+            background: "transparent",
+            fontSize: 12.5,
+            color: "var(--text-subtle)",
+            // 스트리밍 중엔 토글 불가 → 클릭 가능 신호(pointer) 제거.
+            cursor: streaming ? "default" : "pointer",
+            fontWeight: 500,
+          }}
+        >
+          <span>{label}</span>
+          {/* 점 펄스 색을 헤더 텍스트(--text-subtle)와 통일 — DotPulse 는
+              currentColor 상속이므로 별도 color 오버라이드를 두지 않는다. */}
+          {streaming && <DotPulse />}
+          {/* 폴딩 마크(chevron)는 스트리밍 중 미렌더 — 실시간엔 자동
+              펼침 고정이라 폴딩 상태 표시가 혼란을 준다(요구사항).
+              완료 후에만 접기/펴기 마크 노출 → 그때부터 토글 가능. */}
+          {!streaming &&
+            (open ? (
+              <ChevronUp
+                size={13}
+                style={{ color: "var(--neutral-600)" }}
+                aria-hidden
+              />
+            ) : (
+              <ChevronDown
+                size={13}
+                style={{ color: "var(--neutral-600)" }}
+                aria-hidden
+              />
+            ))}
+        </button>
+
+        {/* ENG → 한글 번역 토글(우측 상단). 클릭 시 일괄 번역, 완료되면
+            라벨이 "한글 → ENG"(원상복귀)로 바뀐다. 번역 중엔 비활성 +
+            진행 표시. 번역본은 한 번 받으면 캐시(재토글은 표시만 전환). */}
+        {showTranslateBtn && (
+          <button
+            type="button"
+            onClick={() => void handleTranslate()}
+            disabled={translating}
+            aria-busy={translating}
+            title={
+              showTranslated
+                ? "원문(영어)으로 되돌리기"
+                : "사고 과정을 한국어로 번역"
+            }
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "3px 9px",
+              border: "1px solid var(--t-neutral-8)",
+              borderRadius: 999,
+              background: "white",
+              fontSize: 11,
+              fontWeight: 600,
+              color: showTranslated
+                ? "var(--text-subtle)"
+                : "var(--agent-600)",
+              cursor: translating ? "wait" : "pointer",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+          >
+            {translating
+              ? "번역 중…"
+              : showTranslated
+                ? "한글 → ENG"
+                : "ENG → 한글"}
+          </button>
+        )}
+      </div>
       {open && hasAny && (
         <div
           style={{
@@ -542,7 +735,20 @@ export function ThinkingPanel({
                   }}
                 />
               )}
-              <StepView step={s} />
+              {/* 번역 props 는 reasoning step 에만 의미. loading 은 번역
+                  중 reasoning 만 스켈레톤. showTranslated 면 order 별
+                  번역본 전달(없으면 원문 폴백). */}
+              <StepView
+                step={s}
+                loading={
+                  translating && s.kind === "reasoning" ? true : undefined
+                }
+                translation={
+                  showTranslated && s.kind === "reasoning"
+                    ? translations?.get(s.order)
+                    : undefined
+                }
+              />
             </div>
           ))}
         </div>

@@ -34,12 +34,19 @@ describe("D14a: 챗 store 의 stage 이벤트 무시 (회귀 0 코드 증명)", 
   }
 
   function mockFetch(events: object[]): ReturnType<typeof vi.fn> {
-    const spy = vi.fn().mockResolvedValue(
-      new Response(sseBody(events), {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      }),
-    );
+    // 첫 질의 → startStream 이 /api/chat/title 도 병행 호출. URL 분기로
+    // title 라우트엔 JSON, 그 외엔 SSE(호출마다 새 Response).
+    const spy = vi.fn((url: string) => {
+      if (typeof url === "string" && url.includes("/api/chat/title")) {
+        return Promise.resolve(Response.json({ title: "T" }));
+      }
+      return Promise.resolve(
+        new Response(sseBody(events), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      );
+    });
     vi.stubGlobal("fetch", spy);
     return spy;
   }

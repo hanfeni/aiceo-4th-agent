@@ -290,3 +290,99 @@ describe("buildHarnessConfig — 요청별 하네스 토글 오버라이드 (R2)
     expect(cfg.skills.enabled).toBe(true);
   });
 });
+
+// 워크스페이스(에이전트 A/B/C) 스킬·서브에이전트 멀티선택 필터 — 6번째
+// 인자 selection. null=전체(회귀 0), 배열=그 name 만, []=전부 끔(R2 단일지점).
+describe("buildHarnessConfig — 워크스페이스 멀티선택 필터(selection)", () => {
+  const baseEnv = {
+    LLM_PROVIDER: "anthropic",
+    LLM_MODEL: "claude",
+    HARNESS_SKILLS: "true",
+    HARNESS_SUBAGENTS: "true",
+  } as const;
+
+  // selection 인자는 (env, idx, sql, overrides, graphDataset, selection) 6번째.
+  const withSelection = (selection: {
+    skills?: string[] | null;
+    subagents?: string[] | null;
+  }): ReturnType<typeof buildHarnessConfig> =>
+    buildHarnessConfig(
+      { ...baseEnv },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      selection,
+    );
+
+  it("selection 미지정 → 전체(기존 동작 — 회귀 0)", () => {
+    const cfg = buildHarnessConfig({ ...baseEnv });
+    expect(cfg.subagents.length).toBeGreaterThan(0);
+    expect(cfg.skills.sources.length).toBeGreaterThan(0);
+  });
+
+  it("selection.subagents=[] → 서브에이전트 전부 제외(토글 ON 이어도)", () => {
+    const cfg = withSelection({ subagents: [] });
+    expect(cfg.subagents).toEqual([]);
+    // skills 는 selection 미지정(undefined)이라 전체 유지.
+    expect(cfg.skills.sources.length).toBeGreaterThan(0);
+  });
+
+  it("selection.subagents=['web-searcher'] → 그 서브에이전트만 통과", () => {
+    const cfg = withSelection({ subagents: ["web-searcher"] });
+    expect(cfg.subagents.every((s) => s.name === "web-searcher")).toBe(true);
+    expect(cfg.subagents.find((s) => s.name === "web-searcher")).toBeTruthy();
+  });
+
+  it("selection.subagents=['nonexistent'] → 매칭 0 → 빈 배열", () => {
+    const cfg = withSelection({ subagents: ["nonexistent-agent"] });
+    expect(cfg.subagents).toEqual([]);
+  });
+
+  it("selection.subagents=null → 전체(명시적 null 도 전체)", () => {
+    const cfg = withSelection({ subagents: null });
+    expect(cfg.subagents.length).toBeGreaterThan(0);
+  });
+
+  it("selection.skills=[] → 스킬 sources 전부 제외(토글 ON 이어도)", () => {
+    const cfg = withSelection({ skills: [] });
+    expect(cfg.skills.sources).toEqual([]);
+    expect(cfg.skills.enabled).toBe(false); // sources 0 → enabled false
+  });
+
+  it("selection.skills=['deep-web-research'] → 그 스킬 source 만", () => {
+    const cfg = withSelection({ skills: ["deep-web-research"] });
+    // 내장 스킬 source(/deep-web-research/)가 통과.
+    expect(cfg.skills.sources).toContain("/deep-web-research/");
+    expect(cfg.skills.enabled).toBe(true);
+  });
+
+  it("selection.skills=['nonexistent'] → 매칭 0 → sources 빈 배열", () => {
+    const cfg = withSelection({ skills: ["no-such-skill"] });
+    expect(cfg.skills.sources).toEqual([]);
+  });
+
+  it("skills 토글 OFF 면 selection 무관하게 sources [] (토글 우선)", () => {
+    const cfg = buildHarnessConfig(
+      { ...baseEnv, HARNESS_SKILLS: "false" },
+      undefined,
+      undefined,
+      { skills: false },
+      undefined,
+      { skills: ["deep-web-research"] },
+    );
+    expect(cfg.skills.sources).toEqual([]);
+  });
+
+  it("subagents 토글 OFF 면 selection 무관하게 [] (토글 우선)", () => {
+    const cfg = buildHarnessConfig(
+      { ...baseEnv },
+      undefined,
+      undefined,
+      { subagents: false },
+      undefined,
+      { subagents: ["web-searcher"] },
+    );
+    expect(cfg.subagents).toEqual([]);
+  });
+});

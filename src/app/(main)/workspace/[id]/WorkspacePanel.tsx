@@ -14,6 +14,7 @@ import {
   type HarnessProfile,
   type HarnessElement,
 } from "@/lib/agent/harness/profiles";
+import { WorkspaceSelectionControls } from "./WorkspaceSelectionControls";
 
 /**
  * WorkspacePanel — 챗 에이전트 복제본(에이전트 A/B/C) 클라이언트 래퍼.
@@ -224,6 +225,11 @@ function AgentControlBar({ profile }: { profile: HarnessProfile }): ReactNode {
           </option>
         ))}
       </select>
+
+      {/* 스킬·서브에이전트 멀티선택 — 프로필별 .data/ 영속(서버 단일 소스).
+          변경 시 PUT + resetChat → 다음 요청에서 서버가 새 selection 으로
+          그래프 재빌드(agent.ts graphSig 에 selection 포함). */}
+      <WorkspaceSelectionControls profileId={profile.id} />
     </div>
   );
 }

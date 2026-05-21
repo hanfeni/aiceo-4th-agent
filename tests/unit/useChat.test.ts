@@ -32,14 +32,33 @@ function sseBody(events: object[]): ReadableStream<Uint8Array> {
 
 /** fetch 를 SSE 200 응답으로 모킹. 호출 인자 캡처용 spy 반환. */
 function mockFetchOk(events: object[]): ReturnType<typeof vi.fn> {
-  const spy = vi.fn().mockResolvedValue(
-    new Response(sseBody(events), {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    }),
-  );
+  // 첫 질의 시 startStream 이 /api/chat 외에 /api/chat/title 도 병행
+  // 호출(nano 제목). URL 분기로 title 라우트엔 JSON, 그 외엔 SSE.
+  const spy = vi.fn((url: string) => {
+    if (typeof url === "string" && url.includes("/api/chat/title")) {
+      return Promise.resolve(Response.json({ title: "T" }));
+    }
+    return Promise.resolve(
+      new Response(sseBody(events), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      }),
+    );
+  });
   vi.stubGlobal("fetch", spy);
   return spy;
+}
+
+/**
+ * spy 호출 중 메인 /api/chat (제목 라우트 제외) 호출의 body 를 파싱한다.
+ * 첫 질의에 /api/chat/title 이 먼저 호출될 수 있어 calls[0] 단정은 불안정
+ * — URL 로 명시적으로 골라낸다.
+ */
+function chatBody(spy: ReturnType<typeof vi.fn>): Record<string, unknown> {
+  const call = spy.mock.calls.find(
+    (c) => !String(c[0]).includes("/api/chat/title"),
+  );
+  return JSON.parse((call?.[1] as RequestInit).body as string);
 }
 
 function resetStore(): void {
@@ -96,8 +115,13 @@ describe("useChat — 전송 가드 (TC-23.1/23.2)", () => {
     await act(async () => {
       await result.current.send("  안녕  ");
     });
-    expect(spy).toHaveBeenCalledTimes(1);
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    // /api/chat 전송은 정확히 1회(첫 질의라 /api/chat/title 도 호출됨 —
+    // 전송 자체 1회 검증은 chat 라우트 호출 수로).
+    const chatCalls = spy.mock.calls.filter(
+      (c) => !String(c[0]).includes("/api/chat/title"),
+    );
+    expect(chatCalls).toHaveLength(1);
+    const body = chatBody(spy);
     expect(body.query).toBe("안녕");
   });
 
@@ -113,7 +137,7 @@ describe("useChat — 전송 가드 (TC-23.1/23.2)", () => {
     await act(async () => {
       await result.current.send("안녕");
     });
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.model).toBe("gpt-5.5");
     expect(body.query).toBe("안녕");
   });
@@ -128,7 +152,7 @@ describe("useChat — 전송 가드 (TC-23.1/23.2)", () => {
     await act(async () => {
       await result.current.send("안녕");
     });
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.model).toBeUndefined();
   });
 });
@@ -263,16 +287,16 @@ describe("useChat — conversationId 재사용 (R3 / TC-3.5)", () => {
     await act(async () => {
       await result.current.send("2턴");
     });
-    const secondCall = (
-      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-    ).mock.calls[0];
-    const body = JSON.parse((secondCall[1] as RequestInit).body as string);
+    // 2턴은 첫 질의가 아니라 /api/chat/title 미호출 — chatBody 가
+    // /api/chat 호출만 골라낸다.
+    const body = chatBody(
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>,
+    );
     expect(body.conversationId).toBe("thread-keep");
     expect(body.query).toBe("2턴");
-    // 1턴 send 의 첫 호출엔 conversationId 가 없어야 함(최초)
-    const firstBody = JSON.parse(
-      (spy.mock.calls[0][1] as RequestInit).body as string,
-    );
+    // 1턴 send 의 /api/chat 호출엔 conversationId 가 없어야 함(최초).
+    // 1턴은 첫 질의라 /api/chat/title 도 호출되므로 chatBody 로 분리.
+    const firstBody = chatBody(spy);
     expect(firstBody.conversationId).toBeUndefined();
   });
 });
@@ -312,10 +336,10 @@ describe("useChat — 첨부 처리 (이미지/텍스트 분기)", () => {
     await act(async () => {
       await result.current.send("이 사진?", [imgFile()]);
     });
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.query).toBe("이 사진?");
     expect(Array.isArray(body.images)).toBe(true);
-    expect(body.images[0]).toMatch(/^data:image\/png;base64,/);
+    expect((body.images as string[])[0]).toMatch(/^data:image\/png;base64,/);
   });
 
   it("텍스트/PDF/DOCX 첨부 → 추출 텍스트가 query 에 합쳐짐(images 없음)", async () => {
@@ -327,7 +351,7 @@ describe("useChat — 첨부 처리 (이미지/텍스트 분기)", () => {
     await act(async () => {
       await result.current.send("요약해줘", [txtFile("doc.txt")]);
     });
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.query).toContain("요약해줘");
     expect(body.query).toContain("[추출:doc.txt]");
     expect(body.images).toBeUndefined();
@@ -342,7 +366,7 @@ describe("useChat — 첨부 처리 (이미지/텍스트 분기)", () => {
     await act(async () => {
       await result.current.send("분석", [imgFile(), txtFile()]);
     });
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.images).toHaveLength(1);
     expect(body.query).toContain("[추출:n.txt]");
   });
@@ -367,7 +391,7 @@ describe("useChat — 첨부 처리 (이미지/텍스트 분기)", () => {
       await result.current.send("", [imgFile()]);
     });
     expect(spy).toHaveBeenCalledTimes(1);
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.images).toHaveLength(1);
   });
 
@@ -380,7 +404,7 @@ describe("useChat — 첨부 처리 (이미지/텍스트 분기)", () => {
     await act(async () => {
       await result.current.send("일반 메시지");
     });
-    const body = JSON.parse((spy.mock.calls[0][1] as RequestInit).body as string);
+    const body = chatBody(spy);
     expect(body.query).toBe("일반 메시지");
     expect(body.images).toBeUndefined();
   });

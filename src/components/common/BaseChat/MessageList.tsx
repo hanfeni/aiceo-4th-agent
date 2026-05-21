@@ -301,6 +301,8 @@ function AssistantBubble({
   // 본문에서 즉시 절단해 사용자에게 마커가 노출되지 않는다(누출 0).
   // 닫는 태그가 와야 recQueries 가 채워진다 → 칩은 답변 완료 후 등장.
   const { body, recQueries } = splitRecQueries(content);
+  // 입력창 하단 스위치 — false 면 마크다운 해석 없이 원문 텍스트 그대로 렌더.
+  const markdownEnabled = useChatStore((s) => s.markdownEnabled);
   const onCopy = (): void => {
     // 복사는 trivial+useful — 실제 클립보드 복사 허용(스코프 예외 명시).
     // 마커 제외 본문만 복사(사용자가 보는 것과 일치).
@@ -344,7 +346,24 @@ function AssistantBubble({
           </div>
         )}
         <div style={{ minHeight: 22 }}>
-          <ChatMarkdown content={body} />
+          {markdownEnabled ? (
+            <ChatMarkdown content={body} />
+          ) : (
+            // 스위치 OFF — 마크다운 기호 비해석, 원문 그대로(줄바꿈·공백 보존).
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                fontFamily: "inherit",
+                fontSize: 14,
+                lineHeight: 1.6,
+                color: "var(--text-default)",
+              }}
+            >
+              {body}
+            </pre>
+          )}
         </div>
 
         {/* 참고 출처(References) — web_search citation. 스트리밍 종료

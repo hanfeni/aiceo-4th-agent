@@ -93,14 +93,29 @@ export function parseToggle(
  * R2 단일지점 원칙에 가장 맞는 정책을 골라 구현하라. 5~10줄.
  * 기본 골격만 두었다 — 정책을 확정해 교체할 것.
  */
+/**
+ * skill source 경로(/<name>/)에서 slug(name)를 뽑는다.
+ * SKILL_SOURCES 항목은 backend root 기준 POSIX 절대경로(/deep-web-research/).
+ */
+function skillSourceName(source: string): string {
+  return source.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
 function resolveSkillSources(
   skillsToggle: boolean,
   filesystemEnabled: boolean,
+  // 워크스페이스 멀티선택(name 목록). null/undefined = 전체(기존 동작).
+  // 배열이면 그 name 에 해당하는 source 만 활성(나머지 제외). 빈 배열 = 전부 끔.
+  selectedSkills?: string[] | null,
 ): string[] {
-  // PLACEHOLDER — 사용자가 의존성 해소 정책을 구현할 지점.
-  // 현재는 가장 보수적인 (a) 골격: 둘 다 켜져야만 sources 반환.
+  // (a) 정책: skills·filesystem 둘 다 켜져야 sources 반환(의존성 해소).
   if (!skillsToggle || !filesystemEnabled) return [];
-  return [...SKILL_SOURCES];
+  const all = [...SKILL_SOURCES];
+  // 미선택(null) = 전체 — 기존 동작 100% 동일(회귀 0).
+  if (selectedSkills == null) return all;
+  const allowed = new Set(selectedSkills);
+  // 선택된 name 에 해당하는 source 만(실재 SKILL_SOURCES 교집합 — 위조 차단).
+  return all.filter((src) => allowed.has(skillSourceName(src)));
 }
 
 /**
@@ -134,6 +149,11 @@ export function buildHarnessConfig(
   // 도구 포함(수업1·3 연결: GRAPH_DATASETS SSOT 가 드롭다운·도구
   // 단일 소스). 미지정=도구 없음(회귀 0). 변경 시 캐시 키 변경=리프레시.
   graphDataset?: string,
+  // 워크스페이스(에이전트 A/B/C) 스킬·서브에이전트 멀티선택. 각 필드
+  // null/미지정 = 전체(기존 동작 — 회귀 0), 배열 = 그 name 만 활성.
+  // subagents 토글이 켜진 전제에서 어떤 서브에이전트를, skills 토글이
+  // 켜진 전제에서 어떤 스킬을 부여할지 추가 필터(토글 OFF 면 무관 — []).
+  selection?: { skills?: string[] | null; subagents?: string[] | null },
 ): HarnessConfig {
   // 잘못된 provider 를 은폐하지 않는다(무음 폴백 0 — AC-4). LLM 호출 아님.
   resolveProvider(env);
@@ -154,16 +174,28 @@ export function buildHarnessConfig(
     overrides?.filesystem,
   );
   const skillsToggle = resolve(env.HARNESS_SKILLS, overrides?.skills);
-  const skillSources = resolveSkillSources(skillsToggle, filesystemEnabled);
+  const skillSources = resolveSkillSources(
+    skillsToggle,
+    filesystemEnabled,
+    selection?.skills,
+  );
 
   // 서브에이전트 = 내장(HARNESS_SUBAGENTS) + 사용자가 하네스 관리에서
   // 만든 커스텀(.data/subagents.json, subagentStore 캐시). subagents
   // 토글이 켜졌을 때만 합성(꺼지면 []). listCustomSubagentSpecs 는
   // globalThis 캐시 우선이라 매 호출 디스크 접근 0(SQL/graph 도구가
   // getSchema/getDataset 로 메모리 조회하는 것과 동일 사상).
-  const allSubagents = subagentsEnabled
+  //
+  // 워크스페이스 멀티선택(selection.subagents): null=전체(회귀 0), 배열이면
+  // 그 name 만 통과(내장·커스텀 공통). 빈 배열 = 전부 제외(토글 ON 이어도
+  // 부여 0 — 사용자가 명시적으로 다 끈 상태).
+  const composed = subagentsEnabled
     ? [...HARNESS_SUBAGENTS, ...listCustomSubagentSpecs()]
     : [];
+  const allSubagents =
+    selection?.subagents == null
+      ? composed
+      : composed.filter((s) => selection.subagents!.includes(s.name));
 
   return {
     planning: { enabled: planningEnabled },

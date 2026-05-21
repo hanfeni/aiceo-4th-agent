@@ -308,12 +308,21 @@ describe("chat store", () => {
     }
 
     function mockFetch(events: object[]): ReturnType<typeof vi.fn> {
-      const spy = vi.fn().mockResolvedValue(
-        new Response(sseBody(events), {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        }),
-      );
+      // 첫 질의 시 startStream 이 /api/chat 외에 /api/chat/title 도
+      // 병행 호출한다(nano 제목 생성, fire-and-forget). URL 로 분기해
+      // title 라우트엔 JSON {title}, 그 외엔 SSE 를 돌려준다(SSE Response
+      // 는 호출마다 새로 만들어 body 스트림 재사용 충돌 0).
+      const spy = vi.fn((url: string) => {
+        if (typeof url === "string" && url.includes("/api/chat/title")) {
+          return Promise.resolve(Response.json({ title: "테스트 제목" }));
+        }
+        return Promise.resolve(
+          new Response(sseBody(events), {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      });
       vi.stubGlobal("fetch", spy);
       return spy;
     }
@@ -353,18 +362,27 @@ describe("chat store", () => {
       const gate = new Promise<void>((r) => (resolvePull = r));
       vi.stubGlobal(
         "fetch",
-        vi.fn().mockResolvedValue(
-          new Response(
-            new ReadableStream<Uint8Array>({
-              async pull(c) {
-                await gate; // 첫 청크 전 멈춤 → 진행 중 상태 관찰
-                c.enqueue(enc.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
-                c.close();
-              },
-            }),
-            { status: 200, headers: { "content-type": "text/event-stream" } },
-          ),
-        ),
+        vi.fn((url: string) => {
+          // 첫 질의 → /api/chat/title 병행 호출. JSON 으로 즉시 응답
+          // (게이트 Response 를 공유하면 body 스트림 충돌).
+          if (typeof url === "string" && url.includes("/api/chat/title")) {
+            return Promise.resolve(Response.json({ title: "T" }));
+          }
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                async pull(c) {
+                  await gate; // 첫 청크 전 멈춤 → 진행 중 상태 관찰
+                  c.enqueue(
+                    enc.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`),
+                  );
+                  c.close();
+                },
+              }),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          );
+        }),
       );
       const p = store.getState().startStream({ query: "진행중" });
       // 마이크로태스크 양보 후: 메시지 추가 + isStreaming true
@@ -390,7 +408,11 @@ describe("chat store", () => {
         query: "Q",
         images: ["data:image/png;base64,AAA"],
       });
-      const body = JSON.parse(spy.mock.calls[0]?.[1]?.body as string);
+      // /api/chat 호출만 찾는다(title 라우트 호출이 섞일 수 있음).
+      const chatCall = spy.mock.calls.find(
+        (c) => !String(c[0]).includes("/api/chat/title"),
+      );
+      const body = JSON.parse(chatCall?.[1]?.body as string);
       expect(body).toMatchObject({
         query: "Q",
         conversationId: "prev",
