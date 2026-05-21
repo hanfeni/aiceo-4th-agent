@@ -9,6 +9,7 @@ import {
   getWorkspaceSelection,
   type WorkspaceSelection,
 } from "./harness/workspaceSelectionStore";
+import { resolveAgentComposition } from "./harness/agents/customAgentStore";
 import type { SearchDomain } from "@/lib/searchlab/domains";
 import type { SqlDomain } from "@/lib/sqllab/domains";
 import { tableInfo } from "@/lib/sqllab/db";
@@ -108,14 +109,15 @@ function buildGraph(
   graphDataset?: string,
   overrides?: HarnessOverrides,
   instructionId?: string,
+  // customAgentId 경로에서 resolveAgentComposition 이 결정한 selection 오버라이드.
+  // 지정 시 profileId 기반 getWorkspaceSelection 을 우회한다(R2 불변: registry 무변경).
+  selectionOverride?: WorkspaceSelection,
 ): DeepAgentGraph {
   const env = process.env as unknown as HarnessEnv;
-  // 워크스페이스(A/B/C) 스킬·서브에이전트 멀티선택 — profileId 기준으로
-  // .data/ 영속 store 에서 조회(클라이언트 body 미경유 — 서버 단일 소스).
-  // profileId 없으면(기존 /chat) 전체 선택(null) → 회귀 0.
-  const selection: WorkspaceSelection = profileId
-    ? getWorkspaceSelection(profileId)
-    : { skills: null, subagents: null };
+  // customAgentId 경로: selectionOverride 사용. profileId 경로: getWorkspaceSelection.
+  // 미지정(기존 /chat): 전체 선택(null) → 회귀 0.
+  const selection: WorkspaceSelection = selectionOverride
+    ?? (profileId ? getWorkspaceSelection(profileId) : { skills: null, subagents: null });
   // HarnessConfig.tools/checkpointer 는 R8 에 따라 느슨한 계약(unknown[]/
   // unknown)이다. deepagents 의 정밀 타입으로의 narrowing 은 이 단일 호출
   // 경계에서만 일어난다(model.ts 의 `as unknown as` 선례와 동일 패턴).
@@ -201,6 +203,9 @@ function getGraph(
   overrides?: HarnessOverrides,
   // 동적 시스템 인스트럭션 id. 미지정=default. 변경 시 다른 키=새 그래프.
   instructionId?: string,
+  // customAgentId 경로에서 미리 계산된 selection 오버라이드. 지정 시
+  // profileId 기반 getWorkspaceSelection 을 우회(R2 불변: registry 무변경).
+  selectionOverride?: WorkspaceSelection,
 ): Promise<DeepAgentGraph> {
   if (!g.__agent) g.__agent = {};
   if (!g.__agent.graphByModel) g.__agent.graphByModel = new Map();
@@ -209,9 +214,9 @@ function getGraph(
   // 시 다른 키 → 새 createDeepAgent= 세션 리프레시. 모두 없으면 키가
   // 기존과 동일(기존 챗 회귀 0). 선택은 PUT 으로 .data/ 에 저장된 뒤
   // 클라이언트가 resetChat → 다음 요청에서 이 sig 가 새 그래프를 만든다.
-  const selection: WorkspaceSelection = profileId
-    ? getWorkspaceSelection(profileId)
-    : { skills: null, subagents: null };
+  // customAgentId 경로: selectionOverride 사용. profileId 경로: getWorkspaceSelection.
+  const selection: WorkspaceSelection = selectionOverride
+    ?? (profileId ? getWorkspaceSelection(profileId) : { skills: null, subagents: null });
   const sig = graphSig(profileId, overrides, instructionId, selection);
   const key =
     (model ?? ENV_KEY) +
@@ -230,6 +235,7 @@ function getGraph(
       graphDataset,
       overrides,
       instructionId,
+      selectionOverride,
     ),
   );
   g.__agent.graphByModel.set(key, built);
@@ -283,6 +289,13 @@ export interface CreateStreamArgs {
    * 미지정=default 본문. 변경 시 캐시 키 변경=세션 리프레시.
    */
   instructionId?: string;
+  /**
+   * 커스텀 에이전트 id. 지정 시 resolveAgentComposition(id) 로
+   * subagentNames/skillNames/instructionId 를 로드해 selection 에 주입.
+   * profileId 와 상호 배타: customAgentId 있으면 customAgent 경로 우선.
+   * 미지정=기존 챗(회귀 0). 미존재 id 는 graceful 폴백(전체 선택).
+   */
+  customAgentId?: string;
 }
 
 /**
@@ -302,7 +315,26 @@ export async function createStream({
   graphDataset,
   overrides,
   instructionId,
+  customAgentId,
 }: CreateStreamArgs): Promise<AsyncGenerator<SseEvent>> {
+  // customAgentId 가 있으면 resolveAgentComposition 로 selection/instructionId 결정.
+  // profileId 경로(getWorkspaceSelection)와 상호 배타: customAgentId 우선.
+  // 미존재 id 는 null 반환 → 전체 선택(graceful 폴백, 회귀 0).
+  // R2 불변: buildHarnessConfig/registry.ts 변경 0 — 기존 selection 파라미터 재사용.
+  let resolvedSelection: WorkspaceSelection | undefined;
+  let resolvedInstructionId: string | undefined = instructionId;
+  if (customAgentId) {
+    const composition = resolveAgentComposition(customAgentId);
+    if (composition) {
+      resolvedSelection = {
+        subagents: composition.subagentNames,
+        skills: composition.skillNames,
+      };
+      // customAgent 의 instructionId 가 우선 — 명시 instructionId 는 무시
+      resolvedInstructionId = composition.instructionId;
+    }
+  }
+
   // SQL 도메인 선택 시 현재 적재 상태를 읽어 그래프 캐시 키에
   // 반영(미적재→적재 전환=다른 키=새 그래프=스키마 박힌 도구).
   // tableInfo 는 better-sqlite3 동기 호출(가벼움, 매 요청 1회).
@@ -322,7 +354,8 @@ export async function createStream({
     profileId,
     graphDataset,
     overrides,
-    instructionId,
+    resolvedInstructionId,
+    resolvedSelection,
   );
 
   // 이미지 있으면 LangChain v1 블록배열, 없으면 string(무회귀). 이미지

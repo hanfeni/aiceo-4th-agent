@@ -89,6 +89,12 @@ const bodySchema = z.object({
   // 미지정=default 본문(회귀 0). 임의 문자열 허용 — 미존재 id 는 서버
   // getSystemPromptBody 가 default 로 graceful 폴백(화이트리스트 불요).
   instructionId: z.string().max(128).optional(),
+  // 커스텀 에이전트 id(하네스 "에이전트 생성"에서 만든 에이전트).
+  // 지정 시 resolveAgentComposition(id) 로 subagentNames/skillNames/
+  // instructionId 를 로드해 buildHarnessConfig 의 selection 에 주입한다.
+  // profileId 와 상호 배타: customAgentId 있으면 customAgent 경로 우선.
+  // 미지정=기존 챗(회귀 0). 화이트리스트 불요(미존재 id 는 graceful 폴백).
+  customAgentId: z.string().max(64).optional(),
 });
 
 /** AD-4 — 검증 실패 응답은 SSE 아닌 JSON 400 으로 고정. */
@@ -154,6 +160,7 @@ export async function POST(req: Request): Promise<Response> {
           graphDataset: parsed.data.graphDataset,
           overrides: parsed.data.overrides,
           instructionId: parsed.data.instructionId,
+          customAgentId: parsed.data.customAgentId,
         });
         for await (const ev of gen) {
           controller.enqueue(encodeSse(ev));
