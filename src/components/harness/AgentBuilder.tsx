@@ -32,8 +32,8 @@ import {
 import { ContentModal } from "./ContentModal";
 import { FormDivider } from "./FormDivider";
 import { BenchHeader } from "@/app/(main)/harness/HarnessView";
-import type { GeneratedAgentBundle } from "@/lib/harness-introspect/generate";
-import { AgentFlowDiagram } from "./AgentFlowDiagram";
+import type { GeneratedAgentBundle, FlowStep } from "@/lib/harness-introspect/generate";
+import { AgentFlowDiagram, AgentBundleFlow } from "./AgentFlowDiagram";
 
 interface InstructionMeta {
   id: string;
@@ -71,12 +71,13 @@ interface BundleEditState {
   agentName: string;
   agentDescription: string;
   instructionId: string;
-  // 새로 생성할 스킬/서브에이전트 (체크로 포함 여부 결정)
   newSkills: Array<{ name: string; description: string; body: string; included: boolean }>;
   newSubagents: Array<{ name: string; description: string; systemPrompt: string; included: boolean }>;
-  // 기존 목록 중 활성화 여부
   existingSkillNames: Set<string>;
   existingSubagentNames: Set<string>;
+  /** AI가 생성한 동작 흐름 */
+  flowSteps: FlowStep[];
+  flowSummary: string;
 }
 
 // ── 컴포넌트 ────────────────────────────────────────────────────────────────
@@ -191,6 +192,8 @@ export function AgentBuilder({ onCreated }: AgentBuilderProps): ReactNode {
         newSubagents: r.newSubagents.map((s) => ({ ...s, included: true })),
         existingSkillNames: new Set(r.existingSkillNames),
         existingSubagentNames: new Set(r.existingSubagentNames),
+        flowSteps: r.flowSteps,
+        flowSummary: r.flowSummary,
       });
     } catch {
       setGenErr("네트워크 오류가 발생했습니다.");
@@ -435,6 +438,11 @@ export function AgentBuilder({ onCreated }: AgentBuilderProps): ReactNode {
           {bundle && (
             <>
               <FormDivider />
+              {/* AI 생성 동작 흐름 다이어그램 */}
+              <AgentBundleFlow
+                flowSteps={bundle.flowSteps}
+                flowSummary={bundle.flowSummary}
+              />
               <Step2
                 bundle={bundle}
                 instructions={instructions}
