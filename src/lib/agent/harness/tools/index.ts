@@ -7,22 +7,25 @@ import {
 } from "./webSearchTool";
 // index_search 는 도메인별 팩토리(makeIndexSearchTool)라 정적
 // HARNESS_TOOLS 배열엔 안 들어간다(registry 가 세션 도메인으로
-// 조건부 합성). 표시 메타만 여기서 매핑(사고패널/introspect 동적).
+// 조건부 합성). 표시 메타·schema(도메인 무관)만 여기서 가져온다.
 import {
   indexSearchToolDisplayName,
   indexSearchToolDescription,
+  indexSearchToolSchema,
 } from "./indexSearchTool.meta";
 // sql_query 도 도메인별 팩토리(makeSqlQueryTool) — index_search
 // 와 동일하게 정적 배열 미포함, registry 가 조건부 합성.
 import {
   sqlQueryToolDisplayName,
   sqlQueryToolDescription,
+  sqlQueryToolSchema,
 } from "./sqlQueryTool.meta";
 // graph_query 도 데이터셋별 팩토리(makeGraphQueryTool) — 동일하게
 // 정적 배열 미포함, registry 가 조건부 합성(수업1·3 연결).
 import {
   graphQueryToolDisplayName,
   graphQueryToolDescription,
+  graphQueryToolSchema,
 } from "./graphQueryTool.meta";
 
 /**
@@ -88,5 +91,41 @@ export const HARNESS_TOOL_DISPLAY_NAMES: {
     name: "graph_query",
     displayName: graphQueryToolDisplayName,
     description: graphQueryToolDescription,
+  },
+];
+
+/**
+ * 카탈로그 표시용 팩토리 도구 메타 (/harness 도구 탭 전용).
+ *
+ * index_search·sql_query·graph_query 는 도메인 선택 시에만 인스턴스가
+ * 생기는 팩토리 도구라 정적 HARNESS_TOOLS 에 없고, /harness 페이지는
+ * 세션 도메인을 모를뿐더러 팩토리 호출 시 getSchema/getMemStore(네이티브
+ * I/O) side-effect 가 page 부작용-0 원칙(AD-2)을 흔든다. 그래서 팩토리를
+ * 호출하지 않고, introspect 가 읽는 최소 형태({name, description, schema})
+ * 만 도메인 무관 메타·schema 로 합성한다. extractToolMeta 가 .name +
+ * .schema 만 보므로 이 형태로 ToolView(parameters 표·명세 포함)가 나온다.
+ *
+ * 채팅 런타임 도구 바인딩(registry 의 조건부 합성)과는 무관 — 이건 순수
+ * 표시용 카탈로그다(실행 함수 없음).
+ */
+export const HARNESS_TOOL_CATALOG: {
+  name: string;
+  description: string;
+  schema: unknown;
+}[] = [
+  {
+    name: "index_search",
+    description: indexSearchToolDescription,
+    schema: indexSearchToolSchema,
+  },
+  {
+    name: "sql_query",
+    description: sqlQueryToolDescription,
+    schema: sqlQueryToolSchema,
+  },
+  {
+    name: "graph_query",
+    description: graphQueryToolDescription,
+    schema: graphQueryToolSchema,
   },
 ];

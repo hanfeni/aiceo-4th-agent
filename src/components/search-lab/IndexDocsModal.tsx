@@ -28,9 +28,12 @@ export interface IndexDocItem {
   chunk_id?: number;
   title: string;
   body: string;
-  /** 색인된 임베딩 벡터(1536-d). 모달이 압축 표시. */
+  /** 색인된 임베딩 벡터(1536-d). 모달이 압축·더보기 표시. */
   embedding?: number[];
   embedding_dim?: number;
+  /** doc_id/chunk_id/title/body/embedding 외 모든 _source 필드.
+      올인원 색인의 메타 라벨(main_category/keywords 등). */
+  fields?: Record<string, unknown>;
 }
 
 interface IndexDocsModalProps {
@@ -58,7 +61,7 @@ const panel: CSSProperties = {
   border: "1px solid var(--t-neutral-8, #e4e4e7)",
   borderRadius: "var(--r-lg, 14px)",
   width: "min(820px, 100%)",
-  maxHeight: "86vh",
+  height: "min(680px, 88vh)",
   display: "flex",
   flexDirection: "column",
   boxShadow: "0 24px 64px rgba(0,0,0,0.22)",
@@ -88,26 +91,39 @@ function embedSummary(v: number[] | undefined, dim?: number): string {
   return `[${d}-d 벡터] 앞 8개: ${head}, … (총 ${d}개)`;
 }
 
+/** 임베딩 전체 벡터를 줄바꿈 정렬로 직렬화(더보기 시). */
+function embedFull(v: number[]): string {
+  return (
+    "[\n  " +
+    v.map((n) => n.toFixed(6)).join(", ") +
+    "\n]"
+  );
+}
+
 /**
- * 실제 색인 도큐먼트 전체를 raw 로 직렬화(임베딩만 압축).
- * 학생이 OpenSearch 에 들어간 _source 전 필드를 그대로 확인 —
- * 임베딩 1536개 raw 는 화면 도배라 차원+프리뷰로(정보 손실 0).
+ * 색인 도큐먼트의 raw JSON 직렬화 — embedding 제외 전 필드.
+ * 표준 필드(doc_id/chunk_id/title) + 동적 메타 라벨(main_category/
+ * mid_category/sub_category/keywords/meta_description 등 fields)을
+ * 있는 그대로 노출하고, body 는 가독성 위해 마지막에 펼침.
+ * embedding 은 화면 도배라 별도 블록(압축+더보기)에서 처리.
  */
 function renderRawDoc(d: IndexDocItem): string {
-  const lines = [
+  const lines: (string | null)[] = [
     "{",
     `  "doc_id": ${JSON.stringify(d.doc_id)},`,
-    typeof d.chunk_id === "number"
-      ? `  "chunk_id": ${d.chunk_id},`
-      : null,
+    typeof d.chunk_id === "number" ? `  "chunk_id": ${d.chunk_id},` : null,
     `  "title": ${JSON.stringify(d.title)},`,
-    `  "embedding": ${embedSummary(d.embedding, d.embedding_dim)},`,
-    `  "body":`,
-    "",
-    d.body,
-    "}",
-  ].filter((l): l is string => l !== null);
-  return lines.join("\n");
+  ];
+  // 동적 메타 필드(키 순서 그대로). body 는 따로 처리하므로 제외.
+  const meta = d.fields ?? {};
+  for (const [k, val] of Object.entries(meta)) {
+    if (k === "body" || k === "doc_id" || k === "chunk_id" || k === "title") {
+      continue;
+    }
+    lines.push(`  ${JSON.stringify(k)}: ${JSON.stringify(val)},`);
+  }
+  lines.push(`  "body":`, "", d.body, "}");
+  return lines.filter((l): l is string => l !== null).join("\n");
 }
 
 export function IndexDocsModal({
@@ -120,6 +136,8 @@ export function IndexDocsModal({
   const [idx, setIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // 임베딩 전체 벡터 펼침 여부. 문서 이동 시 false 로 리셋.
+  const [embedExpanded, setEmbedExpanded] = useState(false);
   // 진행 중인 from 중복 fetch 방지(화살표 연타 → 같은 페이지 2번)
   const fetchingFrom = useRef<Set<number>>(new Set());
 
@@ -185,11 +203,16 @@ export function IndexDocsModal({
   const canNext = idx < total - 1;
 
   const goNext = (): void => {
+    setEmbedExpanded(false); // 문서 바뀌면 임베딩 펼침 초기화
     setIdx((i) => {
       const n = Math.min(total - 1, i + 1);
       maybePrefetch(n);
       return n;
     });
+  };
+  const goPrev = (): void => {
+    setEmbedExpanded(false);
+    setIdx((i) => Math.max(0, i - 1));
   };
 
   return (
@@ -313,10 +336,64 @@ export function IndexDocsModal({
                   </span>
                 )}
               </div>
-              {/* 실제 OpenSearch 색인 도큐먼트 전체(raw). 임베딩
-                  벡터는 1536-d 라 차원+앞 8개로 압축(정보 손실 0
-                  — 존재·차원·형태 확인). 사용자 결정 2026-05-19. */}
+              {/* 색인 도큐먼트 raw — embedding 제외 전 필드(메타
+                  라벨 포함). 올인원 색인이면 main_category/keywords
+                  등이 동적으로 노출(사용자 결정 2026-05-21). */}
               <pre className="il-code">{renderRawDoc(cur)}</pre>
+
+              {/* 임베딩 — 압축 요약 + 더보기 토글. 1536-d raw 는
+                  화면 도배라 기본은 차원+앞 8개, "더보기" 누르면
+                  전체 벡터 펼침(사용자 결정 2026-05-21). */}
+              <div style={{ marginTop: 12 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: "var(--text-subtle)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    embedding
+                  </span>
+                  {cur.embedding && cur.embedding.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setEmbedExpanded((v) => !v)}
+                      style={{
+                        appearance: "none",
+                        border: "1px solid var(--t-neutral-8)",
+                        background: "var(--surface-default)",
+                        borderRadius: 6,
+                        padding: "2px 10px",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "var(--blue-700)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {embedExpanded
+                        ? "접기"
+                        : `더보기 (전체 ${(
+                            cur.embedding_dim ?? cur.embedding.length
+                          ).toLocaleString()}개)`}
+                    </button>
+                  )}
+                </div>
+                <pre className="il-code" style={{ marginTop: 0 }}>
+                  {embedExpanded && cur.embedding
+                    ? embedFull(cur.embedding)
+                    : embedSummary(cur.embedding, cur.embedding_dim)}
+                </pre>
+              </div>
             </>
           )}
         </div>
@@ -336,7 +413,7 @@ export function IndexDocsModal({
               type="button"
               style={navBtn(!canPrev)}
               disabled={!canPrev}
-              onClick={() => setIdx((i) => Math.max(0, i - 1))}
+              onClick={goPrev}
               aria-label="이전 문서"
             >
               ◀

@@ -15,8 +15,19 @@ export const runtime = "nodejs";
 const bodySchema = z.object({
   domain: z.enum(SEARCH_DOMAINS),
   task: z.enum(["label", "discover", "allinone", "allinone_index"]),
-  // allinone 은 발굴 20×10·실분류 5 고정이라 count 불필요(옵션).
-  count: z.number().int().min(1).max(30).optional(),
+  // label/discover 문서 수 — 1~30 또는 "all"(전체 코퍼스). 옵션.
+  count: z.union([z.number().int().min(1).max(30), z.literal("all")]).optional(),
+  // discover 발굴 회수 — 1~10(1=단일 묶음, >1=비복원 분할 병렬). 옵션.
+  discoverRounds: z.number().int().min(1).max(10).optional(),
+  // 올인원 규모 파라미터(작업모드별 문서수 파라미터화 — 2026-05-21).
+  // 미지정 시 run.ts 기본 상수(=기존값, 회귀 0). 상한은 run.ts clampInt
+  // 와 정합(과도 입력 방어 — 강의 비용·시간 제어).
+  discoverPerSet: z.number().int().min(5).max(50).optional(),
+  discoverSets: z.number().int().min(1).max(20).optional(),
+  classifyCount: z.number().int().min(1).max(30).optional(),
+  metaLimit: z
+    .union([z.number().int().min(1).max(500), z.literal("all")])
+    .optional(),
 });
 
 function encodeSse(ev: unknown): Uint8Array {

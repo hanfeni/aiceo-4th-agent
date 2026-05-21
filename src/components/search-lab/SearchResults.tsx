@@ -18,6 +18,8 @@ export interface Hit {
   chunk_id?: number;
   title: string;
   snippet: string;
+  /** 원문 본문(모달 전체보기). API SearchHit.body 정합. 없을 수도 있어 옵션. */
+  body?: string;
   score: number;
   via?: string[];
 }
@@ -32,9 +34,32 @@ export interface SqlResult {
 // CompactHit — 3-pane 비교용 1줄 카드(시안 CompactHit).
 // 순위 배지 + 제목 + score/doc_id. 스니펫은 title 아래 1줄 클램프.
 // ─────────────────────────────────────────────────────────────
-function CompactHit({ hit, rank }: { hit: Hit; rank: number }): ReactNode {
+function CompactHit({
+  hit,
+  rank,
+  onOpenDoc,
+}: {
+  hit: Hit;
+  rank: number;
+  onOpenDoc?: (hit: Hit) => void;
+}): ReactNode {
+  const clickable = !!onOpenDoc;
   return (
     <div
+      onClick={clickable ? () => onOpenDoc(hit) : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpenDoc(hit);
+              }
+            }
+          : undefined
+      }
+      title={clickable ? "클릭 시 글 전체 보기" : undefined}
       style={{
         padding: "8px 10px",
         background: "var(--surface-default)",
@@ -42,6 +67,7 @@ function CompactHit({ hit, rank }: { hit: Hit; rank: number }): ReactNode {
         borderRadius: 8,
         fontSize: 11.5,
         minWidth: 0,
+        cursor: clickable ? "pointer" : "default",
       }}
     >
       <div
@@ -117,7 +143,8 @@ function CompactHit({ hit, rank }: { hit: Hit; rank: number }): ReactNode {
 }
 
 // ─────────────────────────────────────────────────────────────
-// CompareCol — 3-pane 비교 1열(시안 CompareCol). hybrid 열 highlight.
+// CompareCol — 3-pane 비교 1열(시안 CompareCol). 왼쪽 검색 방식 선택과
+// 일치하는 열을 highlight(lexical/vector/hybrid → 해당 칼럼).
 // 검색/RAG 모드의 결과를 같은 hits 로 나란히 보여준다(같은 검색어,
 // 다른 방식의 결과 차이 — 시안 의도). 실제 단일 fetch 결과를 3열에
 // 동일 표시(현재 데이터 흐름 보존 — 방식별 별도 fetch 없음).
@@ -127,11 +154,13 @@ export function CompareCol({
   hits,
   hint,
   highlight,
+  onOpenDoc,
 }: {
   label: string;
   hits: Hit[];
   hint: string;
   highlight?: boolean;
+  onOpenDoc?: (hit: Hit) => void;
 }): ReactNode {
   return (
     <div
@@ -163,21 +192,8 @@ export function CompareCol({
         >
           {label}
         </div>
-        {highlight && (
-          <span
-            className="il-mono"
-            style={{
-              fontSize: 9,
-              color: "var(--blue-700)",
-              background: "var(--surface-default)",
-              padding: "2px 6px",
-              borderRadius: 4,
-              fontWeight: 700,
-            }}
-          >
-            ★ 추천
-          </span>
-        )}
+        {/* highlight = 왼쪽 "검색 방식"에서 현재 선택된 칼럼 표시.
+            배경·테두리·라벨색으로만 강조(추천 배지 제거 — 사용자 결정 2026-05-21). */}
       </div>
       <div
         style={{
@@ -206,6 +222,7 @@ export function CompareCol({
               key={`${h.doc_id}#${h.chunk_id ?? 0}`}
               hit={h}
               rank={i + 1}
+              onOpenDoc={onOpenDoc}
             />
           ))}
         </div>
@@ -218,17 +235,39 @@ export function CompareCol({
 // HitsList — 일반 검색 펼친 리스트(시안 HitsList). 순위 배지 + 제목 +
 // score + 스니펫. RAG 근거([1] 제목)와 동일 패턴.
 // ─────────────────────────────────────────────────────────────
-export function HitsList({ hits }: { hits: Hit[] }): ReactNode {
+export function HitsList({
+  hits,
+  onOpenDoc,
+}: {
+  hits: Hit[];
+  onOpenDoc?: (hit: Hit) => void;
+}): ReactNode {
+  const clickable = !!onOpenDoc;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {hits.map((h, i) => (
         <div
           key={`${h.doc_id}#${h.chunk_id ?? 0}`}
+          onClick={clickable ? () => onOpenDoc(h) : undefined}
+          role={clickable ? "button" : undefined}
+          tabIndex={clickable ? 0 : undefined}
+          onKeyDown={
+            clickable
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenDoc(h);
+                  }
+                }
+              : undefined
+          }
+          title={clickable ? "클릭 시 글 전체 보기" : undefined}
           style={{
             padding: "14px 16px",
             background: "var(--surface-default)",
             border: "1px solid var(--t-neutral-8)",
             borderRadius: 10,
+            cursor: clickable ? "pointer" : "default",
           }}
         >
           <div
@@ -298,11 +337,14 @@ export function RagAnswer({
   answer,
   hits,
   streaming,
+  onOpenDoc,
 }: {
   answer: string;
   hits: Hit[];
   streaming: boolean;
+  onOpenDoc?: (hit: Hit) => void;
 }): ReactNode {
+  const clickable = !!onOpenDoc;
   return (
     <div>
       {/* 실제 LLM 답변 토큰(스트리밍). 시안의 하드코딩 본문 대신
@@ -346,12 +388,27 @@ export function RagAnswer({
           {hits.map((h, i) => (
             <div
               key={`${h.doc_id}#${h.chunk_id ?? 0}`}
+              onClick={clickable ? () => onOpenDoc(h) : undefined}
+              role={clickable ? "button" : undefined}
+              tabIndex={clickable ? 0 : undefined}
+              onKeyDown={
+                clickable
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onOpenDoc(h);
+                      }
+                    }
+                  : undefined
+              }
+              title={clickable ? "클릭 시 글 전체 보기" : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
                 fontSize: 11,
                 color: "var(--text-subtle)",
+                cursor: clickable ? "pointer" : "default",
               }}
             >
               <span
@@ -472,6 +529,124 @@ export function SqlResultBlock({
             </table>
           </div>
         ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// DocViewModal — 검색 결과 1건 전체보기(fixed overlay). 아이템 클릭 시
+// 제목·doc_id·score·방식 + 원문 body 를 모달로. body 미보유(옵션)면
+// snippet 폴백. 메타라벨 SourceModal 톤 동형.
+// ─────────────────────────────────────────────────────────────
+export function DocViewModal({
+  hit,
+  onClose,
+}: {
+  hit: Hit;
+  onClose: () => void;
+}): ReactNode {
+  const fullText = hit.body && hit.body.length > 0 ? hit.body : hit.snippet;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px 16px",
+        background: "rgba(15,23,42,0.45)",
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 720,
+          maxHeight: "85vh",
+          display: "flex",
+          flexDirection: "column",
+          background: "var(--surface-default)",
+          border: "1px solid var(--t-neutral-8)",
+          borderRadius: "var(--r-lg, 12px)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "16px 20px 12px",
+            borderBottom: "1px solid var(--t-neutral-8)",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              className="il-mono"
+              style={{ fontSize: 10.5, color: "var(--text-subtle)" }}
+            >
+              {hit.doc_id}
+              {hit.chunk_id != null ? `#${hit.chunk_id}` : ""}
+              {" · score "}
+              {hit.score.toFixed(4)}
+              {hit.via && hit.via.length > 0 ? ` · ${hit.via.join("+")}` : ""}
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                color: "var(--text-default)",
+                marginTop: 2,
+                lineHeight: 1.4,
+              }}
+            >
+              {hit.title}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            style={{
+              flexShrink: 0,
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              border: "1px solid var(--t-neutral-8)",
+              background: "var(--surface-default)",
+              color: "var(--text-subtle)",
+              cursor: "pointer",
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <div
+          className="thin-scroll"
+          style={{
+            overflowY: "auto",
+            padding: "16px 20px",
+            fontSize: 13,
+            lineHeight: 1.7,
+            color: "var(--text-default)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {fullText || "(본문 없음)"}
+        </div>
+      </div>
     </div>
   );
 }

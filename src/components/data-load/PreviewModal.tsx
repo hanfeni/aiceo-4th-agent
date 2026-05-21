@@ -3,8 +3,9 @@
 import type { ReactNode } from "react";
 
 /**
- * Preview — 적재 전 CSV 앞 N행 미리보기 데이터(sql-lab/preview 응답).
- * DataLoadView 의 openPreview 가 채운다.
+ * Preview — 표 미리보기 데이터(columns/rows/totalNote). 출처는 호출부에
+ * 따라 다르다 — DataLoadView=적재 전 CSV(sql-lab/preview),
+ * SearchLabView·StoreExplorerView=적재된 SQLite 테이블(sql-lab/rows).
  */
 export interface Preview {
   columns: string[];
@@ -13,21 +14,31 @@ export interface Preview {
 }
 
 /**
- * PreviewModal — 적재 전 GitHub 원본 CSV 앞 20행 표 미리보기
- * (시안 data-load PreviewModal 톤). blur overlay + il-preview-table
- * (컬럼 넘버링·mono 셀·짝수행 줄무늬) + CSV cols 배지.
+ * PreviewModal — 표 형태 행 미리보기 (시안 data-load PreviewModal 톤).
+ * blur overlay + il-preview-table(컬럼 넘버링·mono 셀·짝수행 줄무늬).
+ *
+ * 출처는 두 가지로 재사용된다 — DataLoadView 는 적재 전 GitHub 원본 CSV,
+ * SearchLabView·StoreExplorerView 는 적재된 SQLite 테이블 조회. 그래서
+ * 출처 문구·단위 배지를 prop(sourceNote/unit)으로 받고, 기본값은 기존
+ * 동작(CSV 원본) — DataLoadView 호출부 무변경. SQL 조회 호출부만 넘긴다.
  */
 export function PreviewModal({
   title,
   preview,
   loading,
   onClose,
+  sourceNote = "적재 전 GitHub 원본 CSV",
+  unit = "CSV",
 }: {
   /** 헤더 타이틀(도메인 라벨) */
   title: string;
   preview: Preview | null;
   loading: boolean;
   onClose: () => void;
+  /** 부제 출처 문구(예: "적재된 SQLite 테이블 조회"). 기본=CSV 원본. */
+  sourceNote?: string;
+  /** 배지·로딩 표시 단위(예: "테이블"). 기본=CSV. */
+  unit?: string;
 }): ReactNode {
   const cols = preview?.columns.length ?? 0;
   return (
@@ -51,7 +62,7 @@ export function PreviewModal({
           border: "1px solid var(--t-neutral-8)",
           borderRadius: "var(--r-lg, 14px)",
           width: "min(920px, 100%)",
-          maxHeight: "86vh",
+          height: "min(680px, 88vh)",
           display: "flex",
           flexDirection: "column",
           boxShadow:
@@ -85,12 +96,16 @@ export function PreviewModal({
                 marginTop: 3,
               }}
             >
-              {preview?.totalNote ?? (loading ? "불러오는 중…" : "")} · 적재 전
-              GitHub 원본 CSV
+              {preview?.totalNote ?? (loading ? "불러오는 중…" : "")} ·{" "}
+              {sourceNote}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {preview && <span className="il-ix-count">CSV · {cols} cols</span>}
+            {preview && (
+              <span className="il-ix-count">
+                {unit} · {cols} cols
+              </span>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -117,7 +132,7 @@ export function PreviewModal({
             <div
               style={{ fontSize: 12, color: "var(--text-subtle)", padding: 16 }}
             >
-              ▶ CSV 원본을 불러오는 중…
+              ▶ {unit} 데이터를 불러오는 중…
             </div>
           ) : preview ? (
             <table className="il-preview-table">

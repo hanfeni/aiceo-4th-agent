@@ -7,6 +7,7 @@ import { HARNESS_SUBAGENTS } from "@/lib/agent/harness/subagents";
 import {
   HARNESS_TOOLS,
   HARNESS_TOOL_DISPLAY_NAMES,
+  HARNESS_TOOL_CATALOG,
 } from "@/lib/agent/harness/tools";
 import { SKILL_SOURCES } from "@/lib/agent/harness/skills";
 import { getSystemPrompt } from "@/lib/agent/prompts/systemPrompt";
@@ -94,7 +95,11 @@ export default function HarnessPage(): ReactNode {
     planning: { enabled: planning },
     filesystem: { enabled: filesystem },
     subagents: subagentsOn ? HARNESS_SUBAGENTS : [],
-    tools: HARNESS_TOOLS,
+    // 정적 도구(current_time·web_search) + 팩토리 도구 카탈로그
+    // (index_search·sql_query·graph_query — 도메인 무관 표시용 메타).
+    // 카탈로그는 실행 함수 없는 순수 표시 객체라 그래프 비주입(page 는
+    // 어차피 introspect 표시 전용 — buildHarnessConfig 미호출, AD-2).
+    tools: [...HARNESS_TOOLS, ...HARNESS_TOOL_CATALOG],
     checkpointer: null,
     skills: {
       enabled: skillSources.length > 0,

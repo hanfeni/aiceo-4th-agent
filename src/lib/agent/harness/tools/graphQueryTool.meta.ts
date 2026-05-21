@@ -11,8 +11,25 @@
  * (데이터셋은 세션 정체성이라 도구명에 안 박음).
  */
 
+import { z } from "zod";
+
 /** 사고 패널 한글 표시명 (FR-08 — 도구가 선언). ClientTool .name 키. */
 export const graphQueryToolDisplayName = "온톨로지 조회 (Cypher)";
+
+/**
+ * 카탈로그용 LLM 명세 schema — 팩토리(makeGraphQueryTool) 내부 schema 와
+ * 동일(데이터셋 무관). /harness introspect 가 파라미터 표·명세를 표시한다.
+ * 팩토리 schema 와 단일 출처(정합).
+ */
+export const graphQueryToolSchema = z.object({
+  cypher: z
+    .string()
+    .describe(
+      "실행할 읽기 전용 Cypher. 도구 설명의 스키마(노드 라벨·속성·관계)를 " +
+        "보고 직접 작성. MATCH/RETURN/WITH 등 읽기 구문만, 쓰기 구문 금지. " +
+        "멀티홉 경로를 적극 활용.",
+    ),
+});
 
 /**
  * ClientTool 설명 (introspect 가 .description 우선). 순수 실행기:

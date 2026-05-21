@@ -11,8 +11,25 @@
  * (도메인은 세션 정체성이라 도구명에 안 박음).
  */
 
+import { z } from "zod";
+
 /** 사고 패널 한글 표시명 (FR-08 — 도구가 선언). ClientTool .name 키. */
 export const sqlQueryToolDisplayName = "데이터 조회 (SQL)";
+
+/**
+ * 카탈로그용 LLM 명세 schema — 팩토리(makeSqlQueryTool) 내부 schema 와
+ * 동일(도메인 무관). /harness introspect 가 파라미터 표·명세를 표시한다.
+ * 팩토리 schema 와 단일 출처(정합).
+ */
+export const sqlQueryToolSchema = z.object({
+  sql: z
+    .string()
+    .describe(
+      "실행할 SELECT(또는 WITH) SQL 한 문장. 도구 설명의 스키마(테이블·" +
+        "컬럼·샘플)를 보고 직접 작성. 세미콜론·여러 문장·쓰기 구문 금지" +
+        "(읽기 전용).",
+    ),
+});
 
 /**
  * ClientTool 설명 (introspect 가 .description 우선). 순수 실행기:

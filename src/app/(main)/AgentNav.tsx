@@ -11,6 +11,7 @@ import {
   Tags,
   Pill,
   Network,
+  Boxes,
   Bot,
 } from "lucide-react";
 import { HARNESS_PROFILES, WORKSPACE_IDS } from "@/lib/agent/harness/profiles";
@@ -114,6 +115,11 @@ const NAV_GROUPS: NavGroup[] = [
         icon: <Network size={14} aria-hidden />,
         label: "온톨로지 실습",
         href: "/graph-lab",
+      },
+      {
+        icon: <Boxes size={14} aria-hidden />,
+        label: "저장소 탐색기",
+        href: "/store-explorer",
       },
     ],
   },

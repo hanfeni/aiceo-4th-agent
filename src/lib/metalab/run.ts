@@ -39,8 +39,27 @@ import {
 export interface MetaRunParams {
   domain: SearchDomain;
   task: MetaTask;
-  /** 처리할 문서 수 (label/discover 용. allinone 은 미사용·옵션) */
-  count?: number;
+  /**
+   * 처리할 문서 수 (label/discover 용). "all" = 도메인 코퍼스 전체
+   * (LLM 비용·시간 증가 — UI 경고). allinone 은 미사용·옵션.
+   */
+  count?: number | "all";
+  /**
+   * discover 발굴 회수 (사용자 결정 2026-05-21). 미지정·1 = 기존 단일
+   * 묶음 스트리밍(회귀 0). >1 = count 건씩 비복원 분할해 회마다 다른
+   * 묶음을 병렬 발굴(올인원 발굴과 동형). 범위 1~10.
+   */
+  discoverRounds?: number;
+  /**
+   * 올인원 계열 규모 파라미터 (사용자 결정 2026-05-21 — 작업모드별
+   * 문서수 파라미터화). 미지정 시 각 기본 상수(=기존 하드코딩값 →
+   * 회귀 0). UI 프리셋이 이 값을 채워 보낸다.
+   */
+  discoverPerSet?: number; // 발굴 회당 샘플 수 (기본 20)
+  discoverSets?: number; // 발굴 횟수 (기본 10)
+  classifyCount?: number; // 실분류 건수 (기본 5)
+  /** ⑤ 메타 색인 상한. "all" = 발굴 미사용분 전체. 기본 60. */
+  metaLimit?: number | "all";
 }
 
 interface RawDoc {
@@ -55,6 +74,13 @@ export type MetaEvent =
   | { type: "doc_start"; index: number; total: number; title: string }
   | { type: "token"; text: string }
   | { type: "doc_end"; index: number }
+  // discover 출처: 해당 발굴 블록(회차)에 실제 들어간 문서 목록.
+  // 학생이 "이 스키마가 무슨 글에서 나왔나"를 제목 리스트 + 모달로 확인.
+  | {
+      type: "doc_sources";
+      index: number; // doc_start.index 와 매칭(회차/블록 식별)
+      sources: { docId: string; title: string; body: string }[];
+    }
   | { type: "phase"; step: string; text: string }
   // 올인원 노드 그래프 모달용: 단계 시작(running)/완료(io 확정).
   // step=discover|converge|fix|classify (metaStageNodes STEP_TO_STAGE).
@@ -71,15 +97,42 @@ export type MetaEvent =
   | { type: "done" }
   | { type: "error"; message: string };
 
-// ── 올인원 파라미터 (사용자 확정 2026-05-19) ────────────
-const ALLINONE_PER_SET = 20; // 발굴 회당 샘플 수
-const ALLINONE_SETS = 10; // 발굴 횟수
-const ALLINONE_CLASSIFY = 5; // 실분류 건수 (10→5, 사용자 결정 + 병렬)
-const ALLINONE_SAMPLE = ALLINONE_PER_SET * ALLINONE_SETS; // 200 (비복원)
-// ⑤ 메타 색인 상한 — 분류 LLM N회 + 임베딩 비용 제어(강의 시연
-// 시간 폭증 방지). 도메인 전체가 이보다 작으면 전체.
+/**
+ * 출처 모달용 변환 — 제목 + 전체 본문(과대 전송 방지 4000자 컷). LLM 에
+ * 넣는 발췌(discover 600 / label 4000)와 별개로, 학생이 원문을 확인하도록
+ * 넉넉히 보낸다. discover(묶음 N건)·label(카드당 1건) 공통 사용.
+ */
+function docsToSources(
+  group: RawDoc[],
+): { docId: string; title: string; body: string }[] {
+  return group.map((d) => ({
+    docId: d.doc_id,
+    title: d.title,
+    body: d.body.slice(0, 4000),
+  }));
+}
+
+// ── 올인원 기본 파라미터 (사용자 확정 2026-05-19) ────────
+// UI 가 규모를 안 보내면 이 값으로 폴백(회귀 0). 2026-05-21 부터
+// MetaRunParams 로 오버라이드 가능(작업모드별 문서수 파라미터화).
+const ALLINONE_PER_SET = 20; // 발굴 회당 샘플 수(기본)
+const ALLINONE_SETS = 10; // 발굴 횟수(기본)
+const ALLINONE_CLASSIFY = 5; // 실분류 건수(기본 — 10→5, 병렬)
+// ⑤ 메타 색인 상한(기본) — 분류 LLM N회 + 임베딩 비용 제어(강의
+// 시연 시간 폭증 방지). 도메인 전체가 이보다 작으면 전체.
 const ALLINONE_META_LIMIT = 60;
 const ALLINONE_META_BATCH = 32; // 분류·임베딩·bulk 배치
+
+/** 정수 파라미터 클램프 — undefined 면 기본값, 그 외 [min,max] 로 제한. */
+function clampInt(
+  v: number | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+  return Math.min(Math.max(Math.round(v), min), max);
+}
 
 /**
  * Fisher-Yates 셔플 (seed 고정 — 재현성, training 03 프롬프트 규칙).
@@ -115,11 +168,21 @@ export async function* runMetaLab(
   // (+메타 OpenSearch 색인). withMetaIndex 로 ⑤ 조건부(사용자
   // 결정 2026-05-19 분리). label/discover 는 아래 그대로 보존.
   if (task === "allinone" || task === "allinone_index") {
-    yield* runAllInOne(domain, task === "allinone_index");
+    yield* runAllInOne(domain, task === "allinone_index", params);
     return;
   }
 
-  const count = Math.min(Math.max(params.count ?? 5, 1), 30);
+  // count: discover/label 1회당(또는 라벨 총) 문서 수. "all"=전체.
+  // discover 회수(rounds)>1 이면 count×rounds 건이 필요 → fetch 양 확대.
+  const perRound =
+    params.count === "all"
+      ? undefined
+      : Math.min(Math.max(params.count ?? 5, 1), 30);
+  const rounds =
+    task === "discover" ? clampInt(params.discoverRounds, 1, 1, 10) : 1;
+  // fetch 양: discover 다회면 perRound×rounds(비복원 분할용), 그 외 perRound.
+  const fetchCount =
+    perRound === undefined ? undefined : perRound * rounds;
   const system = systemFor(task);
 
   // 학생이 시스템 인스트럭션을 먼저 보게 (실습 핵심)
@@ -127,8 +190,8 @@ export async function* runMetaLab(
 
   let docs: RawDoc[];
   try {
-    // 검색 색인과 동일 소스(GitHub raw). count 건만 fetch.
-    const corpus = await fetchCorpus(domain, count);
+    // 검색 색인과 동일 소스(GitHub raw). fetchCount 건만(all 이면 전체).
+    const corpus = await fetchCorpus(domain, fetchCount);
     docs = corpus.map((d) => ({
       doc_id: d.doc_id,
       title: d.title,
@@ -156,13 +219,63 @@ export async function* runMetaLab(
   }
 
   if (task === "discover") {
-    // N건을 한 묶음으로 — 스키마 후보 1회 제안
-    const corpus = docs
-      .map(
-        (d, i) =>
-          `[문서 ${i + 1}] ${d.title}\n${d.body.slice(0, 600)}`,
-      )
-      .join("\n\n");
+    const toCorpusText = (group: RawDoc[]): string =>
+      group
+        .map((d, i) => `[문서 ${i + 1}] ${d.title}\n${d.body.slice(0, 600)}`)
+        .join("\n\n");
+
+    // 회수(rounds)>1: 올인원 발굴과 동일 패턴 — 셔플 후 perRound 씩 비복원
+    // 분할해 회마다 다른 묶음을 병렬 발굴(model.invoke), 회차별 결과 표시.
+    // 회수 1(기본): 기존 단일 스트리밍 유지(타이핑 효과·회귀 0).
+    if (rounds > 1) {
+      const shuffled = seededShuffle(docs, 20260521);
+      const per = Math.max(1, Math.floor(shuffled.length / rounds));
+      const groups: RawDoc[][] = [];
+      for (let r = 0; r < rounds; r++) {
+        const g = shuffled.slice(r * per, (r + 1) * per);
+        if (g.length > 0) groups.push(g);
+      }
+      let findings: string[];
+      try {
+        findings = await Promise.all(
+          groups.map(async (g) => {
+            const res = await model.invoke([
+              { role: "system", content: system },
+              { role: "user", content: toCorpusText(g) },
+            ]);
+            return extractContentText(res.content) ?? "";
+          }),
+        );
+      } catch (e) {
+        yield {
+          type: "error",
+          message: e instanceof Error ? e.message : String(e),
+        };
+        return;
+      }
+      // 회차별 결과를 한 문서 블록(token)으로 합쳐 표시(스트리밍 미사용 —
+      // 병렬이라 토큰 인터리브 방지, 올인원 발굴 표시와 동형).
+      for (let r = 0; r < findings.length; r++) {
+        yield {
+          type: "doc_start",
+          index: r,
+          total: findings.length,
+          title: `발굴 ${r + 1}회차 (${groups[r].length}건 묶음)`,
+        };
+        yield { type: "token", text: findings[r] };
+        // 이 회차에 실제 들어간 출처 문서 목록(제목 리스트 + 모달원).
+        yield {
+          type: "doc_sources",
+          index: r,
+          sources: docsToSources(groups[r]),
+        };
+        yield { type: "doc_end", index: r };
+      }
+      yield { type: "done" };
+      return;
+    }
+
+    // 회수 1: N건을 한 묶음으로 스트리밍 1회 (기존 동작 보존).
     yield {
       type: "doc_start",
       index: 0,
@@ -172,7 +285,7 @@ export async function* runMetaLab(
     try {
       const stream = await model.stream([
         { role: "system", content: system },
-        { role: "user", content: corpus },
+        { role: "user", content: toCorpusText(docs) },
       ]);
       for await (const chunk of stream) {
         // chunk.content 는 OpenAI Responses API 에서 string 이 아니라
@@ -188,6 +301,8 @@ export async function* runMetaLab(
       };
       return;
     }
+    // 묶음에 들어간 출처 문서 목록(제목 리스트 + 모달원).
+    yield { type: "doc_sources", index: 0, sources: docsToSources(docs) };
     yield { type: "doc_end", index: 0 };
     yield { type: "done" };
     return;
@@ -216,6 +331,8 @@ export async function* runMetaLab(
       };
       return;
     }
+    // 출처 — label 은 카드당 정확히 1건(이 문서). 제목 클릭 시 원문 모달.
+    yield { type: "doc_sources", index: i, sources: docsToSources([d]) };
     yield { type: "doc_end", index: i };
   }
   yield { type: "done" };
@@ -239,7 +356,20 @@ export async function* runMetaLab(
 async function* runAllInOne(
   domain: SearchDomain,
   withMetaIndex: boolean,
+  params: MetaRunParams,
 ): AsyncGenerator<MetaEvent> {
+  // 규모 파라미터 — 미지정 시 기본 상수(=기존 하드코딩값, 회귀 0).
+  // 방어적 클램프: 발굴 회당 5~50 / 횟수 1~20 / 분류 1~30.
+  const perSet = clampInt(params.discoverPerSet, ALLINONE_PER_SET, 5, 50);
+  const sets = clampInt(params.discoverSets, ALLINONE_SETS, 1, 20);
+  const classify = clampInt(params.classifyCount, ALLINONE_CLASSIFY, 1, 30);
+  const sampleSize = perSet * sets; // 발굴 풀 크기(비복원)
+  // 메타 색인 상한 — "all" = 발굴 미사용분 전체(Infinity), 그 외 1~500.
+  const metaLimit =
+    params.metaLimit === "all"
+      ? Infinity
+      : clampInt(params.metaLimit, ALLINONE_META_LIMIT, 1, 500);
+
   // 시작 시 발굴 시스템 인스트럭션 노출 (실습 핵심)
   yield { type: "system", task: "allinone", text: systemFor("discover") };
 
@@ -272,9 +402,9 @@ async function* runAllInOne(
     return;
   }
 
-  // 비복원 추출: 셔플 → 발굴용 200 + 분류용 10 (서로 비중복)
+  // 비복원 추출: 셔플 → 발굴용 sampleSize + 분류용 classify (서로 비중복)
   const shuffled = seededShuffle(docs, 20260519);
-  const need = ALLINONE_SAMPLE + ALLINONE_CLASSIFY;
+  const need = sampleSize + classify;
   if (shuffled.length < need) {
     yield {
       type: "phase",
@@ -284,11 +414,8 @@ async function* runAllInOne(
         `진행(발굴 묶음·분류 건수 자동 축소, 중복 없음 유지).`,
     };
   }
-  const discoverPool = shuffled.slice(0, ALLINONE_SAMPLE);
-  const classifyPool = shuffled.slice(
-    ALLINONE_SAMPLE,
-    ALLINONE_SAMPLE + ALLINONE_CLASSIFY,
-  );
+  const discoverPool = shuffled.slice(0, sampleSize);
+  const classifyPool = shuffled.slice(sampleSize, sampleSize + classify);
 
   // 노드 그래프 모달용: 각 단계 stage_start(running) → 작업 →
   // stage_io(input/output 확정, done). 토큰 스트리밍은 제거 —
@@ -296,13 +423,12 @@ async function* runAllInOne(
 
   // ── ① 발굴 (병렬) ────────────────────────────────────
   yield { type: "stage_start", step: "discover" };
-  const sets = Math.ceil(discoverPool.length / ALLINONE_PER_SET);
+  // 실제 배치 개수 — discoverPool 을 perSet 단위로 분할(코퍼스 부족 시
+  // sets 보다 작을 수 있음). 파라미터 sets 와 구분해 batchCount 로.
+  const batchCount = Math.ceil(discoverPool.length / perSet);
   const batches: RawDoc[][] = [];
-  for (let s = 0; s < sets; s++) {
-    const b = discoverPool.slice(
-      s * ALLINONE_PER_SET,
-      (s + 1) * ALLINONE_PER_SET,
-    );
+  for (let s = 0; s < batchCount; s++) {
+    const b = discoverPool.slice(s * perSet, (s + 1) * perSet);
     if (b.length > 0) batches.push(b);
   }
 
@@ -337,7 +463,7 @@ async function* runAllInOne(
     input:
       `[시스템 인스트럭션]\n${systemFor("discover")}\n\n` +
       `[입력] 비복원 ${discoverPool.length}건을 ${batches.length}묶음` +
-      `(회당 ${ALLINONE_PER_SET}건)으로 나눠 ${batches.length}회 병렬 발굴`,
+      `(회당 ${perSet}건)으로 나눠 ${batches.length}회 병렬 발굴`,
     output: findings
       .map((f, i) => `── 발굴 ${i + 1}회차 ──\n${f}`)
       .join("\n\n"),
@@ -455,8 +581,8 @@ async function* runAllInOne(
   // 분류 대상: 발굴/실분류에 안 쓴 풀 우선, 부족하면 전체에서.
   // (셔플 순서 유지 — discoverPool 다음 구간부터)
   const metaPool = shuffled
-    .slice(ALLINONE_SAMPLE) // 발굴 미사용분
-    .slice(0, ALLINONE_META_LIMIT);
+    .slice(sampleSize) // 발굴 미사용분
+    .slice(0, metaLimit); // metaLimit=Infinity("all")면 전체
   const targetIndex = DOMAIN_SPEC[domain].index;
 
   // OpenSearch 준비 (미기동 시 spawn — searchlab 와 동일 경로).

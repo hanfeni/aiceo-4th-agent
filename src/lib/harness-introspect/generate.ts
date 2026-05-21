@@ -14,6 +14,11 @@
  * 결과가 폼을 채우는 핵심 동작이라 조용한 null 폴백은 부적절.
  */
 
+// 디폴트 인스트럭션 본문(참고자료) — 사이클 회피 위해 함수(fs 로드) 경유
+// 대신 상수 직접 import. systemPrompt.ts↔instructions.ts 는 이미 양방향
+// 의존이라 상수만 끌어오는 게 안전(getInstruction 은 fs 까지 끌어들임).
+import { SYSTEM_PROMPT } from "@/lib/agent/prompts/systemPrompt";
+
 /** 하네스 요소 자동 생성 전용 모델(고정). */
 export const GENERATE_MODEL = "gpt-5.4-mini";
 
@@ -21,6 +26,18 @@ const ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 /** 생성 대상 종류. */
 export type GenerateKind = "skill" | "subagent" | "instruction";
+
+/**
+ * instruction 생성 모드(사용자 택1 — 2026-05-21).
+ *  - "reference": 디폴트 인스트럭션을 참고자료로 주입해 동등 분량·구조로
+ *    재작성(기본값 — 충실한 인스트럭션).
+ *  - "rewrite": 디폴트 무시, 사용자 한 줄 요청만으로 백지 생성(짧고 자유).
+ * skill/subagent 는 참조 대상이 없어 mode 무시(영향 0).
+ */
+export type GenerateMode = "reference" | "rewrite";
+
+/** instruction 생성 기본 모드(폼 미선택 시 — 사용자 결정: 디폴트 참조). */
+export const DEFAULT_GENERATE_MODE: GenerateMode = "reference";
 
 /** kind 별 생성 결과(폼 필드와 1:1). */
 export interface GeneratedSkill {
@@ -53,8 +70,16 @@ function toSlug(raw: string): string {
     .slice(0, 64);
 }
 
-/** kind 별 system 프롬프트 + JSON 키 명세. */
-function spec(kind: GenerateKind): { system: string; keys: string[] } {
+/**
+ * kind 별 system 프롬프트 + JSON 키 명세. instruction 은 mode 로 분기:
+ *  - reference: 디폴트를 참고자료로 주입(user 메시지)해 동등 분량 재작성.
+ *  - rewrite: 디폴트 무시, 한 줄 요청만으로 백지 생성(짧고 자유 — 기존 방식).
+ * skill/subagent 는 mode 무시(참조 대상 없음).
+ */
+function spec(
+  kind: GenerateKind,
+  mode: GenerateMode,
+): { system: string; keys: string[] } {
   if (kind === "skill") {
     return {
       keys: ["name", "description", "body"],
@@ -78,11 +103,36 @@ function spec(kind: GenerateKind): { system: string; keys: string[] } {
         "systemPrompt(이 서브에이전트의 역할·지침 전문 — 한국어, 구체적이고 실행 가능하게).",
     };
   }
+  // ── instruction ── mode 로 분기(reference=디폴트 참조 / rewrite=백지). ──
+  if (mode === "rewrite") {
+    // 완전히 재구성 — 디폴트 미주입(user 메시지 = 한 줄 요청만). 기존 방식.
+    return {
+      keys: ["label", "body"],
+      system:
+        "너는 LLM 에이전트의 '시스템 인스트럭션(변형)'을 설계하는 도우미다. " +
+        "사용자 요청에 맞는 시스템 프롬프트 변형 1개를 만든다. JSON 만 출력. " +
+        "필드: label(이 변형의 짧은 이름, 예: '간결 모드'·'영어 보조'), " +
+        "body(시스템 인스트럭션 전문 — 한국어, 에이전트의 어조·규칙·출력 형식을 구체적으로).",
+    };
+  }
+  // reference(기본) — 디폴트 본문을 참고자료로 주입(user 메시지)해 재작성.
   return {
     keys: ["label", "body"],
     system:
       "너는 LLM 에이전트의 '시스템 인스트럭션(변형)'을 설계하는 도우미다. " +
       "사용자 요청에 맞는 시스템 프롬프트 변형 1개를 만든다. JSON 만 출력. " +
+      // 디폴트 본문이 user 메시지에 [기존 기본 인스트럭션]으로 함께 온다.
+      // 그것을 '참고자료'로만 삼아 동등한 분량·다층 구조(정체성/능력 경계/
+      // 행동 원칙/추론 정책/출력 계약/안전)를 갖춘 충실한 인스트럭션을 새로 쓴다.
+      // 사용자 결정(2026-05-21): 디폴트를 그대로 복사 금지 — 새 톤으로 재구성.
+      "user 메시지에 [기존 기본 인스트럭션]이 함께 제공된다. 그것을 그대로 " +
+      "복사하지 말고 '참고자료'로만 활용해, 사용자 요청 방향에 맞게 톤·규칙·" +
+      "출력 형식을 새로 재구성하되 기본만큼 충실한 분량과 다층 구조(정체성·" +
+      "능력 경계·행동 원칙·추론 정책·출력 계약·안전 등)를 갖춘다. " +
+      // R5/출력 계약 보존 — 디폴트의 [REC_QUERY] 추천 질문 규약·추론 누출 차단은
+      // 클라이언트 파싱·필터와 직결되므로 변형에서도 동등하게 유지하도록 명시.
+      "기본 인스트럭션의 핵심 출력 계약([REC_QUERY] 추천 질문 블록 형식, " +
+      "내부 추론을 최종 답변에 섞지 않는 규칙)은 변형에서도 동등하게 유지한다. " +
       "필드: label(이 변형의 짧은 이름, 예: '간결 모드'·'영어 보조'), " +
       "body(시스템 인스트럭션 전문 — 한국어, 에이전트의 어조·규칙·출력 형식을 구체적으로).",
   };
@@ -97,15 +147,30 @@ function apiKey(): string {
 /**
  * 한 줄 요청에서 kind 에 맞는 필드를 생성한다. 실패 시 throw.
  * slug 필드(name)는 toSlug 로 정규화해 검증 RE(SLUG_RE) 와 호환.
+ *
+ * mode(instruction 전용 — 사용자 택1):
+ *  - reference(기본): 디폴트 본문을 참고자료로 주입해 동등 분량 재작성.
+ *  - rewrite: 디폴트 미주입, 한 줄 요청만으로 백지 생성(짧고 자유).
+ * skill/subagent 는 mode 무시(참조 대상 없음 — 항상 백지 동작 유지).
  */
 export async function generateHarnessElement(
   kind: GenerateKind,
   prompt: string,
+  mode: GenerateMode = DEFAULT_GENERATE_MODE,
 ): Promise<GenerateResult> {
   const head = prompt.trim().slice(0, 2000);
   if (!head) throw new Error("요청 내용을 입력하세요.");
   const key = apiKey();
-  const { system, keys } = spec(kind);
+  const { system, keys } = spec(kind, mode);
+
+  // 디폴트 주입은 "instruction + reference 모드"일 때만. rewrite 모드와
+  // skill/subagent 는 user 메시지 = 한 줄 요청 그대로(백지 생성). reference
+  // 는 디폴트가 길어 출력 분량도 커지므로 토큰 한도 상향(1400 → 4000).
+  const injectDefault = kind === "instruction" && mode === "reference";
+  const userContent = injectDefault
+    ? `[기존 기본 인스트럭션 — 참고자료. 그대로 복사하지 말고 이 분량·구조 수준을 기준으로 재작성하라]\n${SYSTEM_PROMPT}\n\n[사용자 요청 — 위 기본을 이 방향으로 재구성/보완]\n${head}`
+    : head;
+  const maxTokens = injectDefault ? 4000 : 1400;
 
   const res = await fetch(ENDPOINT, {
     method: "POST",
@@ -117,11 +182,11 @@ export async function generateHarnessElement(
       model: GENERATE_MODEL,
       messages: [
         { role: "system", content: system },
-        { role: "user", content: head },
+        { role: "user", content: userContent },
       ],
       // 구조화 출력 — JSON object 강제(파싱 안정).
       response_format: { type: "json_object" },
-      max_completion_tokens: 1400,
+      max_completion_tokens: maxTokens,
     }),
   });
   if (!res.ok) {

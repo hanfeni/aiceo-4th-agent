@@ -92,6 +92,27 @@ export interface GraphDataset {
   sqlPrompt: string;
   /** 데모 질의 프리셋(멀티홉 의도 — 3방식 결과 갈림). */
   demoQueries: { label: string; query: string }[];
+  /**
+   * 해석 패널(graph-lab/summary) 문장용 도메인 어휘 묶음.
+   * slots(주체/대상/관계 한글)만으론 "13F 기관·인기도·포트폴리오 유사도"
+   * 같은 데이터셋 고유 표현을 살릴 수 없어, 문장 조각을 데이터셋별로 둔다.
+   * route 가 이 어휘를 주입해 SEC/영화/논문에 맞는 해석을 출력(SSOT).
+   */
+  insightTerms: {
+    /** 대상 노드 인기도 표현 (SEC: "보유 기관 수가 많을수록 '인기/crowding'") */
+    objectPopularity: string;
+    /** 주체의 대상 보유 폭 표현 (SEC: "이 기관의 포트폴리오 폭") */
+    subjectBreadth: string;
+    /** 가치 합계 라벨 (SEC: "보유가치 합계" / "포트폴리오 신고가치 합계") */
+    valueLabel: string;
+    /** 주체↔주체 공통 대상 = 유사도 표현 (SEC: "포트폴리오 유사도") */
+    subjectSimilarity: string;
+    /** 여러 주체가 같은 대상들을 함께 가짐 = 공통연결 표현
+     *  (SEC: "common ownership — 반독점 연구의 핵심 신호") */
+    coOccurrence: string;
+    /** 연쇄("A를 가진 주체는 B도 가짐") 한 줄 설명의 도메인 비유 */
+    chainHint: string;
+  };
 }
 
 export const GRAPH_DATASETS: GraphDataset[] = [
@@ -185,6 +206,15 @@ export const GRAPH_DATASETS: GraphDataset[] = [
           "버크셔 해서웨이는 어떤 투자 철학을 가진 기관인가? 보유 내역으로 설명해 줘.",
       },
     ],
+    insightTerms: {
+      objectPopularity: "보유 기관이 많을수록 '인기/crowding'이 높은 종목",
+      subjectBreadth: "이 기관의 포트폴리오 폭",
+      valueLabel: "보유가치 합계",
+      subjectSimilarity: "포트폴리오 유사도",
+      coOccurrence:
+        "같은 기관이 경쟁/유사 종목을 함께 쥐고 있으면 'common ownership' — 반독점 연구의 핵심 신호",
+      chainHint: '"A를 가진 기관은 B도 갖더라"',
+    },
   },
   {
     id: "movies",
@@ -238,6 +268,15 @@ export const GRAPH_DATASETS: GraphDataset[] = [
         query: "가장 많은 영화에 출연한 배우 상위 5명과 그 영화들은?",
       },
     ],
+    insightTerms: {
+      objectPopularity: "출연 배우가 많을수록 앙상블 규모가 큰 영화",
+      subjectBreadth: "이 배우의 출연작 폭(필모그래피)",
+      valueLabel: "출연 비중 합계",
+      subjectSimilarity: "필모그래피 겹침(함께 출연한 작품)",
+      coOccurrence:
+        "같은 배우들이 여러 작품에 반복해 함께 나오면 '단골 공동출연' — 배우 군집(사단)의 신호",
+      chainHint: '"이 배우와 함께한 배우는 저 배우와도 함께하더라"',
+    },
   },
   {
     id: "papers",
@@ -291,6 +330,15 @@ export const GRAPH_DATASETS: GraphDataset[] = [
         query: "가장 많은 논문을 집필한 저자 상위 5명과 그 논문들은?",
       },
     ],
+    insightTerms: {
+      objectPopularity: "공저자가 많을수록 협업 규모가 큰 논문",
+      subjectBreadth: "이 저자의 집필 폭(연구 생산성)",
+      valueLabel: "기여도 합계",
+      subjectSimilarity: "공저 겹침(함께 쓴 논문)",
+      coOccurrence:
+        "같은 저자들이 여러 논문을 반복해 함께 쓰면 '공동연구 그룹' — 연구 협업 네트워크의 신호",
+      chainHint: '"이 저자와 함께 쓴 저자는 저 저자와도 함께 쓰더라"',
+    },
   },
 ];
 

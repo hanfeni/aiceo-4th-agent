@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useRef, Fragment, type ReactNode } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  Fragment,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { JsonResultView, extractJson } from "./JsonResultView";
 import type {
   StageStatus,
@@ -44,14 +51,14 @@ const DOMAINS = [
 
 const TASKS = [
   {
-    id: "label",
-    label: "메타 라벨링",
-    hint: "문서 1건씩 분류 메타 부착",
-  },
-  {
     id: "discover",
     label: "스키마 발굴",
     hint: "묶음에서 분류 체계 후보 제안",
+  },
+  {
+    id: "label",
+    label: "메타 라벨링",
+    hint: "문서 1건씩 분류 메타 부착",
   },
   {
     id: "allinone",
@@ -65,10 +72,89 @@ const TASKS = [
   },
 ] as const;
 
+/**
+ * 단발(discover/label) 문서 수. "전체" 제거(사용자 결정 2026-05-21):
+ * discover 는 한 묶음이라 전체 시 토큰 폭증, label 도 호출 폭증 위험.
+ */
 const COUNTS = [1, 3, 5, 10] as const;
+type CountValue = (typeof COUNTS)[number];
+
+/**
+ * 올인원 발굴 규모 프리셋 — 한 선택으로 발굴 회당·횟수 동시 결정.
+ * 기본 = "표준"(20×10=200, 기존 하드코딩값 → 회귀 0).
+ */
+const ALLINONE_PRESETS = [
+  { id: "fast", label: "빠름", perSet: 10, sets: 5, hint: "10×5=50건 발굴" },
+  { id: "standard", label: "표준", perSet: 20, sets: 10, hint: "20×10=200건 발굴" },
+  { id: "deep", label: "정밀", perSet: 20, sets: 15, hint: "20×15=300건 발굴" },
+] as const;
+type AllInOnePresetId = (typeof ALLINONE_PRESETS)[number]["id"];
+
+/** discover 발굴 회수 선택지. 1=단일 묶음(기본·기존), >1=분할 병렬. */
+const DISCOVER_ROUNDS = [1, 2, 3, 5] as const;
+
+/** 올인원 실분류 건수 선택지. 기본 5(기존값). */
+const CLASSIFY_COUNTS = [3, 5, 10] as const;
+
+/** 올인원색인 ⑤ 메타 색인 상한. "all"=발굴 미사용분 전체. 기본 60(기존값). */
+const META_LIMITS = [30, 60, "all"] as const;
+type MetaLimitValue = (typeof META_LIMITS)[number];
+
+/** 칩 한 줄 공통 스타일(문서수·프리셋·실분류·색인 상한 동일 톤). */
+const pillRowStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+  marginBottom: 14,
+};
+/** "전체" 선택 시 비용·시간 경고 문구 스타일. */
+const warnHintStyle: CSSProperties = {
+  fontSize: 10.5,
+  color: "var(--amber-700, #b45309)",
+  marginTop: -8,
+  marginBottom: 14,
+  lineHeight: 1.5,
+};
+
+/** discover 출처 글 목록 — 결과 카드 하단 영역. */
+const sourceListWrapStyle: CSSProperties = {
+  marginTop: 10,
+  paddingTop: 10,
+  borderTop: "1px dashed var(--t-neutral-12)",
+};
+const sourceListLabelStyle: CSSProperties = {
+  fontSize: 10.5,
+  fontWeight: 700,
+  color: "var(--text-subtle)",
+  marginBottom: 6,
+};
+const sourceListStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+};
+const sourceItemStyle: CSSProperties = {
+  maxWidth: 260,
+  cursor: "pointer",
+};
+const sourceItemTextStyle: CSSProperties = {
+  display: "inline-block",
+  maxWidth: 240,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  verticalAlign: "bottom",
+};
 
 // chip/버튼·카드는 globals.css .cf-* / .il-* 클래스로 통일
 // (실험 B 워크벤치 — "동일 컴포넌트=동일 디자인").
+
+/** discover 출처 문서 1건(제목 리스트 + 모달 전체보기). */
+interface SourceDoc {
+  docId: string;
+  title: string;
+  body: string;
+}
 
 interface DocBlock {
   /** 안정적 고유 key (phase/doc 무관 단조 증가 — key 충돌 0) */
@@ -78,6 +164,8 @@ interface DocBlock {
   title: string;
   text: string;
   done: boolean;
+  /** discover 출처 문서 목록(doc_sources 이벤트). 없으면 미표시. */
+  sources?: SourceDoc[];
 }
 
 /** 빈 stageIO 레코드 (5단계 모두 idle) — 실행 시작마다 리셋 */
@@ -89,8 +177,14 @@ function emptyStageIO(): Record<number, StageIO> {
 
 export function MetaLabView(): ReactNode {
   const [domain, setDomain] = useState<string>("sangkwon");
-  const [task, setTask] = useState<string>("label");
-  const [count, setCount] = useState<number>(3);
+  const [task, setTask] = useState<string>("discover");
+  const [count, setCount] = useState<CountValue>(3);
+  // discover 발굴 회수(1=단일 묶음·기본, >1=비복원 분할 병렬).
+  const [discoverRounds, setDiscoverRounds] = useState<number>(1);
+  // 올인원 규모 — 발굴 프리셋·실분류·색인 상한(작업모드별 문서수 파라미터화).
+  const [presetId, setPresetId] = useState<AllInOnePresetId>("standard");
+  const [classifyCount, setClassifyCount] = useState<number>(5);
+  const [metaLimit, setMetaLimit] = useState<MetaLimitValue>(60);
   const [system, setSystem] = useState<string>("");
   const [blocks, setBlocks] = useState<DocBlock[]>([]);
   const [running, setRunning] = useState(false);
@@ -100,8 +194,40 @@ export function MetaLabView(): ReactNode {
     emptyStageIO,
   );
   const [openStage, setOpenStage] = useState<number | null>(null);
+  // discover 출처 모달 — 선택된 출처 문서(제목 클릭 시 전체 본문).
+  const [openSource, setOpenSource] = useState<SourceDoc | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const uidRef = useRef(0); // 블록 고유 key 카운터 (충돌 0)
+  // 결과 자동스크롤: 페이지 스크롤 컨테이너 ref + "바닥 근처" 추적.
+  // 사용자가 위로 올려 과거 결과를 읽는 중이면 따라가지 않음(채팅 표준).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+
+  // 자동스크롤 ①: 스크롤할 때마다 "바닥 근처" 여부 갱신. 위로 올려
+  // 과거 결과를 읽는 중(near=false)이면 자동스크롤 안 함.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = (): void => {
+      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      nearBottomRef.current = gap < 80; // 80px 이내면 바닥으로 간주
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // 자동스크롤 ②: "새 블록 시작" + "콘텐트 분석 완료" 두 시점에만 말단
+  // 정렬(사용자 결정 2026-05-21). 토큰 스트리밍 중(text 변경)에는 안 움직임
+  // — 의존성을 blocks 전체가 아닌 두 파생 카운트로 좁혀 스트리밍 재실행 0.
+  //  · blocks.length      = doc_start(새 카드) 시 증가
+  //  · doneCount(완료 수) = doc_end(done:true) 시 증가
+  const blockCount = blocks.length;
+  const doneCount = blocks.filter((b) => b.done).length;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !nearBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [blockCount, doneCount]);
 
   // 그래프 노드 상태(stage→status). stageIO 에서 파생.
   const stageStates: Record<number, StageStatus> = {};
@@ -120,16 +246,33 @@ export function MetaLabView(): ReactNode {
     setStageIO(emptyStageIO());
     setOpenStage(null);
     uidRef.current = 0;
+    nearBottomRef.current = true; // 새 실행 = 결과 따라가기 의도(리셋)
     const ac = new AbortController();
     abortRef.current = ac;
     try {
+      // 모드별 파라미터: 단발은 count, 올인원은 발굴 프리셋·실분류
+      // (+색인 상한은 allinone_index 만). 미전송 항목은 서버 기본값.
+      const preset = ALLINONE_PRESETS.find((p) => p.id === presetId)!;
+      const reqBody = isAllInOne
+        ? {
+            domain,
+            task,
+            discoverPerSet: preset.perSet,
+            discoverSets: preset.sets,
+            classifyCount,
+            ...(task === "allinone_index" ? { metaLimit } : {}),
+          }
+        : {
+            domain,
+            task,
+            count,
+            // discover 만 회수 전송(label 은 무의미 — 건수=반복).
+            ...(task === "discover" ? { discoverRounds } : {}),
+          };
       const res = await fetch("/api/meta-lab", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        // allinone 은 발굴20×10·실분류5 고정 → count 미전송.
-        body: JSON.stringify(
-          isAllInOne ? { domain, task } : { domain, task, count },
-        ),
+        body: JSON.stringify(reqBody),
         signal: ac.signal,
       });
       if (!res.ok || !res.body) {
@@ -214,6 +357,13 @@ export function MetaLabView(): ReactNode {
                   : blk,
               ),
             );
+          } else if (ev.type === "doc_sources") {
+            // discover 출처 — 방금 끝난 발굴 블록(마지막)에 문서 목록 부착.
+            setBlocks((b) =>
+              b.map((blk, i) =>
+                i === b.length - 1 ? { ...blk, sources: ev.sources } : blk,
+              ),
+            );
           } else if (ev.type === "doc_end") {
             setBlocks((b) =>
               b.map((blk, i) =>
@@ -290,6 +440,7 @@ export function MetaLabView(): ReactNode {
     // layout.tsx overflow:hidden+100dvh → 자체 스크롤 컨테이너 필요
     // (ChatPanel 선례). .thin-scroll 재사용(기존 클래스).
     <div
+      ref={scrollRef}
       className="thin-scroll"
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
@@ -467,18 +618,14 @@ export function MetaLabView(): ReactNode {
                 })}
               </div>
 
-              {/* label/discover 만 문서 수 선택(올인원은 고정). */}
+              {/* 단발(discover/label): 문서 수(+전체). 전체는 비용 경고.
+                  discover 는 추가로 발굴 회수(1회당 N개 × M회). */}
               {!isAllInOne && (
                 <>
-                  <div className="il-flabel">문서 수</div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      marginBottom: 14,
-                    }}
-                  >
+                  <div className="il-flabel">
+                    {task === "discover" ? "1회당 문서 수" : "문서 수"}
+                  </div>
+                  <div style={pillRowStyle}>
                     {COUNTS.map((c) => (
                       <button
                         key={c}
@@ -492,6 +639,105 @@ export function MetaLabView(): ReactNode {
                       </button>
                     ))}
                   </div>
+
+                  {/* discover 발굴 회수 — 올인원 발굴과 동형(회마다 다른
+                      비복원 묶음 병렬). 1=단일 묶음(기존). */}
+                  {task === "discover" && (
+                    <>
+                      <div className="il-flabel">발굴 회수</div>
+                      <div style={pillRowStyle}>
+                        {DISCOVER_ROUNDS.map((r) => (
+                          <button
+                            key={r}
+                            type="button"
+                            className="cf-pill"
+                            aria-pressed={discoverRounds === r}
+                            onClick={() => setDiscoverRounds(r)}
+                            disabled={running}
+                          >
+                            <span className="il-mono">{r}</span>회
+                          </button>
+                        ))}
+                      </div>
+                      {discoverRounds > 1 && (
+                        <div style={warnHintStyle}>
+                          1회당 {count}건 × {discoverRounds}회 = 총{" "}
+                          {count * discoverRounds}건을 회마다 다른 묶음으로 병렬
+                          발굴(LLM {discoverRounds}회 호출).
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* 올인원/올인원색인: 발굴 규모 프리셋 + 실분류 + (색인 상한). */}
+              {isAllInOne && (
+                <>
+                  <div className="il-flabel">발굴 규모</div>
+                  <div style={pillRowStyle}>
+                    {ALLINONE_PRESETS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="cf-pill"
+                        aria-pressed={presetId === p.id}
+                        onClick={() => setPresetId(p.id)}
+                        disabled={running}
+                        title={p.hint}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="il-flabel">실분류</div>
+                  <div style={pillRowStyle}>
+                    {CLASSIFY_COUNTS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className="cf-pill"
+                        aria-pressed={classifyCount === c}
+                        onClick={() => setClassifyCount(c)}
+                        disabled={running}
+                      >
+                        <span className="il-mono">{c}</span>건
+                      </button>
+                    ))}
+                  </div>
+
+                  {task === "allinone_index" && (
+                    <>
+                      <div className="il-flabel">색인 상한</div>
+                      <div style={pillRowStyle}>
+                        {META_LIMITS.map((m) => (
+                          <button
+                            key={String(m)}
+                            type="button"
+                            className="cf-pill"
+                            aria-pressed={metaLimit === m}
+                            onClick={() => setMetaLimit(m)}
+                            disabled={running}
+                          >
+                            {m === "all" ? (
+                              "전체"
+                            ) : (
+                              <>
+                                <span className="il-mono">{m}</span>건
+                              </>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      {metaLimit === "all" && (
+                        <div style={warnHintStyle}>
+                          ⚠ 색인 전체는 발굴 미사용분 전부를 분류·임베딩합니다 —
+                          시간·비용이 코퍼스 크기에 비례합니다.
+                        </div>
+                      )}
+                    </>
+                  )}
                 </>
               )}
 
@@ -762,6 +1008,31 @@ export function MetaLabView(): ReactNode {
                           </div>
                           <pre className="il-code">{b.text || "…"}</pre>
                           <JsonResultView raw={b.text} />
+                          {/* 출처 글 목록 — discover 발굴에 들어간 문서.
+                              제목 클릭 시 모달로 전체 본문(누가 출처인지). */}
+                          {b.sources && b.sources.length > 0 && (
+                            <div style={sourceListWrapStyle}>
+                              <div style={sourceListLabelStyle}>
+                                출처 글 {b.sources.length}건 (클릭 시 전체 보기)
+                              </div>
+                              <div style={sourceListStyle}>
+                                {b.sources.map((s) => (
+                                  <button
+                                    key={s.docId}
+                                    type="button"
+                                    className="cf-pill"
+                                    style={sourceItemStyle}
+                                    onClick={() => setOpenSource(s)}
+                                    title={s.title}
+                                  >
+                                    <span style={sourceItemTextStyle}>
+                                      {s.title}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ),
                     )}
@@ -800,6 +1071,117 @@ export function MetaLabView(): ReactNode {
             />
           );
         })()}
+
+      {/* discover/label 출처 글 모달 — 제목 클릭 시 전체 본문(누가 출처인지). */}
+      {openSource && (
+        <SourceModal source={openSource} onClose={() => setOpenSource(null)} />
+      )}
+    </div>
+  );
+}
+
+/** discover/label 출처 문서 전체보기 모달(fixed overlay — StageModal 톤 동형). */
+function SourceModal({
+  source,
+  onClose,
+}: {
+  source: SourceDoc;
+  onClose: () => void;
+}): ReactNode {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 9000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px 16px",
+        background: "rgba(15,23,42,0.45)",
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 720,
+          maxHeight: "85vh",
+          display: "flex",
+          flexDirection: "column",
+          background: "var(--surface-default)",
+          border: "1px solid var(--t-neutral-8)",
+          borderRadius: "var(--r-lg, 12px)",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 12,
+            padding: "16px 20px 12px",
+            borderBottom: "1px solid var(--t-neutral-8)",
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 10.5, color: "var(--text-subtle)" }}>
+              출처 글 · {source.docId}
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                color: "var(--text-default)",
+                marginTop: 2,
+                lineHeight: 1.4,
+              }}
+            >
+              {source.title}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            style={{
+              flexShrink: 0,
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              border: "1px solid var(--t-neutral-8)",
+              background: "var(--surface-default)",
+              color: "var(--text-subtle)",
+              cursor: "pointer",
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <div
+          className="thin-scroll"
+          style={{
+            overflowY: "auto",
+            padding: "16px 20px",
+            fontSize: 13,
+            lineHeight: 1.7,
+            color: "var(--text-default)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {source.body || "(본문 없음)"}
+        </div>
+      </div>
     </div>
   );
 }

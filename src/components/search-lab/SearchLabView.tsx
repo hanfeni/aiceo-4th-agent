@@ -3,10 +3,18 @@
 import { type ReactNode } from "react";
 import { StatusPill, PipelineRow } from "@/components/common/LabWorkbench";
 import { IndexDocsModal } from "./IndexDocsModal";
+import { PreviewModal } from "@/components/data-load/PreviewModal";
 import { RAG_STAGE_NODES } from "./ragStageNodes";
 import { RagStageModal } from "./RagStageModal";
 import { Text2SqlChartModal } from "./Text2SqlChartModal";
-import { CompareCol, HitsList, RagAnswer, SqlResultBlock } from "./SearchResults";
+import { ChartView } from "./ChartView";
+import {
+  CompareCol,
+  HitsList,
+  RagAnswer,
+  SqlResultBlock,
+  DocViewModal,
+} from "./SearchResults";
 import {
   useSearchLab,
   MODES,
@@ -59,10 +67,19 @@ export function SearchLabView(): ReactNode {
     t2sChart: t2scChart,
     showDocs,
     setShowDocs,
+    domainTableLoaded,
+    showDataPreview,
+    setShowDataPreview,
+    dataPreview,
+    dataPreviewLoading,
+    openDataPreview,
     openStage,
     setOpenStage,
+    openDoc,
+    setOpenDoc,
     showSqlModal,
     setShowSqlModal,
+    scrollRef,
     execute,
     stop,
     isRag,
@@ -89,6 +106,7 @@ export function SearchLabView(): ReactNode {
     // 컨테이너여야 콘텐츠가 길어도 잘리지 않음(ChatPanel 선례). 얇은
     // 스크롤바는 기존 .thin-scroll 재사용.
     <div
+      ref={scrollRef}
       className="thin-scroll"
       style={{ flex: 1, height: "100%", overflowY: "auto", minWidth: 0 }}
     >
@@ -137,19 +155,19 @@ export function SearchLabView(): ReactNode {
           </p>
         </div>
 
-        {/* il-bench — 좌(설정 300px) · 우(워크벤치 1fr). 도메인 리스트가
-            길어 300px 로 override(시안 B). */}
-        <div className="il-bench" style={{ gridTemplateColumns: "320px 1fr" }}>
-          {/* ─── 좌측: 설정 패널 (sticky) ─── */}
+        {/* il-bench — 좌(도메인 240px) · 우(질의 카드 + 워크벤치 1fr).
+            질의·옵션·추천을 우측 와이드 카드로 옮겨 좁은 사이드 답답함 해소
+            (시안 B 최종 — chat5). 좌측엔 도메인 선택만 남김. */}
+        <div className="il-bench" style={{ gridTemplateColumns: "240px 1fr" }}>
+          {/* ─── 좌측: 도메인 선택만 (sticky) ─── */}
           <div className="il-bench-aside">
-            {/* 설정 카드 — 도메인 세로 리스트 · 실행 모드 · 방식 · TOP K */}
+            {/* 도메인 카드 — 세로 리스트 + 소스 보기 버튼. */}
             <div className="il-card il-config">
-              <div className="il-config-title">실행 설정</div>
+              <div className="il-config-title">도메인</div>
 
               {/* 도메인 — 세로 리스트(il-domain-btn). 미색인/미적재는
                   disabled + 상태 표기, 가용이면 ● docs/행. 가용성은
                   taskMode 가 결정한 소스종류 기준(사용자 지적). */}
-              <div className="il-flabel">도메인</div>
               <div
                 style={{
                   display: "flex",
@@ -224,66 +242,142 @@ export function SearchLabView(): ReactNode {
                 })}
               </div>
 
-              {/* 실행 모드(검색/RAG/Text-to-SQL/차트) — 소스종류 결정 */}
-              <div className="il-flabel">실행 모드</div>
+              {/* 소스 보기 — 모드별로 다른 데이터원.
+                  검색·RAG = OpenSearch 인덱스(인덱스 보기),
+                  Text-to-SQL/Chart = SQLite 적재 테이블(데이터 조회). */}
+              {isT2s || isT2sc ? (
+                <button
+                  type="button"
+                  className="cf-btn"
+                  style={{ width: "100%", justifyContent: "center" }}
+                  disabled={!domainTableLoaded}
+                  onClick={() => void openDataPreview()}
+                  title={
+                    domainTableLoaded
+                      ? "적재된 SQLite 테이블의 데이터를 표로 조회"
+                      : "미적재 — 데이터 적재 메뉴에서 먼저 적재하세요"
+                  }
+                >
+                  데이터 조회
+                  {domainTableLoaded
+                    ? ` (${dbStatus[domain]?.toLocaleString()}건)`
+                    : ""}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="cf-btn"
+                  style={{ width: "100%", justifyContent: "center" }}
+                  disabled={!domainIndexed}
+                  onClick={() => setShowDocs(true)}
+                  title={
+                    domainIndexed
+                      ? "색인된 문서를 하나씩 열람"
+                      : "미색인 — 도메인 색인 메뉴에서 먼저 색인하세요"
+                  }
+                >
+                  인덱스 보기
+                  {domainIndexed ? ` (${status[domain]?.toLocaleString()}건)` : ""}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ─── 우측: 질의 카드(와이드) + 워크벤치 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {/* 질의 카드(시안 B 최종 — chat5) — 좁은 사이드에서 우측 와이드로
+                이동. 옵션(실행 모드·검색 방식·TOP K) + 추천 질의 + 질의 입력 +
+                실행을 한 카드에 가로로 길게 노출. */}
+            <div className="il-card" style={{ marginBottom: 16 }}>
+              {/* 옵션 행 — 실행 모드 / 검색 방식·하이브리드·BM25 / TOP K */}
               <div
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
+                  display: "grid",
+                  gridTemplateColumns: "1fr 200px",
+                  gap: 18,
                   marginBottom: 14,
+                  alignItems: "flex-start",
                 }}
               >
-                {TASK_MODES.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    className="cf-pill"
-                    aria-pressed={taskMode === t.id}
-                    onClick={() => setTaskMode(t.id)}
-                    title={t.hint}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* 검색 방식 — 검색·RAG 모드만(SQL 계열은 검색 방식 무관) */}
-              {!isT2s && !isT2sc && (
-                <>
-                  <div className="il-flabel">검색 방식</div>
+                <div>
+                  <div className="il-flabel">실행 모드</div>
                   <div
-                    style={{
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                      marginBottom: 14,
-                    }}
+                    style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
                   >
-                    {MODES.map((m) => (
+                    {TASK_MODES.map((t) => (
                       <button
-                        key={m.id}
+                        key={t.id}
                         type="button"
                         className="cf-pill"
-                        aria-pressed={mode === m.id}
-                        onClick={() => setMode(m.id)}
-                        title={m.hint}
+                        aria-pressed={taskMode === t.id}
+                        onClick={() => setTaskMode(t.id)}
+                        title={t.hint}
                       >
-                        {m.label}
+                        {t.label}
                       </button>
                     ))}
                   </div>
+                </div>
+                <div>
+                  <div className="il-flabel">
+                    TOP K{isRag ? " — 최대 10건" : ""}
+                  </div>
+                  <div
+                    style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
+                  >
+                    {TOP_RANKS.map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        className="cf-pill"
+                        aria-pressed={topK === k}
+                        onClick={() => setTopK(k)}
+                      >
+                        <span className="il-mono">{k}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 검색 방식 — 검색·RAG 모드만(SQL 계열은 검색 방식 무관).
+                  하이브리드 결합 방식·BM25 가중치는 검색 방식과 같은 줄에
+                  가로로 나란히(각자 라벨 유지). */}
+              {!isT2s && !isT2sc && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "12px 24px",
+                    alignItems: "flex-start",
+                    marginBottom: 14,
+                  }}
+                >
+                  <div>
+                    <div className="il-flabel">검색 방식</div>
+                    <div
+                      style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
+                    >
+                      {MODES.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className="cf-pill"
+                          aria-pressed={mode === m.id}
+                          onClick={() => setMode(m.id)}
+                          title={m.hint}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
                   {mode === "hybrid" && (
-                    <>
+                    <div>
                       <div className="il-flabel">하이브리드 결합 방식</div>
                       <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: 6,
-                          marginBottom: 14,
-                        }}
+                        style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
                       >
                         {HYBRID_METHODS.map((h) => (
                           <button
@@ -297,25 +391,14 @@ export function SearchLabView(): ReactNode {
                           </button>
                         ))}
                       </div>
-                    </>
+                    </div>
                   )}
 
                   {mode === "lexical" && (
-                    <>
-                      <div className="il-flabel">
-                        BM25 필드 가중치
-                        <div className="il-flabel-hint">
-                          같은 질의라도 타이틀/본문 가중을 바꾸면 순위가
-                          달라집니다
-                        </div>
-                      </div>
+                    <div>
+                      <div className="il-flabel">BM25 필드 가중치</div>
                       <div
-                        style={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: 6,
-                          marginBottom: 14,
-                        }}
+                        style={{ display: "flex", flexWrap: "wrap", gap: 6 }}
                       >
                         {LEXICAL_PRESETS.map((p) => (
                           <button
@@ -330,99 +413,18 @@ export function SearchLabView(): ReactNode {
                           </button>
                         ))}
                       </div>
-                    </>
+                    </div>
                   )}
-                </>
-              )}
-
-              {/* TOP K(결과 개수) */}
-              <div className="il-flabel">
-                TOP K{isRag ? " — RAG 컨텍스트는 최대 10건" : ""}
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
-                  marginBottom: 14,
-                }}
-              >
-                {TOP_RANKS.map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className="cf-pill"
-                    aria-pressed={topK === k}
-                    onClick={() => setTopK(k)}
-                  >
-                    <span className="il-mono">{k}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* 인덱스 보기 — 현 도메인이 색인됐을 때만(검색·RAG 소스). */}
-              <button
-                type="button"
-                className="cf-btn"
-                style={{ width: "100%", justifyContent: "center" }}
-                disabled={!domainIndexed}
-                onClick={() => setShowDocs(true)}
-                title={
-                  domainIndexed
-                    ? "색인된 문서를 하나씩 열람"
-                    : "미색인 — 도메인 색인 메뉴에서 먼저 색인하세요"
-                }
-              >
-                인덱스 보기
-                {domainIndexed ? ` (${status[domain]?.toLocaleString()}건)` : ""}
-              </button>
-            </div>
-
-            {/* 질의 카드(시안 B 좌측 하단) — textarea + 실행 버튼 */}
-            <div className="il-card il-config" style={{ marginTop: 12 }}>
-              <div className="il-flabel">
-                질의
-                <div className="il-flabel-hint">
-                  검색어 — Enter 또는 아래 실행 버튼
                 </div>
-              </div>
-              <textarea
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  // textarea 라 Enter 줄바꿈 충돌 방지 — Shift 없으면 실행.
-                  if (e.key === "Enter" && !e.shiftKey && !loading) {
-                    e.preventDefault();
-                    execute();
-                  }
-                }}
-                placeholder={
-                  isRag
-                    ? "질문을 입력하고 Enter (검색 근거로 LLM 답변)"
-                    : isT2s
-                      ? "질문을 입력하고 Enter (자연어 → SQL → 적재 테이블 조회)"
-                      : isT2sc
-                        ? "질문을 입력하고 Enter (자연어 → SQL → 실행 → 차트)"
-                        : "검색어를 입력하고 Enter"
-                }
-                className="cf-field"
-                rows={3}
-                style={{ width: "100%", resize: "vertical", marginBottom: 8 }}
-              />
+              )}
 
               {/* 추천 질의 — 모드(소스종류)×도메인 에 실제 가능한 것만.
                   도메인 가용 + 플레이스홀더 아닌 경우에만 노출. */}
               {domainAvailable(domain) &&
                 recs.length > 0 &&
                 !recs[0].startsWith("(") && (
-                  <div style={{ marginBottom: 8 }}>
-                    <div
-                      style={{
-                        fontSize: 10.5,
-                        color: "var(--text-subtle)",
-                        marginBottom: 6,
-                      }}
-                    >
+                  <div style={{ marginBottom: 14 }}>
+                    <div className="il-flabel">
                       추천 질의 ({kind === "db" ? "테이블 집계" : "문서 검색"})
                     </div>
                     <div
@@ -444,39 +446,61 @@ export function SearchLabView(): ReactNode {
                   </div>
                 )}
 
-              {loading ? (
-                <button
-                  type="button"
-                  onClick={isRag || isT2s || isT2sc ? stop : undefined}
-                  disabled={!(isRag || isT2s || isT2sc)}
-                  className="cf-btn"
-                  style={{ width: "100%", justifyContent: "center" }}
-                  title={isRag || isT2s || isT2sc ? "중지" : "검색 중"}
-                >
-                  {isRag || isT2s || isT2sc ? "중지" : "검색 중…"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={execute}
-                  disabled={!query.trim()}
-                  className="cf-btn cf-btn--primary"
-                  style={{ width: "100%", justifyContent: "center" }}
-                >
-                  {isRag
-                    ? "RAG 실행"
-                    : isT2s
-                      ? "Text-to-SQL 실행"
-                      : isT2sc
-                        ? "차트 생성 실행"
-                        : "검색"}
-                </button>
-              )}
+              {/* 질의 입력 — 가로로 길게(input + 실행 버튼). */}
+              <div className="il-flabel">질의</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !loading) {
+                      e.preventDefault();
+                      execute();
+                    }
+                  }}
+                  placeholder={
+                    isRag
+                      ? "질문을 입력하고 Enter (검색 근거로 LLM 답변)"
+                      : isT2s
+                        ? "질문을 입력하고 Enter (자연어 → SQL → 적재 테이블 조회)"
+                        : isT2sc
+                          ? "질문을 입력하고 Enter (자연어 → SQL → 실행 → 차트)"
+                          : "검색어를 입력하고 Enter (예: 강남구 카페 상권)"
+                  }
+                  className="cf-field"
+                  style={{ flex: 1 }}
+                />
+                {loading ? (
+                  <button
+                    type="button"
+                    onClick={isRag || isT2s || isT2sc ? stop : undefined}
+                    disabled={!(isRag || isT2s || isT2sc)}
+                    className="cf-btn"
+                    style={{ whiteSpace: "nowrap" }}
+                    title={isRag || isT2s || isT2sc ? "중지" : "검색 중"}
+                  >
+                    {isRag || isT2s || isT2sc ? "중지" : "검색 중…"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={execute}
+                    disabled={!query.trim()}
+                    className="cf-btn cf-btn--primary"
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    {isRag
+                      ? "RAG 실행"
+                      : isT2s
+                        ? "Text-to-SQL 실행"
+                        : isT2sc
+                          ? "차트 생성 실행"
+                          : "검색"}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* ─── 우측: 워크벤치 ─── */}
-          <div style={{ minWidth: 0 }}>
             {err && (
               <div className="il-error" style={{ marginBottom: 16 }}>
                 ⚠️ {err}
@@ -523,8 +547,9 @@ export function SearchLabView(): ReactNode {
             )}
 
             {/* 검색·RAG 모드: 3-pane 비교(렉시컬/벡터/하이브리드).
-                현재 데이터 흐름상 단일 fetch 결과(hits)를 세 방식 칼럼에
-                동일 표시 — 현 적용 방식(mode) 칼럼만 highlight. */}
+                두 모드 모두 3방식 병렬 검색 결과(cmp*)를 칼럼별로 표시 —
+                현 선택 방식(mode) 칼럼만 highlight. RAG 도 search 처럼
+                방식별로 다른 결과를 보여준다(중복 제거). */}
             {(taskMode === "search" || isRag) && (
               <div
                 style={{
@@ -536,19 +561,24 @@ export function SearchLabView(): ReactNode {
               >
                 <CompareCol
                   label="렉시컬 · BM25"
-                  hits={taskMode === "search" ? (cmpLexical ?? []) : hits}
+                  hits={cmpLexical ?? []}
                   hint="Nori 토크나이즈 기반 키워드 정합"
+                  highlight={mode === "lexical"}
+                  onOpenDoc={setOpenDoc}
                 />
                 <CompareCol
                   label="벡터 · 3-small"
-                  hits={taskMode === "search" ? (cmpVector ?? []) : hits}
+                  hits={cmpVector ?? []}
                   hint="1536d 코사인 유사도"
+                  highlight={mode === "vector"}
+                  onOpenDoc={setOpenDoc}
                 />
                 <CompareCol
                   label="하이브리드 · 가중 결합"
-                  hits={taskMode === "search" ? (cmpHybrid ?? []) : hits}
+                  hits={cmpHybrid ?? []}
                   hint="α=0.6 (BM25:벡터)"
-                  highlight
+                  highlight={mode === "hybrid"}
+                  onOpenDoc={setOpenDoc}
                 />
               </div>
             )}
@@ -588,7 +618,7 @@ export function SearchLabView(): ReactNode {
                   </div>
                   <StatusPill status={loading ? "running" : "done"} />
                 </div>
-                <HitsList hits={hits} />
+                <HitsList hits={hits} onOpenDoc={setOpenDoc} />
               </div>
             )}
 
@@ -647,13 +677,14 @@ export function SearchLabView(): ReactNode {
                   answer={ragAnswer}
                   hits={hits}
                   streaming={loading}
+                  onOpenDoc={setOpenDoc}
                 />
               </div>
             )}
 
             {/* Text-to-SQL / with Chart: SQL 결과 카드(시안 SQL 카드).
-                생성 SQL + 결과 표. with Chart 면 "차트 보기" 버튼으로
-                Text2SqlChartModal(차트 포함) 진입. */}
+                생성 SQL + 결과 표. with Chart 면 차트가 표 아래 인라인으로
+                바로 보이고, "차트 크게 보기" 로 Text2SqlChartModal 진입. */}
             {(isT2s || isT2sc) && (sqlModalSql || sqlModalResult) && (
               <div className="il-card">
                 <div
@@ -687,20 +718,69 @@ export function SearchLabView(): ReactNode {
                     </span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    {isT2sc && (
+                    {isT2sc && t2scChart && sqlModalResult && (
                       <button
                         type="button"
                         className="cf-btn"
                         style={{ height: 28, padding: "0 12px", fontSize: 12 }}
                         onClick={() => setShowSqlModal(true)}
                       >
-                        차트 보기
+                        차트 크게 보기
                       </button>
                     )}
                     <StatusPill status={heroOverall} />
                   </div>
                 </div>
                 <SqlResultBlock sql={sqlModalSql} result={sqlModalResult} />
+
+                {/* with Chart 모드 인라인 차트 — LLM 이 고른 차트 스펙을
+                    표 아래에 바로 렌더(모달과 동일 ChartView·동일 데이터).
+                    표와 시각 분리를 위해 점선 구분 + 카드 톤 배경. */}
+                {isT2sc && t2scChart && sqlModalResult && (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      paddingTop: 16,
+                      borderTop: "1px dashed var(--t-neutral-16)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <span className="il-bench-label">CHART</span>
+                      <span
+                        className="il-mono"
+                        style={{
+                          fontSize: 10.5,
+                          color: "var(--text-subtle)",
+                        }}
+                      >
+                        자동 추천: {t2scChart.chartType.toUpperCase()} · x:{" "}
+                        {t2scChart.x} · y: {t2scChart.y.join(", ")}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        background: "var(--surface-default)",
+                        border: "1px solid var(--t-neutral-8)",
+                        borderRadius: "var(--r-lg)",
+                        padding: 16,
+                      }}
+                    >
+                      <ChartView
+                        spec={t2scChart}
+                        columns={sqlModalResult.columns}
+                        rows={sqlModalResult.rows}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -751,6 +831,26 @@ export function SearchLabView(): ReactNode {
           }
           onClose={() => setShowDocs(false)}
         />
+      )}
+
+      {/* 데이터 조회 — Text-to-SQL/Chart 의 적재 SQLite 테이블 앞 N행
+          (CSV 미리보기와 동일 PreviewModal UI 재사용). */}
+      {showDataPreview && (
+        <PreviewModal
+          title={`${
+            allDomains.find((d) => d.id === domain)?.label ?? domain
+          } — 적재 데이터`}
+          preview={dataPreview}
+          loading={dataPreviewLoading}
+          sourceNote="적재된 SQLite 테이블 조회"
+          unit="테이블"
+          onClose={() => setShowDataPreview(false)}
+        />
+      )}
+
+      {/* 검색 결과 글 전체보기 모달 — 아이템(3-pane·리스트·RAG 근거) 클릭. */}
+      {openDoc && (
+        <DocViewModal hit={openDoc} onClose={() => setOpenDoc(null)} />
       )}
     </div>
   );

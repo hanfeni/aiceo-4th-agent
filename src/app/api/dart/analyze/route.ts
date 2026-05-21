@@ -176,6 +176,20 @@ export async function POST(req: Request): Promise<Response> {
           }),
         );
         // ── 단계 2: DART 공시 수집 (collectDartContext 내부 완료) ──
+        // 노드 입력 체이닝: stage 2 의 input = stage 1 의 output 그대로
+        // (이전 노드 출력 = 다음 노드 입력 — 교육 시각화 데이터 흐름).
+        // 라우트가 emit 시점에 합성한다(프론트는 받은 값만 보존 누적).
+        controller.enqueue(
+          encodeSse({
+            type: "stage",
+            stage: 2,
+            status: "start",
+            label: "DART 공시 수집",
+            input: `corp_code=${ctx.corpCode}, ${
+              ctx.isListed ? "상장사" : "비상장사"
+            }`,
+          }),
+        );
         // output = 실제 수집된 DART 데이터 원문(ctx.text) 그 자체 —
         // 상태 메시지 아님. 교육생이 노드 클릭 시 LLM 에 실제로 들어가는
         // 재무 숫자·인력·주주·배당 값을 확인(D14 교육 목적 — "AI 에

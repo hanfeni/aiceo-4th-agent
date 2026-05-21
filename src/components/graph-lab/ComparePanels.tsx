@@ -44,57 +44,23 @@ export function emptyPanels(): Record<string, PanelState> {
 }
 
 /**
- * 방식별 메타 — 시안 B MethodPanel 톤. verdict 는 교육 결론 칩
- * (RAG=한계 / SQL=부분 답 / GraphRAG=압승). GraphRAG 만 highlight
- * (강조 카드 + 🏆). 결과 데이터 자체는 PanelState(실 SSE)에서 옴.
+ * 방식별 메타 — 시안 B MethodPanel 톤. 결과 전 편향 제거(사용자 결정
+ * 2026-05-21): verdict 칩(한계/부분답/압승)·🏆 트로피·GraphRAG highlight
+ * 를 모두 제거해 세 패널을 동등하게. 학생이 결과를 직접 보고 판단하도록
+ * (결론 미리 주기 금지). 결과 데이터 자체는 PanelState(실 SSE)에서 옴.
  */
-const META: Record<
-  string,
-  {
-    title: string;
-    sub: string;
-    verdict: string;
-    verdictKind: "ok" | "warn" | "err";
-    highlight?: boolean;
-  }
-> = {
+const META: Record<string, { title: string; sub: string }> = {
   rag: {
     title: "RAG (벡터 검색)",
     sub: "텍스트 검색 → LLM",
-    verdict: "한계",
-    verdictKind: "err",
   },
   sql: {
     title: "Text-to-SQL",
     sub: "단일 테이블 쿼리 (대조군)",
-    verdict: "부분 답",
-    verdictKind: "warn",
   },
   graphrag: {
     title: "GraphRAG (Cypher)",
     sub: "Neo4j 멀티홉 경로",
-    verdict: "압승",
-    verdictKind: "ok",
-    highlight: true,
-  },
-};
-
-/** verdict 칩 색(시안 lab-success/warn/danger 토큰). */
-const VERDICT_COLORS: Record<
-  "ok" | "warn" | "err",
-  { color: string; bg: string }
-> = {
-  ok: {
-    color: "var(--lab-success-text, #15803d)",
-    bg: "var(--lab-success-bg, #dcfce7)",
-  },
-  warn: {
-    color: "var(--lab-warn-text, #b45309)",
-    bg: "var(--lab-warn-bg, #fef3c7)",
-  },
-  err: {
-    color: "var(--lab-danger-text, #b91c1c)",
-    bg: "var(--lab-danger-bg, #fee2e2)",
   },
 };
 
@@ -127,28 +93,19 @@ function Panel({
   st: PanelState;
 }): ReactNode {
   const m = META[id];
-  const vc = VERDICT_COLORS[m.verdictKind];
   return (
     <div
       style={{
         flex: "1 1 0",
         minWidth: 0,
-        // 시안 MethodPanel: 균일 1.5px 보더만(상단 컬러 바 없음).
-        border: "1.5px solid",
-        borderColor: m.highlight
-          ? "var(--blue-300, #93c5fd)"
-          : "var(--t-neutral-8)",
+        // 세 패널 동등(편향 제거) — 균일 1.5px 보더·흰 배경·그림자 0.
+        border: "1.5px solid var(--t-neutral-8)",
         borderRadius: 12,
         padding: 16,
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        background: m.highlight
-          ? "var(--lab-blue-bg, #eff6ff)"
-          : "var(--surface-default)",
-        boxShadow: m.highlight
-          ? "0 8px 24px rgba(33,148,243,.12)"
-          : "none",
+        background: "var(--surface-default)",
       }}
     >
       <div
@@ -166,9 +123,7 @@ function Panel({
               fontWeight: 800,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
-              color: m.highlight
-                ? "var(--blue-700, #1d4ed8)"
-                : "var(--text-subtle)",
+              color: "var(--text-subtle)",
             }}
           >
             {m.title}
@@ -182,21 +137,7 @@ function Panel({
               flexWrap: "wrap",
             }}
           >
-            {/* verdict 칩(교육 결론) + 실행 상태(실 SSE 파생). */}
-            <span
-              style={{
-                fontSize: 10,
-                padding: "2px 8px",
-                borderRadius: 4,
-                background: vc.bg,
-                color: vc.color,
-                fontWeight: 700,
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
-              }}
-            >
-              {m.verdict}
-            </span>
+            {/* 실행 상태만 표시(verdict 결론 칩 제거 — 편향 0). */}
             <span
               style={{
                 fontSize: 10,
@@ -219,7 +160,6 @@ function Panel({
             {m.sub}
           </div>
         </div>
-        {m.highlight && <span style={{ fontSize: 18 }}>🏆</span>}
       </div>
 
       {st.code && (

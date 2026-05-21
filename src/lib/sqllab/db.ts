@@ -64,6 +64,37 @@ export function tableInfo(
   return { table, rowCount: row.n };
 }
 
+/**
+ * 적재 테이블 앞 N행 미리보기 (Text-to-SQL "데이터 보기"용).
+ * previewCsv(GitHub raw 원본)와 달리 **실제 적재된 SQLite 테이블**을
+ * SELECT — text2sql 실행 단계와 동일한 조회 경로(getDb().prepare().all()).
+ * 미적재면 null. PreviewModal 형태({columns, rows, totalNote})로 반환.
+ */
+export function previewTable(
+  domain: SqlDomain,
+  rows = 20,
+): { columns: string[]; rows: string[][]; totalNote: string } | null {
+  const info = tableInfo(domain);
+  if (!info) return null;
+  const db = getDb(domain);
+  const { table, rowCount } = info;
+  const n = Math.min(Math.max(rows, 1), 100);
+  const cols = db
+    .prepare(`PRAGMA table_info("${table}")`)
+    .all() as { name: string }[];
+  const columns = cols.map((c) => c.name);
+  const data = db
+    .prepare(`SELECT * FROM "${table}" LIMIT ${n}`)
+    .all() as Record<string, unknown>[];
+  // 전 컬럼 TEXT 적재라 문자열화 안전(표시 전용 — null 은 빈칸).
+  const out = data.map((r) => columns.map((c) => String(r[c] ?? "")));
+  return {
+    columns,
+    rows: out,
+    totalNote: `전체 ${rowCount.toLocaleString()}행 중 앞 ${out.length}행`,
+  };
+}
+
 /** 적재 테이블 삭제(실습 초기화). prefix 테이블만 — 안전. */
 export function dropTable(domain: SqlDomain): void {
   const db = getDb(domain);

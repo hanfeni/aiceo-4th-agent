@@ -38,7 +38,7 @@ const panel: CSSProperties = {
   border: "1px solid var(--t-neutral-8, #e4e4e7)",
   borderRadius: "var(--r-lg, 14px)",
   width: "min(860px, 100%)",
-  maxHeight: "86vh",
+  height: "min(680px, 88vh)",
   display: "flex",
   flexDirection: "column",
   boxShadow: "0 24px 64px rgba(0,0,0,0.22)",

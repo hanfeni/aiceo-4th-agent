@@ -137,3 +137,53 @@ export function buildIndexBody(opts: IndexBuildOpts = {}) {
     },
   };
 }
+
+/**
+ * 하이브리드 default 검색 파이프라인 (OpenSearch 네이티브 — 앱단 점수 계산 0).
+ *
+ * neural-search 플러그인의 normalization-processor 가 BM25·knn 점수를
+ * min_max 정규화 후 가중 산술평균으로 결합한다(엔진이 코디네이터 노드에서
+ * 수행). 기존 bool.should 합산이 "BM25 그대로"(스케일·k-NN should 한계로
+ * 벡터 기여 ≈0) 나오던 버그를 엔진 네이티브 결합으로 해결.
+ *
+ * weights[0]=BM25, weights[1]=벡터 — UI 라벨 "α=0.6 (BM25:벡터)" 와 일치.
+ * search.ts hybrid 쿼리의 queries 배열 순서(① multi_match ② knn)와 1:1.
+ */
+export const HYBRID_PIPELINE_ID = "searchlab-hybrid-pipeline";
+/** 하이브리드 가중치 — 단일 출처(UI α=0.6 = BM25 0.6 / 벡터 0.4). */
+export const HYBRID_WEIGHTS: [number, number] = [0.6, 0.4];
+
+/** 파이프라인 정의 본문(normalization-processor — min_max + 가중 산술평균). */
+function hybridPipelineBody() {
+  return {
+    description: "Searchlab hybrid: min_max normalize + weighted arithmetic mean",
+    phase_results_processors: [
+      {
+        "normalization-processor": {
+          normalization: { technique: "min_max" },
+          combination: {
+            technique: "arithmetic_mean",
+            parameters: { weights: HYBRID_WEIGHTS },
+          },
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * 하이브리드 파이프라인 멱등 보장 — 없으면 생성. 검색 직전 1회 호출.
+ * globalThis 플래그로 프로세스당 1회만 PUT(중복 PUT 무해하나 round-trip
+ * 절약). PUT 자체가 upsert 라 동시성 안전.
+ */
+export async function ensureHybridPipeline(): Promise<void> {
+  const g = globalThis as unknown as { __searchlabHybridPipe?: boolean };
+  if (g.__searchlabHybridPipe) return;
+  const client = getSearchClient();
+  await client.transport.request({
+    method: "PUT",
+    path: `/_search/pipeline/${HYBRID_PIPELINE_ID}`,
+    body: hybridPipelineBody(),
+  });
+  g.__searchlabHybridPipe = true;
+}

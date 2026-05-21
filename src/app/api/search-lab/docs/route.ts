@@ -24,14 +24,11 @@ function json(data: unknown, status: number): Response {
   });
 }
 
+// _source 전 필드를 동적으로 통과. 올인원 색인의 메타 라벨
+// (main_category/mid_category/sub_category/keywords/meta_description
+// 등)이 인덱스마다 다르므로 화이트리스트 금지 — 있는 그대로 노출.
 interface OsDocHit {
-  _source: {
-    doc_id: string;
-    chunk_id?: number;
-    title: string;
-    body: string;
-    embedding?: number[];
-  };
+  _source: Record<string, unknown>;
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -62,10 +59,10 @@ export async function GET(req: Request): Promise<Response> {
         from,
         size,
         track_total_hits: true,
-        // embedding 포함 — 학생이 "실제 색인된 전체 도큐먼트"
-        // (벡터까지)를 확인(사용자 결정 2026-05-19). 페이로드는
-        // 50개씩 페이지네이션이라 한 페이지 분량만.
-        _source: ["doc_id", "chunk_id", "title", "body", "embedding"],
+        // _source 전체 — 메타 라벨(올인원 색인) 포함 모든 색인
+        // 필드를 그대로 노출. 학생이 "실제 색인된 전체 도큐먼트"
+        // (벡터·라벨까지)를 확인(사용자 결정 2026-05-19/05-21).
+        _source: true,
         sort: [{ doc_id: "asc" }, { chunk_id: "asc" }],
         query: { match_all: {} },
       },
@@ -74,20 +71,37 @@ export async function GET(req: Request): Promise<Response> {
     // (search.ts 선례 동일 — 런타임 형태 _source 로 일치).
     const hitsRaw = (res.body.hits?.hits ?? []) as unknown as OsDocHit[];
     const items = hitsRaw.map((h) => {
-      const emb = Array.isArray(h._source.embedding)
-        ? h._source.embedding
+      const src = h._source ?? {};
+      const emb = Array.isArray(src.embedding)
+        ? (src.embedding as number[])
         : undefined;
+      // 표준 필드는 정형화하고, 그 외 _source 전 필드(메타 라벨
+      // 등)만 fields 로 묶어 모달이 동적 렌더. embedding(별도
+      // 압축·더보기)·표준 4필드는 fields 에서 제외(중복 방지).
+      const {
+        embedding: _omitEmb,
+        doc_id: _omitId,
+        chunk_id: _omitChunk,
+        title: _omitTitle,
+        body: _omitBody,
+        ...rest
+      } = src;
+      void _omitEmb;
+      void _omitId;
+      void _omitChunk;
+      void _omitTitle;
+      void _omitBody;
       return {
-        doc_id: String(h._source.doc_id ?? ""),
+        doc_id: String(src.doc_id ?? ""),
         chunk_id:
-          typeof h._source.chunk_id === "number"
-            ? h._source.chunk_id
-            : undefined,
-        title: String(h._source.title ?? ""),
-        body: String(h._source.body ?? ""),
-        // 전체 벡터 + 차원(모달이 압축 표시 — raw 정보 손실 0)
+          typeof src.chunk_id === "number" ? src.chunk_id : undefined,
+        title: String(src.title ?? ""),
+        body: String(src.body ?? ""),
+        // 전체 벡터 + 차원(모달이 압축·더보기 — raw 정보 손실 0)
         embedding: emb,
         embedding_dim: emb?.length,
+        // doc_id/chunk_id/title/body 외 모든 _source 필드(동적).
+        fields: rest as Record<string, unknown>,
       };
     });
     // total: 전체 hit 수 (페이지네이션 "N / total" 표기용)

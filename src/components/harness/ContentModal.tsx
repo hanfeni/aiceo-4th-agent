@@ -61,7 +61,7 @@ export function ContentModal({
           position: "relative",
           width: "100%",
           maxWidth: width,
-          maxHeight: "85vh",
+          height: "min(680px, 88vh)",
           display: "flex",
           flexDirection: "column",
           background: "var(--surface-default)",

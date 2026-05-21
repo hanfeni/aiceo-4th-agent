@@ -1,5 +1,4 @@
 import { tool } from "langchain";
-import { z } from "zod";
 import { runCypher } from "@/lib/graphlab/client";
 import { getDataset } from "@/lib/graphlab/config";
 import { getMemStore } from "@/lib/graphlab/load";
@@ -30,7 +29,10 @@ export {
   graphQueryToolDisplayName,
   graphQueryToolDescription,
 } from "./graphQueryTool.meta";
-import { graphQueryToolDescription } from "./graphQueryTool.meta";
+import {
+  graphQueryToolDescription,
+  graphQueryToolSchema,
+} from "./graphQueryTool.meta";
 
 const TOOL_MAX_ROWS = 25; // 결과 행 상한(LLM 컨텍스트·폭주 방지)
 
@@ -120,15 +122,8 @@ export function makeGraphQueryTool(datasetId: string) {
     {
       name: "graph_query",
       description,
-      schema: z.object({
-        cypher: z
-          .string()
-          .describe(
-            "실행할 읽기 전용 Cypher. 도구 설명의 스키마(노드 라벨·" +
-              "속성·관계)를 보고 직접 작성. MATCH/RETURN/WITH 등 읽기 " +
-              "구문만, 쓰기 구문 금지. 멀티홉 경로를 적극 활용.",
-          ),
-      }),
+      // schema 는 meta 단일 출처(카탈로그/팩토리 정합 — 데이터셋 무관).
+      schema: graphQueryToolSchema,
     },
   );
 }

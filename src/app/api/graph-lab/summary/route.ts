@@ -35,6 +35,18 @@ export const dynamic = "force-dynamic";
  *  datasetId 로 해석해 헬퍼에 주입(2026-05-20 동시 공존). */
 type GraphLabels = GraphDataset["cypher"];
 
+/** 해석 문장용 데이터셋 어휘(라벨 + 한글 slots + 도메인 표현). 헬퍼에
+ *  주입해 SEC/영화/논문에 맞는 문장을 출력(SEC 하드코딩 제거). */
+interface Vocab {
+  L: GraphLabels;
+  /** 주체/대상/관계 한글 (SEC: 기관/종목/보유) */
+  slots: GraphDataset["slots"];
+  /** 데이터셋 고유 표현 묶음 (13F·포트폴리오 등 일반화) */
+  terms: GraphDataset["insightTerms"];
+  /** sec-edgar 여부 — 옵션(put_call) 통찰은 SEC 에서만 출력. */
+  isSec: boolean;
+}
+
 /** 경로가 더 길어도 통찰은 최근 N개 노드까지만(비용 캡). */
 const MAX_PATH = 6;
 
@@ -78,8 +90,9 @@ async function nodeFact(
   kind: string,
   raw: string,
   hasValue: boolean,
-  L: GraphLabels,
+  V: Vocab,
 ): Promise<string[]> {
+  const { L, slots, terms } = V;
   const {
     subjectLabel: managerLabel,
     objectLabel: companyLabel,
@@ -103,14 +116,14 @@ async function nodeFact(
       hc: number | null;
       tv: number | null;
     }[];
-    if (!r) return [`이 종목 노드를 그래프에서 찾을 수 없습니다.`];
+    if (!r) return [`이 ${slots.object} 노드를 그래프에서 찾을 수 없습니다.`];
     const lines = [
-      `📈 종목 「${r.name}」 — 13F 기관 ${
+      `📈 ${slots.object} 「${r.name}」 — ${slots.subject} ${
         r.hc ?? r.holders
-      }곳이 보유(보유 기관이 많을수록 '인기/crowding'이 높은 종목).`,
+      }곳이 ${slots.relation}(${terms.objectPopularity}).`,
     ];
     if (hasValue && r.tv)
-      lines.push(`전체 보유가치 합계 ${fmtUsd(r.tv)}.`);
+      lines.push(`${terms.valueLabel} ${fmtUsd(r.tv)}.`);
     return lines;
   }
   if (kind === "m:") {
@@ -119,12 +132,12 @@ async function nodeFact(
        RETURN m.name AS name, count(c) AS ncos, sum(o.value_usd) AS tot`,
       { raw },
     )) as { name: string; ncos: number; tot: number | null }[];
-    if (!r) return [`이 기관 노드를 그래프에서 찾을 수 없습니다.`];
+    if (!r) return [`이 ${slots.subject} 노드를 그래프에서 찾을 수 없습니다.`];
     const lines = [
-      `🏛 기관 「${r.name}」 — 종목 ${r.ncos}개 보유(이 기관의 포트폴리오 폭).`,
+      `🏛 ${slots.subject} 「${r.name}」 — ${slots.object} ${r.ncos}개 ${slots.relation}(${terms.subjectBreadth}).`,
     ];
     if (hasValue && r.tot)
-      lines.push(`포트폴리오 신고가치 합계 ${fmtUsd(r.tot)}.`);
+      lines.push(`${terms.valueLabel} ${fmtUsd(r.tot)}.`);
     return lines;
   }
   if (kind === "p:") {
@@ -154,15 +167,20 @@ async function nodeFact(
       pc: string | null;
       v: number | null;
     }[];
-    if (!r) return [`이 포지션 노드를 그래프에서 찾을 수 없습니다.`];
-    const opt = r.pc || "";
-    const kindWord = opt
-      ? `${opt} 옵션 베팅`
-      : "현물 직접 보유";
+    if (!r) return [`이 ${positionLabel} 노드를 그래프에서 찾을 수 없습니다.`];
     const valPart = hasValue && r.v ? ` · ${fmtUsd(r.v)}` : "";
+    // put_call(현물/옵션)은 SEC 고유 속성 — SEC 에서만 옵션 베팅 표현.
+    if (V.isSec) {
+      const opt = r.pc || "";
+      const kindWord = opt ? `${opt} 옵션 베팅` : "현물 직접 보유";
+      return [
+        `🔗 ${positionLabel} — 「${r.mgr}」가 「${r.co}」를 ${kindWord}${valPart}. ` +
+          `(${positionLabel} 노드는 ${slots.relation} 1건을 매개 — 같은 ${slots.object}도 현물/옵션을 구별)`,
+      ];
+    }
     return [
-      `🔗 포지션 — 「${r.mgr}」가 「${r.co}」를 ${kindWord}${valPart}. ` +
-        `(Position 노드는 보유 1건을 매개 — 같은 종목도 현물/옵션을 구별)`,
+      `🔗 ${positionLabel} — 「${r.mgr}」의 「${r.co}」 ${slots.relation}${valPart}. ` +
+        `(${positionLabel} 노드는 ${slots.relation} 1건을 매개하는 중간 노드)`,
     ];
   }
   return [];
@@ -177,8 +195,9 @@ async function nodeFact(
 async function multiHopInsight(
   ids: { kind: string; raw: string }[],
   hasValue: boolean,
-  L: GraphLabels,
+  V: Vocab,
 ): Promise<string[]> {
+  const { L, slots, terms } = V;
   const {
     subjectLabel: managerLabel,
     objectLabel: companyLabel,
@@ -230,10 +249,10 @@ async function multiHopInsight(
       )) as { mn: string; cn: string; v: number | null }[];
       if (r) {
         const valPart =
-          hasValue && r.v ? ` (신고가치 ${fmtUsd(r.v)})` : "";
+          hasValue && r.v ? ` (가치 ${fmtUsd(r.v)})` : "";
         lines.push(
-          `➡ 연결: 「${r.mn}」 ──[보유]──▶ 「${r.cn}」${valPart}. ` +
-            `방금 따라온 이 엣지가 "이 기관이 이 종목을 보유"라는 ` +
+          `➡ 연결: 「${r.mn}」 ──[${slots.relation}]──▶ 「${r.cn}」${valPart}. ` +
+            `방금 따라온 이 엣지가 "이 ${slots.subject}이(가) 이 ${slots.object}을(를) ${slots.relation}"이라는 ` +
             `사실 1건 — 경로의 기본 단위입니다.`,
         );
       }
@@ -254,9 +273,9 @@ async function multiHopInsight(
       if (r && r.k > 0)
         lines.push(
           `➡ 연결: 「${r.an}」와 「${r.bn}」은 직접 엣지가 없습니다. ` +
-            `대신 공통 보유 종목 ${r.k}개(${r.s.join(", ")}${
+            `대신 공통 ${slots.relation} ${slots.object} ${r.k}개(${r.s.join(", ")}${
               r.k > 3 ? " 등" : ""
-            })가 두 기관을 잇는 다리입니다.`,
+            })가 두 ${slots.subject}을(를) 잇는 다리입니다.`,
         );
     } else if (prev.kind === "c:" && last.kind === "c:") {
       // 종목 ↔ 종목 : 직접 엣지 없음 → 공통 보유 기관이 매개
@@ -268,10 +287,10 @@ async function multiHopInsight(
       )) as { k: number; s: string[] }[];
       if (r && r.k > 0)
         lines.push(
-          `➡ 연결: 이 두 종목은 직접 엣지가 없습니다. 대신 둘 다 ` +
-            `보유한 기관 ${r.k}곳(${r.s.join(", ")}${
+          `➡ 연결: 이 두 ${slots.object}은(는) 직접 엣지가 없습니다. 대신 둘 다 ` +
+            `${slots.relation}한 ${slots.subject} ${r.k}곳(${r.s.join(", ")}${
               r.k > 3 ? " 등" : ""
-            })이 두 종목을 잇는 다리 — common ownership 신호입니다.`,
+            })이 두 ${slots.object}을(를) 잇는 다리입니다.`,
         );
     }
   }
@@ -293,12 +312,11 @@ async function multiHopInsight(
     )) as { both: number; sample: string[] }[];
     if (r && r.both > 0) {
       lines.push(
-        `🔀 멀티홉: 경로의 종목 ${uniq.length}개를 **모두** 보유한 ` +
-          `기관이 ${r.both}곳 (${r.sample.join(", ")}${
+        `🔀 멀티홉: 경로의 ${slots.object} ${uniq.length}개를 **모두** ${slots.relation}한 ` +
+          `${slots.subject}이(가) ${r.both}곳 (${r.sample.join(", ")}${
             r.both > 4 ? " 등" : ""
-          }). 같은 기관이 경쟁/유사 종목을 함께 쥐고 있으면 ` +
-          `'common ownership' — 반독점 연구의 핵심 신호입니다. ` +
-          `SQL이면 종목 수만큼 self-JOIN, GraphRAG는 경로 1줄.`,
+          }). ${terms.coOccurrence}입니다. ` +
+          `SQL이면 ${slots.object} 수만큼 self-JOIN, GraphRAG는 경로 1줄.`,
       );
     }
   }
@@ -320,10 +338,10 @@ async function multiHopInsight(
     )) as { shared: number; sample: string[] }[];
     if (r && r.shared > 0) {
       lines.push(
-        `🔀 멀티홉: 경로의 두 기관이 **공통 보유**한 종목이 ` +
+        `🔀 멀티홉: 경로의 두 ${slots.subject}이(가) **공통 ${slots.relation}**한 ${slots.object}이(가) ` +
           `${r.shared}개 (${r.sample.join(", ")}${
             r.shared > 4 ? " 등" : ""
-          }). 겹치는 종목 수가 곧 포트폴리오 유사도입니다.`,
+          }). 겹치는 ${slots.object} 수가 곧 ${terms.subjectSimilarity}입니다.`,
       );
     }
   }
@@ -346,18 +364,17 @@ async function multiHopInsight(
     const top = rows.map((x) => `${x.co}(${x.k}곳)`).join(", ");
     if (top)
       lines.push(
-        `🔀 연쇄: 이 종목 보유 기관들이 함께 가장 많이 보유한 ` +
-          `다른 종목 — ${top}. "A를 가진 기관은 B도 갖더라"가 ` +
+        `🔀 연쇄: 이 ${slots.object}을(를) ${slots.relation}한 ${slots.subject}들이 함께 가장 많이 ${slots.relation}한 ` +
+          `다른 ${slots.object} — ${top}. ${terms.chainHint}가 ` +
           `한 경로로 드러납니다.`,
       );
   }
 
-  // ── Position 고유 통찰 (3-노드 모드) ──────────────────────
+  // ── Position 고유 통찰 (3-노드 모드, SEC 전용) ────────────
   // 경로에 Position 이 있으면 그 종목의 "현물 vs 옵션 분포"를
-  // 보여준다. 이건 OWNS(2-노드)로는 절대 못 보는 통찰 —
-  // Position 노드의 존재 이유이자 3-노드 토글을 켠 목적.
-  // 사용자 지적("3개 노드 경우 설명 부실")의 직접 처방.
-  if (positions.length > 0) {
+  // 보여준다. put_call(현물/옵션)은 SEC 고유 속성이므로 SEC 에서만
+  // 출력(영화·논문엔 의미 없음 — 사용자 결정 2026-05-21).
+  if (V.isSec && positions.length > 0) {
     const last = positions[positions.length - 1];
     const rows = (await runCypher(
       `MATCH (:${managerLabel})-[:${holdsRel}]->
@@ -418,9 +435,16 @@ export async function POST(req: Request): Promise<Response> {
     reqDataset && GRAPH_DATASET_IDS.includes(reqDataset)
       ? reqDataset
       : DEFAULT_DATASET_ID;
-  const L = getDataset(datasetId).cypher;
+  const ds = getDataset(datasetId);
+  const L = ds.cypher;
   const { subjectLabel: managerLabel, objectLabel: companyLabel, relType: ownsRel } =
     L;
+  const V: Vocab = {
+    L,
+    slots: ds.slots,
+    terms: ds.insightTerms,
+    isSec: datasetId === DEFAULT_DATASET_ID,
+  };
 
   try {
     const rebuild = await needsRebuild(L);
@@ -436,20 +460,20 @@ export async function POST(req: Request): Promise<Response> {
          RETURN mgr, co, owns`,
       )) as { mgr: number; co: number; owns: number }[];
       lines.push(
-        `🗺 전체 구조 — 기관 ${s.mgr}곳 · 종목 ${s.co.toLocaleString()}개 · ` +
-          `보유관계 ${s.owns.toLocaleString()}개. 노드를 클릭하면 그 ` +
+        `🗺 전체 구조 — ${V.slots.subject} ${s.mgr}곳 · ${V.slots.object} ${s.co.toLocaleString()}개 · ` +
+          `${V.slots.relation}관계 ${s.owns.toLocaleString()}개. 노드를 클릭하면 그 ` +
           `의미를, 계속 클릭해 경로를 이으면 멀티홉 통찰이 깊어집니다.`,
       );
     } else {
       // 1홉 — 마지막 클릭 노드의 사실
       const ids = path.map((c) => parseId(c.id));
       const last = ids[ids.length - 1];
-      lines.push(...(await nodeFact(last.kind, last.raw, hasValue, L)));
+      lines.push(...(await nodeFact(last.kind, last.raw, hasValue, V)));
 
       // 2홉+ — 경로 전체(최근 MAX_PATH) 멀티홉 통찰
       if (ids.length >= 2) {
         const recent = ids.slice(-MAX_PATH);
-        lines.push(...(await multiHopInsight(recent, hasValue, L)));
+        lines.push(...(await multiHopInsight(recent, hasValue, V)));
       }
     }
 

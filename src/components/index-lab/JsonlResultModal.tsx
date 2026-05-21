@@ -54,7 +54,7 @@ export function JsonlResultModal({
           border: "1px solid var(--t-neutral-8)",
           borderRadius: "var(--r-lg, 14px)",
           width: "min(680px, 100%)",
-          maxHeight: "86vh",
+          height: "min(680px, 88vh)",
           display: "flex",
           flexDirection: "column",
           boxShadow:

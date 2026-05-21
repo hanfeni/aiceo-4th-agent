@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, Check, ScrollText } from "lucide-react";
 import {
   createChatStore,
   ChatStoreProvider,
@@ -132,7 +133,34 @@ function AgentControlBar({ profile }: { profile: HarnessProfile }): ReactNode {
     const st = storeApi.getState();
     st.setInstructionId(id);
     st.resetChat();
+    setInsOpen(false);
   };
+
+  // 인스트럭션 커스텀 드롭다운(HeaderControls 디자인) — open + 바깥 클릭 닫기.
+  const [insOpen, setInsOpen] = useState(false);
+  const insWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!insOpen) return;
+    const onDown = (e: MouseEvent): void => {
+      if (insWrapRef.current && !insWrapRef.current.contains(e.target as Node)) {
+        setInsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [insOpen]);
+
+  // 드롭다운 옵션 — instructions 목록(없으면 default 합성). 현재 선택 라벨.
+  const insOptions: InstructionMeta[] =
+    instructions.length === 0
+      ? [{ id: "default", label: "기본 인스트럭션", builtin: true }]
+      : instructions;
+  const selectedInsId = instructionId ?? "default";
+  const selectedIns =
+    insOptions.find((o) => o.id === selectedInsId) ?? insOptions[0];
+  const insLabel = selectedIns
+    ? `${selectedIns.label}${selectedIns.builtin ? " (기본)" : ""}`
+    : "기본 인스트럭션";
 
   return (
     <div
@@ -188,48 +216,165 @@ function AgentControlBar({ profile }: { profile: HarnessProfile }): ReactNode {
         );
       })}
 
-      <span style={{ flex: 1 }} />
+      <span style={{ flex: 1, minWidth: 8 }} />
 
-      {/* 시스템 인스트럭션 선택 — 하네스 관리에서 만든 것 중. */}
-      <span style={{ fontSize: 11, color: "var(--text-subtle)" }}>
-        인스트럭션:
-      </span>
-      <select
-        value={instructionId ?? "default"}
-        onChange={(e) =>
-          selectInstruction(
-            e.target.value === "default" ? null : e.target.value,
-          )
-        }
-        disabled={isStreaming}
+      {/* 우측 드롭다운 그룹(인스트럭션·스킬·서브에이전트) — 한 묶음으로 wrap
+          되게 inline-flex 로 감싼다(라벨과 select 가 따로 떨어져 깨지는 것
+          방지). 좁은 폭에선 그룹 통째로 다음 줄로 안전하게 내려감. */}
+      <div
         style={{
-          fontSize: 11.5,
-          padding: "4px 8px",
-          borderRadius: 6,
-          border: "1px solid var(--t-neutral-8)",
-          background: "var(--surface-default)",
-          color: "var(--text-default)",
-          cursor: isStreaming ? "not-allowed" : "pointer",
-          maxWidth: 220,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
         }}
       >
-        {/* 기본(default) 옵션 — instructions 목록에 default(builtin)가
-            이미 포함되면 중복 방지 위해 그것을 쓰고, 없으면 합성 표시. */}
-        {instructions.length === 0 && (
-          <option value="default">기본 인스트럭션</option>
-        )}
-        {instructions.map((ins) => (
-          <option key={ins.id} value={ins.id}>
-            {ins.label}
-            {ins.builtin ? " (기본)" : ""}
-          </option>
-        ))}
-      </select>
+        {/* 시스템 인스트럭션 선택 — HeaderControls 드롭다운 디자인(사용자
+            결정 2026-05-21): ScrollText(보라) + 라벨 + ChevronDown 버튼 +
+            Check 팝오버. 단일 선택(현재 1개에만 Check). 긴 라벨은 버튼
+            maxWidth + ellipsis 로 영역 내 안전 표시. */}
+        <div
+          ref={insWrapRef}
+          style={{
+            position: "relative",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span style={{ fontSize: 11, color: "var(--text-subtle)" }}>
+            인스트럭션:
+          </span>
+          <button
+            type="button"
+            onClick={() => !isStreaming && setInsOpen((v) => !v)}
+            disabled={isStreaming}
+            title={
+              isStreaming
+                ? "응답 생성 중에는 변경할 수 없습니다"
+                : "시스템 인스트럭션 선택(변경 시 새 세션)"
+            }
+            aria-haspopup="menu"
+            aria-expanded={insOpen}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--t-neutral-8)",
+              // 비-기본 인스트럭션 선택 시 파란 활성 배경(default 면 흰 배경).
+              background:
+                selectedInsId !== "default"
+                  ? "var(--t-blue-6, #eef4ff)"
+                  : "var(--surface-default)",
+              fontSize: 12,
+              color: "var(--text-default)",
+              cursor: isStreaming ? "not-allowed" : "pointer",
+              fontWeight: 500,
+              opacity: isStreaming ? 0.6 : 1,
+              maxWidth: 240,
+            }}
+          >
+            <ScrollText
+              size={12}
+              style={{ color: "var(--agent-500)", flexShrink: 0 }}
+              aria-hidden
+            />
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {insLabel}
+            </span>
+            <ChevronDown
+              size={11}
+              style={{ color: "var(--text-subtle)", flexShrink: 0 }}
+              aria-hidden
+            />
+          </button>
 
-      {/* 스킬·서브에이전트 멀티선택 — 프로필별 .data/ 영속(서버 단일 소스).
-          변경 시 PUT + resetChat → 다음 요청에서 서버가 새 selection 으로
-          그래프 재빌드(agent.ts graphSig 에 selection 포함). */}
-      <WorkspaceSelectionControls profileId={profile.id} />
+          {insOpen && !isStreaming && (
+            <div
+              role="menu"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                minWidth: 200,
+                maxWidth: 320,
+                maxHeight: 280,
+                overflowY: "auto",
+                background: "var(--surface-default)",
+                border: "1px solid var(--t-neutral-8)",
+                borderRadius: 8,
+                boxShadow: "0 4px 16px rgba(0,0,0,0.10)",
+                padding: 4,
+                zIndex: 50,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+            >
+              {insOptions.map((ins) => {
+                const active = ins.id === selectedInsId;
+                return (
+                  <button
+                    key={ins.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() =>
+                      selectInstruction(ins.id === "default" ? null : ins.id)
+                    }
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: active ? "var(--t-neutral-4)" : "transparent",
+                      color: "var(--text-default)",
+                      fontSize: 12,
+                      fontWeight: active ? 600 : 500,
+                      cursor: "pointer",
+                      textAlign: "left",
+                      width: "100%",
+                    }}
+                  >
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {ins.label}
+                      {ins.builtin ? " (기본)" : ""}
+                    </span>
+                    {active && (
+                      <Check
+                        size={13}
+                        style={{ color: "var(--agent-500)", flexShrink: 0 }}
+                        aria-hidden
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 스킬·서브에이전트 멀티선택 — 프로필별 .data/ 영속(서버 단일 소스).
+            변경 시 PUT + resetChat → 다음 요청에서 서버가 새 selection 으로
+            그래프 재빌드(agent.ts graphSig 에 selection 포함). */}
+        <WorkspaceSelectionControls profileId={profile.id} />
+      </div>
     </div>
   );
 }

@@ -11,7 +11,7 @@ import {
   ChevronDown,
   SquarePen,
   Check,
-  Database,
+  Wrench,
 } from "lucide-react";
 import { useChatStore, useChatStoreApi } from "@/store";
 import { ConversationHistory } from "@/components/chat/ConversationHistory";
@@ -496,7 +496,7 @@ export function HeaderControls({
             opacity: isStreaming ? 0.6 : 1,
           }}
         >
-          <Database
+          <Wrench
             size={12}
             style={{ color: "var(--agent-500)" }}
             aria-hidden
@@ -628,7 +628,7 @@ export function HeaderControls({
             opacity: isStreaming || sqlLoading ? 0.6 : 1,
           }}
         >
-          <Database
+          <Wrench
             size={12}
             style={{ color: "var(--agent-500)" }}
             aria-hidden
@@ -754,7 +754,7 @@ export function HeaderControls({
             opacity: isStreaming ? 0.6 : 1,
           }}
         >
-          <Database
+          <Wrench
             size={12}
             style={{ color: "var(--agent-500)" }}
             aria-hidden

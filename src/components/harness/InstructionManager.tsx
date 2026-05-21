@@ -34,6 +34,7 @@ import {
 } from "./managerStyles";
 import { ContentModal } from "./ContentModal";
 import { AiGenerateField } from "./AiGenerateField";
+import { FormDivider } from "./FormDivider";
 import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 
 interface Instruction {
@@ -84,14 +85,21 @@ export function InstructionManager({
     }
   }, []);
 
+  // 마운트 시 1회 로드. effect 가 setState 를 *동기* 호출하지 않도록
+  // async IIFE 로 한 단계 떨어뜨림(react-hooks/set-state-in-effect 정합 —
+  // load() 내부 setLoading(true) 가 effect 실행 중 동기 발생하던 것 분리).
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
-  // 변형 수(내장 "기본" 1 + CRUD 변형) 보고 — 통계 타일이 정직한 값을 표시.
+  // 변형 수(내장 "기본" 1 + 사용자 정의 변형) 보고 — 통계 타일이 정직한 값을 표시.
+  // items 에는 API 가 보낸 내장 항목이 섞여 있으므로 사용자 정의만 세고 정적 "기본" 1 을 더한다.
+  const customCount = items.filter((it) => !it.builtin).length;
   useEffect(() => {
-    if (!loading) onCount?.(items.length + 1);
-  }, [items.length, loading, onCount]);
+    if (!loading) onCount?.(customCount + 1);
+  }, [customCount, loading, onCount]);
 
   const startNew = (): void => {
     setMsg(null);
@@ -306,7 +314,10 @@ export function InstructionManager({
               불러오는 중…
             </div>
           ) : (
-            items.map((it) =>
+            // 내장(builtin) 항목은 위 정적 "기본" 행이 이미 표현하므로 제외 — 중복 노출 방지.
+            items
+              .filter((it) => !it.builtin)
+              .map((it) =>
               renderRow(it.id, it.label, it.body, {
                 builtin: !!it.builtin,
                 onView: () => setModal({ id: it.id, label: it.label, body: it.body, builtin: it.builtin }),
@@ -423,6 +434,7 @@ export function InstructionManager({
               )
             }
           />
+          <FormDivider />
           <div style={field}>
             <label style={fieldLabel}>이름 (label)</label>
             <input

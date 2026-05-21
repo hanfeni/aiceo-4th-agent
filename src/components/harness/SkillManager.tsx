@@ -30,6 +30,7 @@ import {
 } from "./managerStyles";
 import { ContentModal } from "./ContentModal";
 import { AiGenerateField } from "./AiGenerateField";
+import { FormDivider } from "./FormDivider";
 import { BenchHeader } from "@/app/(main)/harness/HarnessView";
 
 interface Skill {
@@ -78,8 +79,12 @@ export function SkillManager(): ReactNode {
     }
   }, []);
 
+  // 마운트 시 1회 로드. effect 가 setState 를 *동기* 호출하지 않도록
+  // async IIFE 로 한 단계 떨어뜨림(react-hooks/set-state-in-effect 정합).
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   const startNew = (): void => {
@@ -391,6 +396,7 @@ export function SkillManager(): ReactNode {
                 )
               }
             />
+            <FormDivider />
             <div style={field}>
               <label style={fieldLabel}>이름 (slug)</label>
               <input

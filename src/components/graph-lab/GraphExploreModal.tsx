@@ -18,6 +18,7 @@ import {
   type Edge,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import type { GraphDataset } from "@/lib/graphlab/config";
 
 /**
  * GraphExploreModal — Neo4j 그래프 구조를 인터랙티브로 탐색
@@ -173,6 +174,7 @@ export function GraphExploreModal({
   datasetId,
   datasetLabel,
   slots,
+  cypher,
 }: {
   onClose: () => void;
   /** 탐색할 데이터셋 id(sample/summary 에 동봉 — 공존 라벨 분리). */
@@ -181,6 +183,8 @@ export function GraphExploreModal({
   datasetLabel: string;
   /** 노드/관계 한글 라벨(데이터셋별 — SEC 하드코딩 제거). */
   slots: DatasetSlots;
+  /** Neo4j 노드/관계 라벨(데이터셋별 — 스키마 도해·토글의 SEC 하드코딩 제거). */
+  cypher: GraphDataset["cypher"];
 }): ReactNode {
   // raw 누적 저장소 (layout 은 렌더 직전 파생 — 기존 노드 위치 보존).
   const [nodeMap, setNodeMap] = useState<Map<string, ApiNode>>(new Map());
@@ -457,8 +461,8 @@ export function GraphExploreModal({
               >
                 {(
                   [
-                    ["owns", "2-노드 (OWNS)"],
-                    ["position", "3-노드 (Position)"],
+                    ["owns", `2-노드 (${cypher.relType})`],
+                    ["position", `3-노드 (${cypher.positionLabel})`],
                   ] as [ViewMode, string][]
                 ).map(([m, lbl]) => (
                   <button
@@ -510,12 +514,12 @@ export function GraphExploreModal({
                 fontWeight: 600,
               }}
             >
-              (:Manager) {slots.subject}
+              (:{cypher.subjectLabel}) {slots.subject}
             </span>
             {mode === "position" ? (
               <>
                 <span style={{ color: "var(--text-subtle)" }}>
-                  ──[:HOLDS]──▶
+                  ──[:{cypher.holdsType}]──▶
                 </span>
                 <span
                   style={{
@@ -526,15 +530,15 @@ export function GraphExploreModal({
                     fontWeight: 600,
                   }}
                 >
-                  (:Position) 포지션
+                  (:{cypher.positionLabel}) {slots.relation}
                 </span>
                 <span style={{ color: "var(--text-subtle)" }}>
-                  ──[:OF]──▶
+                  ──[:{cypher.ofType}]──▶
                 </span>
               </>
             ) : (
               <span style={{ color: "var(--text-subtle)" }}>
-                ──[:OWNS {slots.relation}]──▶
+                ──[:{cypher.relType} {slots.relation}]──▶
               </span>
             )}
             <span
@@ -546,7 +550,7 @@ export function GraphExploreModal({
                 fontWeight: 600,
               }}
             >
-              (:Company) {slots.object}
+              (:{cypher.objectLabel}) {slots.object}
             </span>
             <span
               style={{
@@ -696,9 +700,9 @@ export function GraphExploreModal({
                 marginBottom: 8,
               }}
             >
-              ⚠ 현재 그래프가 이전 스키마라 보유가치가 표시되지
+              ⚠ 현재 그래프가 이전 스키마라 가치 속성이 표시되지
               않습니다. graph-lab 화면에서 <strong>그래프 재구축</strong>을
-              한 번 실행하면 가치·Position 통찰까지 모두 보입니다.
+              한 번 실행하면 가치·{cypher.positionLabel} 통찰까지 모두 보입니다.
               (관계 기반 통찰은 지금도 정상)
             </div>
           )}

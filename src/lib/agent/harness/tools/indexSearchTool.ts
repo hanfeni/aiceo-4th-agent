@@ -1,5 +1,4 @@
 import { tool } from "langchain";
-import { z } from "zod";
 import { search } from "@/lib/searchlab/search";
 import { type SearchDomain } from "@/lib/searchlab/domains";
 import { getSearchDomainSpec } from "@/lib/searchlab/dynamicDomains";
@@ -24,7 +23,10 @@ export {
   indexSearchToolDisplayName,
   indexSearchToolDescription,
 } from "./indexSearchTool.meta";
-import { indexSearchToolDescription } from "./indexSearchTool.meta";
+import {
+  indexSearchToolDescription,
+  indexSearchToolSchema,
+} from "./indexSearchTool.meta";
 
 const TOOL_TOP_K = 6; // 컨텍스트로 넣을 상위 문서 수(웹검색 정제 동형)
 
@@ -91,22 +93,8 @@ export function makeIndexSearchTool(domain: SearchDomain) {
       name: "index_search",
       description:
         indexSearchToolDescription + ` (현재 세션 도메인: ${label})`,
-      schema: z.object({
-        query: z
-          .string()
-          .describe(
-            "검색할 질의(자연어). 사용자 질문에서 핵심 키워드·의도를 " +
-              "추출해 전달.",
-          ),
-        mode: z
-          .enum(["lexical", "vector", "hybrid"])
-          .optional()
-          .describe(
-            "검색 방식. lexical=키워드 정확매칭(고유명사·법조문 번호 " +
-              "등), vector=의미 유사(개념·동의어), hybrid=둘 결합(기본·" +
-              "애매할 때 권장). 미지정 시 hybrid.",
-          ),
-      }),
+      // schema 는 meta 단일 출처(카탈로그/팩토리 정합 — 도메인 무관).
+      schema: indexSearchToolSchema,
     },
   );
 }

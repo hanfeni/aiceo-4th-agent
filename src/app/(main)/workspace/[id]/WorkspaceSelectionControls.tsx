@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Wand2, Bot, type LucideIcon } from "lucide-react";
 import { useChatStoreApi, useChatStore } from "@/store";
 import type { WorkspaceId } from "@/lib/agent/harness/profiles";
 
@@ -135,6 +135,7 @@ export function WorkspaceSelectionControls({
     <>
       <MultiSelect
         label="스킬"
+        icon={Wand2}
         catalog={skillCatalog}
         selected={skills}
         disabled={isStreaming}
@@ -143,6 +144,7 @@ export function WorkspaceSelectionControls({
       />
       <MultiSelect
         label="서브에이전트"
+        icon={Bot}
         catalog={subagentCatalog}
         selected={subagents}
         disabled={isStreaming}
@@ -156,6 +158,7 @@ export function WorkspaceSelectionControls({
 /** 칩(현재 선택 수) + 클릭 시 체크박스 팝오버. */
 function MultiSelect({
   label,
+  icon: Icon,
   catalog,
   selected,
   disabled,
@@ -163,6 +166,9 @@ function MultiSelect({
   emptyHint,
 }: {
   label: string;
+  /** 드롭다운 버튼 좌측 아이콘(의미별 — 스킬=Wand2 / 서브에이전트=Bot).
+      Wand2 는 TOOL(렌치) 과 시각적으로 명확히 구분(사용자 결정 2026-05-21). */
+  icon: LucideIcon;
   catalog: CatalogItem[];
   /** null = 전체. */
   selected: string[] | null;
@@ -191,8 +197,15 @@ function MultiSelect({
     selected === null ? true : selected.includes(name);
 
   return (
-    <div ref={wrapRef} style={{ position: "relative", display: "inline-flex" }}>
-      <span style={{ fontSize: 11, color: "var(--text-subtle)", marginRight: 4, alignSelf: "center" }}>
+    <div
+      ref={wrapRef}
+      style={{
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+      }}
+    >
+      <span style={{ fontSize: 11, color: "var(--text-subtle)", marginRight: 6 }}>
         {label}:
       </span>
       <button
@@ -200,27 +213,40 @@ function MultiSelect({
         onClick={() => !disabled && setOpen((v) => !v)}
         disabled={disabled || total === 0}
         title={total === 0 ? emptyHint : `${label} 선택`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        // HeaderControls 드롭다운 디자인 적용(사용자 결정 2026-05-21):
+        // 의미별 아이콘(스킬=Wand2 / 서브에이전트=Bot) + 라벨 +
+        // ChevronDown. 부분 선택 중(selected≠null)이면 파란 활성 배경,
+        // 전체(기본)면 흰 배경.
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
-          gap: 4,
-          fontSize: 11,
-          padding: "4px 8px",
-          borderRadius: 6,
+          gap: 6,
+          padding: "5px 10px",
+          borderRadius: 8,
           border: "1px solid var(--t-neutral-8)",
-          background: "var(--surface-default)",
+          background:
+            selected !== null
+              ? "var(--t-blue-6, #eef4ff)"
+              : "var(--surface-default)",
+          fontSize: 12,
           color: "var(--text-default)",
           cursor: disabled || total === 0 ? "not-allowed" : "pointer",
+          fontWeight: 500,
           opacity: disabled ? 0.6 : 1,
-          fontWeight: 600,
+          whiteSpace: "nowrap",
         }}
       >
-        {total === 0
-          ? emptyHint
-          : count === total
-            ? `전체 (${total})`
-            : `${count}/${total}`}
-        <ChevronDown size={12} aria-hidden />
+        <Icon size={12} style={{ color: "var(--agent-500)" }} aria-hidden />
+        <span>
+          {total === 0
+            ? emptyHint
+            : count === total
+              ? `전체 (${total})`
+              : `${count}/${total}`}
+        </span>
+        <ChevronDown size={11} style={{ color: "var(--text-subtle)" }} aria-hidden />
       </button>
 
       {open && total > 0 && (

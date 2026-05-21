@@ -36,9 +36,9 @@ interface GraphStats {
 }
 
 // 추천 질의는 데이터셋별 config.demoQueries SSOT 에서 가져온다
-// (activeDataset.demoQueries). 라벨 끝 표식(🟦=GraphRAG 압승 ·
-// 🟨=SQL도 가능 · ⚪=RAG 한계)으로 학생이 3패널 결과 전 가설을
-// 세우게 한다(교육 설계).
+// (activeDataset.demoQueries). 라벨 끝 표식(🟦/🟨/⚪)은 질문 유형
+// 구분용(관계·경로형 / 집계·조건형 / 의미·키워드형) — 결과 전 승패
+// 결론은 주지 않는다(편향 제거, 사용자 결정 2026-05-21).
 
 // 시안 graph-lab 질의 프리셋: 라벨 옆 컬러 정사각형(태그). config 의
 // 라벨 끝 이모지(🟦/🟨/⚪)를 파싱해 시안 TAG_META 색으로 렌더하고,
@@ -346,8 +346,9 @@ export function GraphLabView(): ReactNode {
           </p>
         </div>
 
-        <div className="il-bench" style={{ gridTemplateColumns: "320px 1fr" }}>
-          {/* ─── 좌측: 설정(시안 B — 데이터셋 / 질의 프리셋 / 질의) ─── */}
+        <div className="il-bench" style={{ gridTemplateColumns: "260px 1fr" }}>
+          {/* ─── 좌측: 데이터셋 선택 + 구축/탐색만 (시안 B 최종 — chat5).
+              질의 프리셋·질의 입력은 우측 와이드 카드로 이동. ─── */}
           <div className="il-bench-aside">
             {/* 데이터셋 카드 — 리스트(라벨+부제+적재 dot) + 구축/삭제 +
                 DB구조·탐색. 시안엔 구축/삭제 없으나 실동작 기능이라 보존
@@ -523,50 +524,113 @@ export function GraphLabView(): ReactNode {
                 </div>
               )}
             </div>
+          </div>
 
-            {/* 질의 프리셋 카드(시안 B) — 세로 리스트 + 좌측 태그 색 정사각형. */}
-            <div className="il-card il-config" style={{ marginTop: 12 }}>
-              <div className="il-config-title">질의 프리셋</div>
+          {/* ─── 우측: 질의 카드(와이드) + 3-pane 비교 ─── */}
+          <div style={{ minWidth: 0 }}>
+            {/* 질의 카드(시안 B 최종 — chat5) — 좁은 사이드에서 우측 와이드로
+                이동. 추천 질의(태그 색 칩) + 질의 입력 + 3방식 실행을 가로로
+                길게 한 카드에 노출. */}
+            <div className="il-card" style={{ marginBottom: 16 }}>
+              {/* 추천 질의 헤더 + 태그 범례 */}
               <div
-                className="thin-scroll"
                 style={{
                   display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                  maxHeight: 240,
-                  overflowY: "auto",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 8,
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span className="il-flabel" style={{ marginBottom: 0 }}>
+                  추천 질의
+                </span>
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--text-subtle)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: "var(--blue-600)",
+                      }}
+                    />
+                    관계·경로형
+                  </span>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: "var(--lab-warn-text)",
+                      }}
+                    />
+                    집계·조건형
+                  </span>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 2,
+                        background: "var(--neutral-600)",
+                      }}
+                    />
+                    의미·키워드형
+                  </span>
+                </span>
+              </div>
+
+              {/* 추천 질의 칩 — 가로 wrap(태그 색 정사각형 + 라벨). */}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginBottom: 14,
                 }}
               >
                 {activeDataset.demoQueries.map((d) => {
                   const tag = parseQueryTag(d.label);
+                  const on = d.query === query;
                   return (
                     <button
                       key={d.label}
                       type="button"
+                      className="cf-pill"
+                      aria-pressed={on}
                       onClick={() => setQuery(d.query)}
                       disabled={comparing}
                       title={d.query}
-                      style={{
-                        appearance: "none",
-                        cursor: comparing ? "default" : "pointer",
-                        textAlign: "left",
-                        background: "transparent",
-                        border: "none",
-                        borderRadius: 6,
-                        padding: "7px 9px",
-                        fontSize: 11.5,
-                        color: "var(--text-default)",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        opacity: comparing ? 0.6 : 1,
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "var(--medi-gray-50)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "transparent";
-                      }}
+                      style={{ opacity: comparing ? 0.6 : 1 }}
                     >
                       <span
                         style={{
@@ -577,64 +641,57 @@ export function GraphLabView(): ReactNode {
                           flexShrink: 0,
                         }}
                       />
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {tag.text}
-                      </span>
+                      {tag.text}
                     </button>
                   );
                 })}
               </div>
-            </div>
 
-            {/* 질의 카드(시안 B) — textarea + 3방식 실행. */}
-            <div className="il-card il-config" style={{ marginTop: 12 }}>
-              <div className="il-config-title">질의</div>
-              <textarea
-                className="cf-field"
-                style={{
-                  width: "100%",
-                  minHeight: 80,
-                  resize: "vertical",
-                  marginBottom: 10,
-                }}
-                placeholder="질문을 입력하거나 위 프리셋을 누르세요 (예: MS와 엔비디아를 둘 다 보유한 기관은?)"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                disabled={comparing}
-              />
+              {/* 질의 입력 — 검색 실습과 동일한 한 줄 input + 실행 버튼. */}
+              <div className="il-flabel">질의</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+                <input
+                  className="cf-field"
+                  style={{ flex: 1 }}
+                  placeholder="질문을 입력하거나 위 프리셋을 누르세요 (예: MS와 엔비디아를 둘 다 보유한 기관은?)"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === "Enter" &&
+                      !comparing &&
+                      built &&
+                      query.trim()
+                    ) {
+                      e.preventDefault();
+                      runCompare(query);
+                    }
+                  }}
+                  disabled={comparing}
+                />
+                <button
+                  type="button"
+                  onClick={() => runCompare(query)}
+                  disabled={comparing || !built || !query.trim()}
+                  className="cf-btn cf-btn--primary"
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {comparing ? "비교 중…" : "3방식 동시 실행"}
+                </button>
+              </div>
               {!built && (
                 <div
                   className="il-flabel-hint"
                   style={{
                     color: "var(--t-danger-11, #e5484d)",
-                    marginBottom: 8,
+                    marginTop: 8,
                   }}
                 >
                   먼저 그래프를 구축하세요
                 </div>
               )}
-              <button
-                type="button"
-                onClick={() => runCompare(query)}
-                disabled={comparing || !built || !query.trim()}
-                className="cf-btn cf-btn--primary"
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                {comparing ? "비교 중…" : "3방식 동시 실행"}
-              </button>
             </div>
-          </div>
 
-          {/* ─── 우측: 3-pane 비교만(시안 B) ─── */}
-          <div style={{ minWidth: 0 }}>
             {err && (
               <div className="il-error" style={{ marginBottom: 16 }}>
                 ⚠️ {err}
@@ -676,6 +733,7 @@ export function GraphLabView(): ReactNode {
           datasetId={datasetId}
           datasetLabel={activeDataset.label}
           slots={activeDataset.slots}
+          cypher={activeDataset.cypher}
         />
       )}
     </div>

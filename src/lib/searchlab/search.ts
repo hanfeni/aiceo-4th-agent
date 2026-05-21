@@ -2,15 +2,21 @@
  * 검색 실습 — 3방식 검색 로직 (렉시컬 / 벡터 / 하이브리드).
  *
  * 하이브리드 2모드:
- *  - "default": OpenSearch 단일 쿼리에서 BM25(multi_match) + knn 를
- *    함께 should 결합 (점수 가중, 사내 04 패턴).
+ *  - "default": OpenSearch 네이티브 hybrid 쿼리 + normalization-processor
+ *    파이프라인. BM25·knn 점수를 엔진이 min_max 정규화 후 가중 산술평균
+ *    (α=0.6)으로 결합 (앱단 점수 계산 0). 기존 bool.should 합산이 스케일
+ *    불일치로 "BM25 그대로" 나오던 버그를 엔진 네이티브 결합으로 해결.
  *  - "rrf": 렉시컬·벡터를 각각 독립 실행 → Reciprocal Rank Fusion
- *    으로 순위 결합 (rank 기반, 점수 스케일 무관).
+ *    으로 순위 결합 (앱단 rank 기반, 점수 스케일 무관 — 유지).
  *
  * 학생이 세 방식의 결과 차이를 체감하는 게 목적.
  */
 
-import { getSearchClient } from "./client";
+import {
+  getSearchClient,
+  ensureHybridPipeline,
+  HYBRID_PIPELINE_ID,
+} from "./client";
 import { embedOne } from "./embed";
 import { type SearchDomain } from "./domains";
 import { getSearchDomainSpec } from "./dynamicDomains";
@@ -58,6 +64,9 @@ export interface SearchHit {
   title: string;
   /** 본문 일부 (스니펫, UI 표시). 청킹 시 = 그 청크 텍스트 */
   snippet: string;
+  /** 원문 본문 (모달 전체보기용 — 과대 전송 방지 4000자 컷). _source 가
+   *  이미 body 를 가져오므로 추가 fetch 0. UI 클릭 시 모달에 표시. */
+  body: string;
   score: number;
   /** 어느 경로로 잡혔는지 (하이브리드 디버그용) */
   via?: ("lexical" | "vector")[];
@@ -125,20 +134,29 @@ interface OsHit {
 async function runOs(
   index: string,
   body: object,
+  searchPipeline?: string,
 ): Promise<OsHit[]> {
   const client = getSearchClient();
-  const res = await client.search({ index, body });
+  // search_pipeline 파라미터 — hybrid 쿼리의 점수 정규화·결합을 엔진이
+  // 수행하게 한다(앱단 계산 0). 미지정 시 일반 검색(렉시컬/벡터/rrf).
+  const res = await client.search(
+    searchPipeline
+      ? { index, body, search_pipeline: searchPipeline }
+      : { index, body },
+  );
   // OpenSearch 클라이언트 hit 제네릭과 OsHit 가 구조상 직접 겹치지
   // 않아 2단계 캐스팅(런타임 형태는 _id/_score/_source 로 일치).
   return (res.body.hits?.hits ?? []) as unknown as OsHit[];
 }
 
 function toHit(h: OsHit, via?: ("lexical" | "vector")[]): SearchHit {
+  const fullBody = h._source.body ?? "";
   return {
     doc_id: h._source.doc_id,
     chunk_id: h._source.chunk_id,
     title: h._source.title,
-    snippet: snippet(h._source.body ?? ""),
+    snippet: snippet(fullBody),
+    body: fullBody.slice(0, 4000), // 모달 전체보기 (과대 전송 방지)
     score: h._score,
     via,
   };
@@ -214,25 +232,40 @@ export async function search(params: SearchParams): Promise<SearchHit[]> {
     return rrfFuse(lex, vec, topK);
   }
 
-  // default: 단일 쿼리 BM25 + knn should 결합
-  const hits = await runOs(index, {
-    size: topK,
-    _source: ["doc_id", "chunk_id", "title", "body"],
-    query: {
-      bool: {
-        should: [
-          {
-            multi_match: {
-              query,
-              fields: ["title^3", "title.ngram^1.5", "body", "body.ngram^0.5"],
-              type: "best_fields",
-              tie_breaker: 0.3,
+  // default: OpenSearch 네이티브 hybrid 쿼리(앱단 점수 계산 0).
+  // bool.should 합산은 BM25·knn 스케일 불일치 + k-NN should 한계로 벡터
+  // 기여가 ≈0 → 점수가 BM25 그대로(렉시컬과 동일) 나오던 버그. hybrid
+  // 쿼리 + normalization-processor 파이프라인이 두 점수를 min_max 정규화
+  // 후 가중 산술평균(α=0.6)으로 엔진이 결합한다. queries 배열 순서는
+  // 파이프라인 weights[BM25, 벡터] 와 1:1(① multi_match ② knn).
+  await ensureHybridPipeline();
+  const hits = await runOs(
+    index,
+    {
+      size: topK,
+      _source: ["doc_id", "chunk_id", "title", "body"],
+      query: {
+        hybrid: {
+          queries: [
+            {
+              multi_match: {
+                query,
+                fields: [
+                  "title^3",
+                  "title.ngram^1.5",
+                  "body",
+                  "body.ngram^0.5",
+                ],
+                type: "best_fields",
+                tie_breaker: 0.3,
+              },
             },
-          },
-          { knn: { embedding: { vector: v, k: topK } } },
-        ],
+            { knn: { embedding: { vector: v, k: topK } } },
+          ],
+        },
       },
     },
-  });
+    HYBRID_PIPELINE_ID,
+  );
   return hits.map((h) => toHit(h, ["lexical", "vector"]));
 }

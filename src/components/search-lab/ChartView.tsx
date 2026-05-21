@@ -20,6 +20,7 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
+  LabelList,
 } from "recharts";
 import type { ChartSpec } from "@/lib/sqllab/text2sqlChart";
 
@@ -36,8 +37,10 @@ import type { ChartSpec } from "@/lib/sqllab/text2sqlChart";
  * 파일이 client 라 SSR 평가 안 됨(부모도 "use client").
  */
 
+// 시안(Lab Design) 팔레트 — medicnc 블루 우선. 1번째 시리즈는
+// 그라데이션(아래 GRAD)로 칠하고, 다시리즈일 때만 보조 색 순환.
 const COLORS = [
-  "#3b82f6",
+  "#2194f3", // blue-500 (시안 메인)
   "#10b981",
   "#f59e0b",
   "#ef4444",
@@ -46,6 +49,10 @@ const COLORS = [
   "#14b8a6",
   "#f97316",
 ];
+// 시안 막대 그라데이션 (blue-400 → blue-600). SVG defs 로 1회 정의.
+const BAR_GRAD_ID = "labBarGrad";
+const BAR_GRAD_TOP = "#42a4f5"; // var(--blue-400)
+const BAR_GRAD_BOTTOM = "#1e88e0"; // var(--blue-600)
 
 export interface ChartViewProps {
   spec: ChartSpec;
@@ -92,27 +99,86 @@ export function ChartView({
   };
   const axisStyle = { fontSize: 11, fill: "var(--text-subtle)" };
 
+  // 단일 시리즈 막대는 시안 그라데이션 + 값 라벨, 다시리즈는
+  // 색 순환(라벨 생략 — 막대 폭이 좁아 겹침). 시안 핏은 단일 케이스.
+  const singleBar = spec.y.length === 1;
+
   let chart: ReactNode;
   if (spec.chartType === "bar") {
     chart = (
-      <BarChart {...common}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--t-neutral-8)" />
-        <XAxis dataKey={spec.x} tick={axisStyle} />
-        <YAxis tick={axisStyle} />
-        <Tooltip />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
+      <BarChart {...common} barCategoryGap="28%">
+        <defs>
+          <linearGradient id={BAR_GRAD_ID} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={BAR_GRAD_TOP} />
+            <stop offset="100%" stopColor={BAR_GRAD_BOTTOM} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid
+          strokeDasharray="3 3"
+          stroke="var(--t-neutral-8)"
+          vertical={false}
+        />
+        <XAxis
+          dataKey={spec.x}
+          tick={axisStyle}
+          axisLine={{ stroke: "var(--t-neutral-8)" }}
+          tickLine={false}
+        />
+        <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
+        <Tooltip
+          cursor={{ fill: "var(--lab-blue-bg)" }}
+          contentStyle={{
+            fontSize: 11,
+            borderRadius: 8,
+            border: "1px solid var(--t-neutral-8)",
+          }}
+        />
+        {!singleBar && <Legend wrapperStyle={{ fontSize: 11 }} />}
         {spec.y.map((yc, i) => (
-          <Bar key={yc} dataKey={yc} fill={COLORS[i % COLORS.length]} />
+          <Bar
+            key={yc}
+            dataKey={yc}
+            fill={singleBar ? `url(#${BAR_GRAD_ID})` : COLORS[i % COLORS.length]}
+            radius={[6, 6, 0, 0]}
+            maxBarSize={56}
+          >
+            {singleBar && (
+              <LabelList
+                dataKey={yc}
+                position="top"
+                style={{
+                  fill: "var(--blue-700)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              />
+            )}
+          </Bar>
         ))}
       </BarChart>
     );
   } else if (spec.chartType === "line") {
     chart = (
       <LineChart {...common}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--t-neutral-8)" />
-        <XAxis dataKey={spec.x} tick={axisStyle} />
-        <YAxis tick={axisStyle} />
-        <Tooltip />
+        <CartesianGrid
+          strokeDasharray="3 3"
+          stroke="var(--t-neutral-8)"
+          vertical={false}
+        />
+        <XAxis
+          dataKey={spec.x}
+          tick={axisStyle}
+          axisLine={{ stroke: "var(--t-neutral-8)" }}
+          tickLine={false}
+        />
+        <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
+        <Tooltip
+          contentStyle={{
+            fontSize: 11,
+            borderRadius: 8,
+            border: "1px solid var(--t-neutral-8)",
+          }}
+        />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         {spec.y.map((yc, i) => (
           <Line
@@ -120,7 +186,9 @@ export function ChartView({
             type="monotone"
             dataKey={yc}
             stroke={COLORS[i % COLORS.length]}
-            dot={false}
+            strokeWidth={2}
+            dot={{ r: 3, fill: COLORS[i % COLORS.length] }}
+            activeDot={{ r: 5 }}
           />
         ))}
       </LineChart>
@@ -128,10 +196,31 @@ export function ChartView({
   } else if (spec.chartType === "area") {
     chart = (
       <AreaChart {...common}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--t-neutral-8)" />
-        <XAxis dataKey={spec.x} tick={axisStyle} />
-        <YAxis tick={axisStyle} />
-        <Tooltip />
+        <defs>
+          <linearGradient id={BAR_GRAD_ID} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={BAR_GRAD_TOP} stopOpacity={0.35} />
+            <stop offset="100%" stopColor={BAR_GRAD_BOTTOM} stopOpacity={0.04} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid
+          strokeDasharray="3 3"
+          stroke="var(--t-neutral-8)"
+          vertical={false}
+        />
+        <XAxis
+          dataKey={spec.x}
+          tick={axisStyle}
+          axisLine={{ stroke: "var(--t-neutral-8)" }}
+          tickLine={false}
+        />
+        <YAxis tick={axisStyle} axisLine={false} tickLine={false} />
+        <Tooltip
+          contentStyle={{
+            fontSize: 11,
+            borderRadius: 8,
+            border: "1px solid var(--t-neutral-8)",
+          }}
+        />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         {spec.y.map((yc, i) => (
           <Area
@@ -139,8 +228,13 @@ export function ChartView({
             type="monotone"
             dataKey={yc}
             stroke={COLORS[i % COLORS.length]}
-            fill={COLORS[i % COLORS.length]}
-            fillOpacity={0.25}
+            strokeWidth={2}
+            fill={
+              spec.y.length === 1 && i === 0
+                ? `url(#${BAR_GRAD_ID})`
+                : COLORS[i % COLORS.length]
+            }
+            fillOpacity={spec.y.length === 1 ? 1 : 0.25}
           />
         ))}
       </AreaChart>

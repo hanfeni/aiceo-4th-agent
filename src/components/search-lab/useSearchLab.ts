@@ -14,6 +14,7 @@ import {
 } from "./text2sqlChartStageNodes";
 import type { ChartSpec } from "@/lib/sqllab/text2sqlChart";
 import type { Hit, SqlResult } from "./SearchResults";
+import type { Preview } from "@/components/data-load/PreviewModal";
 import {
   recommendationsFor,
   sourceKindOf,
@@ -107,6 +108,11 @@ export function useSearchLab() {
   const [topK, setTopK] = useState<number>(10);
   // 인덱스 보기 모달 (색인된 문서 ◀ N/M ▶ 열람)
   const [showDocs, setShowDocs] = useState(false);
+  // 데이터 보기 모달 (Text-to-SQL/Chart 모드 — 적재된 SQLite 테이블 앞 N행).
+  // 인덱스(showDocs)와 별개 — 소스종류가 다름(인덱스 vs SQLite 테이블).
+  const [showDataPreview, setShowDataPreview] = useState(false);
+  const [dataPreview, setDataPreview] = useState<Preview | null>(null);
+  const [dataPreviewLoading, setDataPreviewLoading] = useState(false);
   const [taskMode, setTaskMode] = useState<string>("search");
   const [hits, setHits] = useState<Hit[]>([]);
   // 검색 모드 3방식 비교 — 렉시컬·벡터·하이브리드를 각각 별도 호출해
@@ -135,11 +141,17 @@ export function useSearchLab() {
     emptyT2scIO,
   );
   const [openStage, setOpenStage] = useState<number | null>(null);
+  // 검색 결과 아이템 클릭 → 글 전체보기 모달. null=닫힘.
+  const [openDoc, setOpenDoc] = useState<Hit | null>(null);
   // Text-to-SQL/with Chart 큰 모달(시안 Text2SqlChartModal) 토글.
   // SQL·차트 모드는 단계별 모달 대신 SQL+표+차트 통합 모달을 띄운다
   // (노드 클릭 진입). RAG 모드는 기존 단계별 RagStageModal 유지.
   const [showSqlModal, setShowSqlModal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // 결과 자동스크롤(메타라벨 동형): 페이지 스크롤 컨테이너 ref + "바닥
+  // 근처" 추적. 위로 올려 과거 결과를 읽는 중이면 따라가지 않음(채팅 표준).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
   // 도메인별 색인 상태(문서 수). null=미색인, 숫자=색인됨 N건.
   // 색인 자체는 별도 /index-lab 메뉴 — 여기선 chip 에 상태만 표기.
   // (2026-05-19 사용자 결정). 미색인 검색 시 API 가 503 안내.
@@ -302,10 +314,29 @@ export function useSearchLab() {
     setLoading(true);
     setErr(null);
     setHits([]);
+    setCmpLexical(null);
+    setCmpVector(null);
+    setCmpHybrid(null);
     setRagSystem("");
     setRagAnswer("");
     setRagIO(emptyRagIO());
     setOpenStage(null);
+    // 3-pane 비교는 검색 모드와 동일하게 3방식 병렬 검색으로 각각 채운다
+    // (RAG 답변 SSE 와 독립 — 실패해도 답변 흐름엔 영향 없음). search 와
+    // 같은 "방식별로 다른 결과" 비교를 RAG 에서도 제공.
+    void Promise.all([
+      searchOne(q, "lexical"),
+      searchOne(q, "vector"),
+      searchOne(q, "hybrid"),
+    ])
+      .then(([lex, vec, hyb]) => {
+        setCmpLexical(lex);
+        setCmpVector(vec);
+        setCmpHybrid(hyb);
+      })
+      .catch(() => {
+        // 비교 검색 실패는 RAG 답변과 무관 — 조용히 무시(빈 칼럼 유지).
+      });
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -654,11 +685,79 @@ export function useSearchLab() {
   })();
   // 현재 도메인 가용성·뱃지(좌측 도메인 리스트·인덱스 보기 버튼용).
   const domainIndexed = typeof status[domain] === "number";
+  // Text-to-SQL/Chart 의 데이터원 = SQLite 적재 테이블(인덱스 아님).
+  // dbStatus[domain] > 0 이면 적재됨 → "데이터 보기" 활성.
+  const domainTableLoaded = (dbStatus[domain] ?? 0) > 0;
+
+  // 데이터 보기 모달 열기 — 적재 SQLite 테이블 앞 N행 fetch 후 표시.
+  const openDataPreview = async (): Promise<void> => {
+    setShowDataPreview(true);
+    setDataPreview(null);
+    setDataPreviewLoading(true);
+    try {
+      const r = await fetch(
+        `/api/sql-lab/rows?domain=${encodeURIComponent(domain)}&rows=${topK}`,
+      );
+      const d = await r.json();
+      if (r.ok && d.loaded) {
+        setDataPreview({ columns: d.columns, rows: d.rows, totalNote: d.totalNote });
+      } else {
+        setDataPreview(null);
+      }
+    } catch {
+      setDataPreview(null);
+    } finally {
+      setDataPreviewLoading(false);
+    }
+  };
   // SQL/with Chart 모달에 넘길 현 모드의 실제 상태(목업 금지).
   const sqlModalSystem = isT2sc ? t2scSystem : t2sSystem;
   const sqlModalSql = isT2sc ? t2scSql : t2sSql;
   const sqlModalResult = isT2sc ? t2scResult : t2sResult;
 
+  // ── 결과 자동스크롤 (메타라벨 동형) ──────────────────────────
+  // ① 스크롤 시 "바닥 근처" 여부 갱신. 위로 올려 읽는 중이면 비활성.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = (): void => {
+      const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+      nearBottomRef.current = gap < 80; // 80px 이내면 바닥으로 간주
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // ② 새 실행 시작 시 "따라가기" 리셋(이전에 위로 올려뒀어도 새 결과는 추적).
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (loading && !prevLoadingRef.current) nearBottomRef.current = true;
+    prevLoadingRef.current = loading;
+  }, [loading]);
+
+  // ③ 결과의 "구조적 완료" 신호가 바뀌면 바닥 근처일 때 말단 정렬.
+  // 4모드 공통 1 effect(고정 길이 deps — hooks 규칙). RAG 답변은 토큰
+  // 스트리밍(ragAnswer)이라 deps 제외 — 대신 ragIO(단계 완료)로 트리거해
+  // "분석 완료 시 말단" 동작. 검색 hits·SQL 표·차트는 도착 시 1회 변경.
+  const cmpLen =
+    (cmpLexical?.length ?? 0) +
+    (cmpVector?.length ?? 0) +
+    (cmpHybrid?.length ?? 0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !nearBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [
+    hits.length,
+    cmpLen,
+    ragIO,
+    t2sResult,
+    t2sIO,
+    t2scResult,
+    t2scChart,
+    t2scIO,
+    loading,
+  ]);
 
   return {
     // 설정 상태
@@ -691,10 +790,21 @@ export function useSearchLab() {
     // 모달·열람 상태
     showDocs,
     setShowDocs,
+    // 데이터 보기(Text-to-SQL/Chart — SQLite 테이블 미리보기)
+    domainTableLoaded,
+    showDataPreview,
+    setShowDataPreview,
+    dataPreview,
+    dataPreviewLoading,
+    openDataPreview,
     openStage,
     setOpenStage,
+    openDoc,
+    setOpenDoc,
     showSqlModal,
     setShowSqlModal,
+    // 결과 자동스크롤 컨테이너 ref (SearchLabView 최상위 div 에 부착)
+    scrollRef,
     // 핸들러
     execute,
     stop,

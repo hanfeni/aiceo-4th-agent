@@ -14,13 +14,16 @@
 
 import {
   generateHarnessElement,
+  DEFAULT_GENERATE_MODE,
   type GenerateKind,
+  type GenerateMode,
 } from "@/lib/harness-introspect/generate";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const KINDS: readonly GenerateKind[] = ["skill", "subagent", "instruction"];
+const MODES: readonly GenerateMode[] = ["reference", "rewrite"];
 
 function json(data: unknown, status: number): Response {
   return new Response(JSON.stringify(data), {
@@ -36,7 +39,7 @@ export async function POST(req: Request): Promise<Response> {
   } catch {
     return json({ error: "JSON 본문이 아닙니다." }, 400);
   }
-  const body = raw as { kind?: unknown; prompt?: unknown };
+  const body = raw as { kind?: unknown; prompt?: unknown; mode?: unknown };
   const kind = body.kind;
   const prompt = body.prompt;
   if (typeof kind !== "string" || !KINDS.includes(kind as GenerateKind)) {
@@ -45,9 +48,14 @@ export async function POST(req: Request): Promise<Response> {
   if (typeof prompt !== "string" || !prompt.trim()) {
     return json({ error: "생성할 내용을 한 줄로 입력하세요." }, 400);
   }
+  // mode 는 옵셔널 — 미지정·미상값은 기본(reference)으로 폴백(관대 검증).
+  const mode: GenerateMode =
+    typeof body.mode === "string" && MODES.includes(body.mode as GenerateMode)
+      ? (body.mode as GenerateMode)
+      : DEFAULT_GENERATE_MODE;
 
   try {
-    const result = await generateHarnessElement(kind as GenerateKind, prompt);
+    const result = await generateHarnessElement(kind as GenerateKind, prompt, mode);
     return json({ result }, 200);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "생성 중 오류가 발생했습니다.";

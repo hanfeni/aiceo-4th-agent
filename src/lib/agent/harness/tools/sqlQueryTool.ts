@@ -1,5 +1,4 @@
 import { tool } from "langchain";
-import { z } from "zod";
 import { getDb } from "@/lib/sqllab/db";
 import { getSchema } from "@/lib/sqllab/load";
 import { assertReadOnly } from "@/lib/sqllab/text2sql";
@@ -30,7 +29,10 @@ export {
   sqlQueryToolDisplayName,
   sqlQueryToolDescription,
 } from "./sqlQueryTool.meta";
-import { sqlQueryToolDescription } from "./sqlQueryTool.meta";
+import {
+  sqlQueryToolDescription,
+  sqlQueryToolSchema,
+} from "./sqlQueryTool.meta";
 
 const TOOL_MAX_ROWS = 30; // 결과 행 상한(LLM 컨텍스트·폭주 방지)
 
@@ -142,15 +144,8 @@ export function makeSqlQueryTool(domain: SqlDomain) {
     {
       name: "sql_query",
       description,
-      schema: z.object({
-        sql: z
-          .string()
-          .describe(
-            "실행할 SELECT(또는 WITH) SQL 한 문장. 도구 설명의 " +
-              "스키마(테이블·컬럼·샘플)를 보고 직접 작성. 세미콜론·" +
-              "여러 문장·쓰기 구문 금지(읽기 전용).",
-          ),
-      }),
+      // schema 는 meta 단일 출처(카탈로그/팩토리 정합 — 도메인 무관).
+      schema: sqlQueryToolSchema,
     },
   );
 }
