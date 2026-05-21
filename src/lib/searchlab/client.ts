@@ -30,6 +30,18 @@ export type EmbedModel = keyof typeof EMBED_MODELS;
 export const DECOMPOUND_MODES = ["mixed", "discrete", "none"] as const;
 export type DecompoundMode = (typeof DECOMPOUND_MODES)[number];
 
+// OpenSearch 3.x analysis-nori 는 "discrete" 대신 "discard" 를 실제 값으로 사용.
+// UI/API 노출 값(discrete)과 OpenSearch 전송 값을 여기서 단일 매핑.
+const NORI_MODE_MAP: Record<DecompoundMode, string> = {
+  mixed: "mixed",
+  discrete: "discard",
+  none: "none",
+};
+
+export function toNoriMode(mode: DecompoundMode): string {
+  return NORI_MODE_MAP[mode];
+}
+
 export interface IndexBuildOpts {
   decompoundMode?: DecompoundMode;
   /** knn 벡터 차원(임베딩 모델 기본 차원). 미지정 시 EMBED_DIM. */
@@ -69,7 +81,7 @@ export function buildIndexBody(opts: IndexBuildOpts = {}) {
         tokenizer: {
           nori_user: {
             type: "nori_tokenizer",
-            decompound_mode: decompound,
+            decompound_mode: toNoriMode(decompound),
           },
           ngram_2_3: {
             type: "ngram",

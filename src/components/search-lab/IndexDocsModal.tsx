@@ -8,6 +8,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { TokenHighlight } from "@/components/common/TokenHighlight";
 
 /**
  * IndexDocsModal — 색인된 문서 열람 모달 (검색 실습 전용).
@@ -34,6 +35,14 @@ export interface IndexDocItem {
   /** doc_id/chunk_id/title/body/embedding 외 모든 _source 필드.
       올인원 색인의 메타 라벨(main_category/keywords 등). */
   fields?: Record<string, unknown>;
+}
+
+type NoriMode = "mixed" | "discrete" | "none";
+
+interface NoriResult {
+  mixed: string[];
+  discrete: string[];
+  none: string[];
 }
 
 interface IndexDocsModalProps {
@@ -136,6 +145,10 @@ export function IndexDocsModal({
   const [idx, setIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [noriMode, setNoriMode] = useState<NoriMode>("mixed");
+  const [noriResult, setNoriResult] = useState<NoriResult | null>(null);
+  const [noriLoading, setNoriLoading] = useState(false);
+  const [noriErr, setNoriErr] = useState<string | null>(null);
   // 임베딩 전체 벡터 펼침 여부. 문서 이동 시 false 로 리셋.
   const [embedExpanded, setEmbedExpanded] = useState(false);
   // 진행 중인 from 중복 fetch 방지(화살표 연타 → 같은 페이지 2번)
@@ -202,8 +215,39 @@ export function IndexDocsModal({
   const canPrev = idx > 0;
   const canNext = idx < total - 1;
 
+  const loadNori = useCallback(async (text: string): Promise<void> => {
+    if (noriResult) return; // 이미 로드된 경우 재호출 안 함
+    setNoriLoading(true);
+    setNoriErr(null);
+    try {
+      const res = await fetch("/api/search-lab/analyze", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: text.slice(0, 2000) }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setNoriErr(data.error ?? "분석 실패"); return; }
+      setNoriResult(data as NoriResult);
+    } catch (e) {
+      setNoriErr(e instanceof Error ? e.message : "네트워크 오류");
+    } finally {
+      setNoriLoading(false);
+    }
+  }, [noriResult]);
+
+  const resetTokenState = (): void => {
+    setEmbedExpanded(false);
+    setNoriResult(null);
+    setNoriErr(null);
+  };
+
+  // cur 가 로드될 때마다 자동 Nori 분석 시작
+  useEffect(() => {
+    if (cur?.body) void loadNori(cur.body);
+  }, [cur?.body, loadNori]);
+
   const goNext = (): void => {
-    setEmbedExpanded(false); // 문서 바뀌면 임베딩 펼침 초기화
+    resetTokenState();
     setIdx((i) => {
       const n = Math.min(total - 1, i + 1);
       maybePrefetch(n);
@@ -211,7 +255,7 @@ export function IndexDocsModal({
     });
   };
   const goPrev = (): void => {
-    setEmbedExpanded(false);
+    resetTokenState();
     setIdx((i) => Math.max(0, i - 1));
   };
 
@@ -336,10 +380,94 @@ export function IndexDocsModal({
                   </span>
                 )}
               </div>
-              {/* 색인 도큐먼트 raw — embedding 제외 전 필드(메타
-                  라벨 포함). 올인원 색인이면 main_category/keywords
-                  등이 동적으로 노출(사용자 결정 2026-05-21). */}
-              <pre className="il-code">{renderRawDoc(cur)}</pre>
+              {/* 위: 원본 본문 */}
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  color: "var(--text-subtle)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  marginBottom: 4,
+                }}
+              >
+                원본
+              </div>
+              <pre className="il-code" style={{ maxHeight: 200, overflowY: "auto" }}>
+                {renderRawDoc(cur)}
+              </pre>
+
+              {/* 아래: Nori 토큰 분석 */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 14,
+                  marginBottom: 6,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: "var(--text-subtle)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    flexShrink: 0,
+                  }}
+                >
+                  Nori 토큰
+                </div>
+                {/* decompound_mode 서브탭 */}
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(["mixed", "discrete", "none"] as NoriMode[]).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => {
+                        setNoriMode(m);
+                        void loadNori(cur.body);
+                      }}
+                      style={{
+                        appearance: "none",
+                        border: `1px solid ${noriMode === m ? "var(--blue-700)" : "var(--t-neutral-8)"}`,
+                        background: noriMode === m ? "var(--lab-blue-bg)" : "transparent",
+                        color: noriMode === m ? "var(--blue-700)" : "var(--text-subtle)",
+                        borderRadius: 5,
+                        padding: "2px 9px",
+                        fontSize: 10.5,
+                        fontWeight: noriMode === m ? 700 : 400,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {m}
+                      {noriResult && (
+                        <span style={{ marginLeft: 4, opacity: 0.65 }}>
+                          ({noriResult[m].length})
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="il-code" style={{ padding: "10px 12px", lineHeight: "normal" }}>
+                {noriLoading ? (
+                  <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+                    Nori 형태소 분석 중…
+                  </div>
+                ) : noriErr ? (
+                  <div style={{ fontSize: 12, color: "var(--t-danger-11, #e5484d)" }}>
+                    ⚠️ {noriErr}
+                  </div>
+                ) : noriResult ? (
+                  <TokenHighlight pieces={noriResult[noriMode]} />
+                ) : (
+                  <div style={{ fontSize: 12, color: "var(--text-subtle)" }}>
+                    모드를 선택하면 분석을 시작합니다.
+                  </div>
+                )}
+              </div>
 
               {/* 임베딩 — 압축 요약 + 더보기 토글. 1536-d raw 는
                   화면 도배라 기본은 차원+앞 8개, "더보기" 누르면
