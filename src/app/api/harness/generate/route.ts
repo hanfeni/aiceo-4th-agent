@@ -22,7 +22,7 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const KINDS: readonly GenerateKind[] = ["skill", "subagent", "instruction"];
+const KINDS: readonly GenerateKind[] = ["skill", "subagent", "instruction", "agent"];
 const MODES: readonly GenerateMode[] = ["reference", "rewrite"];
 
 function json(data: unknown, status: number): Response {

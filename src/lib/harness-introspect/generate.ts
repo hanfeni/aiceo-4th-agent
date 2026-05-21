@@ -25,7 +25,7 @@ export const GENERATE_MODEL = "gpt-5.4-mini";
 const ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 /** 생성 대상 종류. */
-export type GenerateKind = "skill" | "subagent" | "instruction";
+export type GenerateKind = "skill" | "subagent" | "instruction" | "agent";
 
 /**
  * instruction 생성 모드(사용자 택1 — 2026-05-21).
@@ -54,10 +54,15 @@ export interface GeneratedInstruction {
   label: string;
   body: string;
 }
+export interface GeneratedAgent {
+  name: string;
+  description: string;
+}
 export type GenerateResult =
   | GeneratedSkill
   | GeneratedSubagent
-  | GeneratedInstruction;
+  | GeneratedInstruction
+  | GeneratedAgent;
 
 /** slug 정규화 — 영문 소문자·숫자·하이픈(2~64자). 검증 RE 와 호환. */
 function toSlug(raw: string): string {
@@ -101,6 +106,17 @@ function spec(
         "필드: name(영문 소문자·숫자·하이픈 slug, 2~40자), " +
         "description(메인이 언제 이 서브에이전트에 위임할지 판단하는 근거 한 문장), " +
         "systemPrompt(이 서브에이전트의 역할·지침 전문 — 한국어, 구체적이고 실행 가능하게).",
+    };
+  }
+  if (kind === "agent") {
+    return {
+      keys: ["name", "description"],
+      system:
+        "너는 LLM 챗 에이전트 이름과 설명을 제안하는 도우미다. " +
+        "사용자의 한 줄 요청(에이전트 목적)을 받아 이름과 설명을 만든다. JSON 만 출력(설명·코드펜스 금지). " +
+        "필드: name(한글 또는 영어 자유 형식, 최대 30자 — 친숙하고 기억하기 쉬운 이름), " +
+        "description(이 에이전트가 무엇을 잘 하는지 한 문장, 최대 100자). " +
+        '예: {"name":"재무 분석 전문가","description":"재무제표와 투자지표를 분석해 핵심 인사이트를 제공합니다."}',
     };
   }
   // ── instruction ── mode 로 분기(reference=디폴트 참조 / rewrite=백지). ──
