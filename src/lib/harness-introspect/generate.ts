@@ -25,7 +25,7 @@ export const GENERATE_MODEL = "gpt-5.4-mini";
 const ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 /** 생성 대상 종류. */
-export type GenerateKind = "skill" | "subagent" | "instruction";
+export type GenerateKind = "skill" | "subagent" | "instruction" | "agent" | "agent-bundle";
 
 /**
  * instruction 생성 모드(사용자 택1 — 2026-05-21).
@@ -54,10 +54,46 @@ export interface GeneratedInstruction {
   label: string;
   body: string;
 }
+export interface GeneratedAgent {
+  name: string;
+  description: string;
+}
+
+/**
+ * 동작 흐름의 단계 1개.
+ * from → to 노드와 설명 텍스트로 다이어그램을 구성한다.
+ */
+export interface FlowStep {
+  /** 출발 노드 이름 (예: "사용자", "메인 에이전트") */
+  from: string;
+  /** 도착 노드 이름 (예: "메인 에이전트", "dart-analyst") */
+  to: string;
+  /** 이 화살표가 설명하는 동작 (예: "DART 분석 요청 위임") */
+  action: string;
+  /** 노드 종류 — 다이어그램 색상 결정 */
+  toKind: "user" | "agent" | "subagent" | "skill" | "result";
+}
+
+/** agent-bundle: 에이전트 + 새 스킬 목록 + 새 서브에이전트 목록을 한 번에. */
+export interface GeneratedAgentBundle {
+  agentName: string;
+  agentDescription: string;
+  newSkills: Array<{ name: string; description: string; body: string }>;
+  newSubagents: Array<{ name: string; description: string; systemPrompt: string }>;
+  existingSkillNames: string[];
+  existingSubagentNames: string[];
+  /** AI가 생성한 동작 흐름 설명 — 사용자 요청이 하네스 요소를 거쳐 결과로 이어지는 단계 */
+  flowSteps: FlowStep[];
+  /** 동작 흐름 전체를 한 문단으로 요약한 설명 */
+  flowSummary: string;
+}
+
 export type GenerateResult =
   | GeneratedSkill
   | GeneratedSubagent
-  | GeneratedInstruction;
+  | GeneratedInstruction
+  | GeneratedAgent
+  | GeneratedAgentBundle;
 
 /** slug 정규화 — 영문 소문자·숫자·하이픈(2~64자). 검증 RE 와 호환. */
 function toSlug(raw: string): string {
@@ -103,6 +139,17 @@ function spec(
         "systemPrompt(이 서브에이전트의 역할·지침 전문 — 한국어, 구체적이고 실행 가능하게).",
     };
   }
+  if (kind === "agent") {
+    return {
+      keys: ["name", "description"],
+      system:
+        "너는 LLM 챗 에이전트 이름과 설명을 제안하는 도우미다. " +
+        "사용자의 한 줄 요청(에이전트 목적)을 받아 이름과 설명을 만든다. JSON 만 출력(설명·코드펜스 금지). " +
+        "필드: name(한글 또는 영어 자유 형식, 최대 30자 — 친숙하고 기억하기 쉬운 이름), " +
+        "description(이 에이전트가 무엇을 잘 하는지 한 문장, 최대 100자). " +
+        '예: {"name":"재무 분석 전문가","description":"재무제표와 투자지표를 분석해 핵심 인사이트를 제공합니다."}',
+    };
+  }
   // ── instruction ── mode 로 분기(reference=디폴트 참조 / rewrite=백지). ──
   if (mode === "rewrite") {
     // 완전히 재구성 — 디폴트 미주입(user 메시지 = 한 줄 요청만). 기존 방식.
@@ -142,6 +189,137 @@ function apiKey(): string {
   const k = process.env.OPENAI_API_KEY?.trim();
   if (!k) throw new Error("OPENAI_API_KEY 가 설정되지 않았습니다.");
   return k;
+}
+
+/**
+ * agent-bundle 전용 생성 함수.
+ * 한 줄 요청 + 기존 스킬/서브에이전트 목록을 주면 AI가
+ * 에이전트 이름·설명, 새로 만들 스킬 목록, 새로 만들 서브에이전트 목록,
+ * 기존 목록 중 활성화할 항목을 한 번에 제안한다.
+ */
+export async function generateAgentBundle(
+  prompt: string,
+  existingSkills: string[],
+  existingSubagents: string[],
+): Promise<GeneratedAgentBundle> {
+  const head = prompt.trim().slice(0, 2000);
+  if (!head) throw new Error("요청 내용을 입력하세요.");
+  const key = apiKey();
+
+  const existingSkillList = existingSkills.length > 0
+    ? existingSkills.map((n) => `- ${n}`).join("\n")
+    : "없음";
+  const existingSubList = existingSubagents.length > 0
+    ? existingSubagents.map((n) => `- ${n}`).join("\n")
+    : "없음";
+
+  const system =
+    "너는 LLM 에이전트 하네스 전체 구성을 설계하는 도우미다. " +
+    "사용자의 요청을 받아 에이전트 이름·설명, 필요한 스킬·서브에이전트, " +
+    "그리고 이 에이전트가 실제로 어떻게 동작하는지 흐름을 한 번에 설계한다. " +
+    "기존 등록된 스킬·서브에이전트 목록이 주어지면 재활용 가능한 것은 existingSkillNames/existingSubagentNames 에 넣고, " +
+    "새로 필요한 것만 newSkills/newSubagents 에 넣는다. " +
+    "JSON 만 출력(설명·코드펜스 금지). " +
+    "스키마: { " +
+    '"agentName": "string(자유 형식 이름, 최대 30자)", ' +
+    '"agentDescription": "string(한 문장 설명)", ' +
+    '"newSkills": [{"name":"slug","description":"한 문장","body":"SKILL.md 마크다운(# 제목/## When to use/## How 섹션 포함, 한국어)"}], ' +
+    '"newSubagents": [{"name":"slug","description":"한 문장","systemPrompt":"역할·지침 전문(한국어, 구체적)"}], ' +
+    '"existingSkillNames": ["기존 스킬 중 활성화할 name 목록"], ' +
+    '"existingSubagentNames": ["기존 서브에이전트 중 활성화할 name 목록"], ' +
+    '"flowSummary": "string — 사용자 요청이 이 에이전트를 통해 어떻게 처리되는지 2~3문장으로 설명(한국어)", ' +
+    '"flowSteps": [ ' +
+    '  {"from":"string(출발 노드명)","to":"string(도착 노드명)","action":"string(이 화살표 동작 설명, 15자 이내)","toKind":"user|agent|subagent|skill|result"} ' +
+    "] " +
+    "}. " +
+    "flowSteps 작성 규칙: " +
+    "① 반드시 from='사용자' to='메인 에이전트' 로 시작 (toKind='agent'). " +
+    "② 메인 에이전트가 스킬을 쓰면 from='메인 에이전트' to=스킬명 (toKind='skill'). " +
+    "③ 서브에이전트에 위임하면 from='메인 에이전트' to=서브에이전트명 (toKind='subagent'), " +
+    "   서브에이전트가 추가 스킬을 쓰면 from=서브에이전트명 to=스킬명 (toKind='skill'). " +
+    "④ 마지막은 반드시 to='최종 답변' (toKind='result'). " +
+    "⑤ 실제 등록될 스킬·서브에이전트 이름을 그대로 사용. " +
+    "⑥ 전체 4~8 단계. " +
+    "slug 는 영문 소문자·숫자·하이픈(2~40자). " +
+    "스킬·서브에이전트가 불필요하면 빈 배열([])로 둬도 된다.";
+
+  const userContent =
+    `[사용자 요청]\n${head}\n\n` +
+    `[기존 등록된 스킬]\n${existingSkillList}\n\n` +
+    `[기존 등록된 서브에이전트]\n${existingSubList}`;
+
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: GENERATE_MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 4000,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`생성 API 오류 (HTTP ${res.status}) ${detail.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content !== "string") throw new Error("생성 결과가 비어 있습니다.");
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    throw new Error("생성 결과를 JSON 으로 해석하지 못했습니다.");
+  }
+
+  const safeStr = (v: unknown): string => (typeof v === "string" ? v : "");
+  const safeArr = <T>(v: unknown, mapper: (item: unknown) => T): T[] =>
+    Array.isArray(v) ? v.map(mapper) : [];
+
+  const VALID_KINDS = new Set(["user", "agent", "subagent", "skill", "result"]);
+
+  return {
+    agentName: safeStr(parsed.agentName),
+    agentDescription: safeStr(parsed.agentDescription),
+    newSkills: safeArr(parsed.newSkills, (item) => {
+      const o = (item ?? {}) as Record<string, unknown>;
+      return {
+        name: toSlug(safeStr(o.name)),
+        description: safeStr(o.description),
+        body: safeStr(o.body),
+      };
+    }),
+    newSubagents: safeArr(parsed.newSubagents, (item) => {
+      const o = (item ?? {}) as Record<string, unknown>;
+      return {
+        name: toSlug(safeStr(o.name)),
+        description: safeStr(o.description),
+        systemPrompt: safeStr(o.systemPrompt),
+      };
+    }),
+    existingSkillNames: safeArr(parsed.existingSkillNames, safeStr),
+    existingSubagentNames: safeArr(parsed.existingSubagentNames, safeStr),
+    flowSummary: safeStr(parsed.flowSummary),
+    flowSteps: safeArr(parsed.flowSteps, (item) => {
+      const o = (item ?? {}) as Record<string, unknown>;
+      const toKind = safeStr(o.toKind);
+      return {
+        from: safeStr(o.from),
+        to: safeStr(o.to),
+        action: safeStr(o.action),
+        toKind: (VALID_KINDS.has(toKind) ? toKind : "agent") as FlowStep["toKind"],
+      };
+    }),
+  };
 }
 
 /**

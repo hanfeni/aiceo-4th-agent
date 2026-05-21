@@ -1,6 +1,44 @@
 # Scratchpad
 
-## Feature(이 세션): web_search ServerTool→ClientTool 완전 교체
+## Feature: 하네스 에이전트 생성 탭 + 동적 커스텀 에이전트 메뉴
+## Branch: feat/custom-agent-create
+## Status: ★C1~C6 DONE★ 1020/1020 green, tsc 0
+
+## Plan (6 슬라이스, TDD)
+- [x] C1 1581391 — customAgentStore
+- [x] C2 6898a89 — /api/harness/agents GET/POST/DELETE
+- [x] C3 cde9f1c — /api/chat customAgentId + agent.ts selection (R2 불변)
+- [x] C4 90e1096 — /custom-agent/[id] 동적 챗 페이지
+- [x] C5 445babc — AgentNav 커스텀 목록 동적 표시
+- [x] C6 cb9c59c — HarnessView CREATE 탭 + AgentBuilder.tsx
+
+## 확정 사항
+- DB: better-sqlite3 아님, subagentStore 동형 fs JSON (.data/agents.json)
+- 챗 페이지: /custom-agent/[id] 신규 라우트 (workspace 미확장)
+- 사이드바: AgentNav Client Component 유지 + SWR fetch
+- AgentBuilder: HarnessView.tsx(834줄)와 별도 파일로 분리 (1000줄 상한)
+- AI-3: instruction → instructionStore upsert → instructionId (기존 채널)
+- AI-4: POST 시 미등록 subagent/skill 이름 400 거부
+- AI-5: SLUG_RE 호환 id (assertValidSlug 패턴)
+- R2 불변: buildHarnessConfig 변경 0, selection 파라미터 재사용
+
+## Plan Critic 수정사항 반영
+- C4: /custom-agent/[id] 신규 라우트 (workspace 확장 아님)
+- C5: AgentNav Server 전환 취소 → SWR Client fetch
+- C6: AgentBuilder 독립 파일 분리 강제
+
+## 기획 산출물
+- PRD §4: vault specs/aiceo-4th-agent/docs/PRD.md (L1685~)
+- Use Cases: docs/use-cases/custom-agent_use_cases.md (UC-51~55)
+- QA: docs/qa/custom-agent_test_cases.md (TC-51~55, SEC, DI)
+- Architecture Review: PASS (AI-1~AI-5)
+
+## Blockers
+- 없음
+
+---
+
+## Feature(이전): web_search ServerTool→ClientTool 완전 교체
 ## Branch: feat/web-search-clienttool
 ## Status: ★완료★ 7슬라이스 + 보안수정 + dev실측 + vault기록 DONE
 ## Commits(7): 3d6a021 S1/S4그룹화(베이스라인) · Slice1 정제순수함수 ·

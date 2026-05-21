@@ -205,10 +205,54 @@ function ReasoningSkeleton({
  * ▽ 토글로 원문 전체를 <pre> 펼침. 짧으면 요약만(클릭 불가).
  * 사용자 요구: "I/O 는 간단히 표기하고 누르면 확장".
  */
-function FoldableValue({ raw }: { raw: string }): ReactNode {
+/**
+ * deepagents read_file 출력의 라인번호 prefix(예: "     1\t") 를 제거한다.
+ * LLM 에게는 라인번호가 필요하지만(offset/limit 페이지네이션) UI 표시엔 불필요.
+ * 패턴: 행 앞의 공백+숫자+탭. 라인번호가 없는 일반 텍스트는 그대로 통과.
+ */
+function stripLineNumbers(text: string): string {
+  return text.replace(/^ *\d+\t/gm, "");
+}
+
+/**
+ * read_file args JSON 에서 SKILL.md 경로를 감지하고 스킬 디렉토리명을 반환.
+ * e.g. {"file_path":"/stock-websearch-report/SKILL.md"} → "stock-websearch-report"
+ * SKILL.md 경로가 아니거나 파싱 실패 시 null.
+ */
+function extractSkillName(toolName: string, toolArgs: string): string | null {
+  if (toolName !== "read_file") return null;
+  try {
+    const args = JSON.parse(toolArgs) as { file_path?: unknown };
+    const fp = typeof args.file_path === "string" ? args.file_path : null;
+    if (!fp || !fp.endsWith("/SKILL.md")) return null;
+    // "/stock-websearch-report/SKILL.md" → ["", "stock-websearch-report", "SKILL.md"]
+    const parts = fp.split("/").filter(Boolean);
+    // 마지막이 SKILL.md 이므로 그 앞 세그먼트가 스킬 디렉토리명
+    return parts.length >= 2 ? (parts[parts.length - 2] ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
+function FoldableValue({
+  raw,
+  toolName,
+  toolArgs,
+}: {
+  raw: string;
+  toolName?: string;
+  toolArgs?: string;
+}): ReactNode {
   const [open, setOpen] = useState(false);
-  const summary = ioSummary(raw);
-  const foldable = needsFold(raw);
+  const display = stripLineNumbers(raw);
+
+  // read_file SKILL.md → 접힌 상태에서 스킬명 기반 라벨 표시
+  const skillName =
+    toolName && toolArgs ? extractSkillName(toolName, toolArgs) : null;
+  const skillSummary = skillName ? `${skillName} 지침 호출 완료` : null;
+
+  const summary = skillSummary ?? ioSummary(display);
+  const foldable = needsFold(display);
 
   // 접힌 요약은 패널 폭에 맞춰 무조건 1줄 + 말줄임(…). ioSummary 가
   // 120자에서 자르지만 패널 폭은 가변이라 CSS 로 한 줄 강제(사용자
@@ -296,7 +340,7 @@ function FoldableValue({ raw }: { raw: string }): ReactNode {
             overflow: "auto",
           }}
         >
-          {raw}
+          {display}
         </pre>
       )}
     </span>
@@ -405,7 +449,12 @@ function ToolBlock({
               // 와 FoldableValue 가 그대로 표시(구조화 가시성 유지 —
               // dartTool 동형, 특수 렌더 불요). 소요시간(n초)은 제목
               // 줄 우측 배지로 이동(OUT 칸 중복 제거).
-              <FoldableValue raw={step.result} />
+              // read_file SKILL.md 는 스킬명 기반 요약(접힌 상태).
+              <FoldableValue
+                raw={step.result}
+                toolName={step.name}
+                toolArgs={step.args}
+              />
             ) : (
               <span
                 style={{

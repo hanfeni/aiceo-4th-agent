@@ -350,16 +350,19 @@ describe("buildHarnessConfig — 워크스페이스 멀티선택 필터(selectio
     expect(cfg.skills.enabled).toBe(false); // sources 0 → enabled false
   });
 
-  it("selection.skills=['deep-web-research'] → 그 스킬 source 만", () => {
+  it("selection.skills=['deep-web-research'] → 스킬 있으면 루트 소스(['/']) 반환", () => {
     const cfg = withSelection({ skills: ["deep-web-research"] });
-    // 내장 스킬 source(/deep-web-research/)가 통과.
-    expect(cfg.skills.sources).toContain("/deep-web-research/");
+    // deepagents 는 sourcePath("/") 아래 서브디렉토리를 스캔하므로 루트 "/" 반환.
+    // skills/index.ts listSkillSources() → ["/"] (스킬 존재 시).
+    expect(cfg.skills.sources).toEqual(["/"]);
     expect(cfg.skills.enabled).toBe(true);
   });
 
-  it("selection.skills=['nonexistent'] → 매칭 0 → sources 빈 배열", () => {
+  it("selection.skills=['nonexistent'] → 스킬 있으므로 루트 소스(['/']) 반환(deepagents 필터 미지원)", () => {
     const cfg = withSelection({ skills: ["no-such-skill"] });
-    expect(cfg.skills.sources).toEqual([]);
+    // deepagents 레벨에서 스킬별 필터링은 불가 — 스킬이 존재하면 루트("/")를 통째로.
+    // 스킬 이름 검증은 POST /api/harness/agents 에서 수행(등록목록 대조).
+    expect(cfg.skills.sources).toEqual(["/"]);
   });
 
   it("skills 토글 OFF 면 selection 무관하게 sources [] (토글 우선)", () => {

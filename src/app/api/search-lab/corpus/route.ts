@@ -7,6 +7,7 @@
  */
 
 import { fetchCorpus, isSearchDomain } from "@/lib/searchlab/domains";
+import { countTokens } from "@/lib/searchlab/chunk";
 
 export const runtime = "nodejs";
 
@@ -31,11 +32,15 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const docs = await fetchCorpus(domain, limit);
     // 모달 표시에 필요한 필드만(부가 필드 제외 — 페이로드 절감).
-    const items = docs.map((d) => ({
-      doc_id: String(d.doc_id ?? ""),
-      title: String(d.title ?? ""),
-      body: String(d.body ?? ""),
-    }));
+    const items = docs.map((d) => {
+      const body = String(d.body ?? "");
+      return {
+        doc_id: String(d.doc_id ?? ""),
+        title: String(d.title ?? ""),
+        body,
+        tokens: countTokens(body),
+      };
+    });
     return json({ domain, count: items.length, items }, 200);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

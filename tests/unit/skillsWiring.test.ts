@@ -18,12 +18,14 @@ function env(over: Partial<HarnessEnv> = {}): HarnessEnv {
 }
 
 describe("deep-web-research SKILL — registry 배선", () => {
-  it("skills on + filesystem on → deep-web-research 소스 활성 + backend", () => {
+  it("skills on + filesystem on → 루트 소스(['/']) 활성 + backend", () => {
     const cfg = buildHarnessConfig(
       env({ HARNESS_SKILLS: "true", HARNESS_FILESYSTEM: "true" }),
     );
     expect(cfg.skills.enabled).toBe(true);
-    expect(cfg.skills.sources).toEqual(["/deep-web-research/"]);
+    // deepagents 는 sourcePath("/") 아래 서브디렉토리를 스캔하므로 루트 "/" 반환.
+    // 개별 스킬 경로("/deep-web-research/")가 아닌 skills/ 루트 경로를 소스로 사용.
+    expect(cfg.skills.sources).toEqual(["/"]);
     expect(
       (cfg.skills.backend as { constructor: { name: string } }).constructor
         .name,
@@ -43,7 +45,8 @@ describe("deep-web-research SKILL — registry 배선", () => {
     const cfg = buildHarnessConfig(
       env({ HARNESS_SKILLS: "true", HARNESS_SUBAGENTS: "true" }),
     );
-    expect(cfg.skills.sources).toEqual(["/deep-web-research/"]);
+    // deepagents 루트 소스 방식 — 스킬이 존재하면 ["/"] 반환.
+    expect(cfg.skills.sources).toEqual(["/"]);
     expect(cfg.subagents.some((s) => s.name === "web-searcher")).toBe(true);
   });
 });

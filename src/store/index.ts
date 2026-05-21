@@ -73,6 +73,12 @@ export interface ChatState {
    */
   instructionId: string | null;
   /**
+   * 커스텀 에이전트 id(하네스 "에이전트 생성"에서 만든 에이전트).
+   * null=기존 챗(body 미동봉, 회귀 0). /custom-agent/[id] 페이지가
+   * 마운트 시 1회 세팅한다. startStream 이 body.customAgentId 로 동봉.
+   */
+  customAgentId: string | null;
+  /**
    * assistant 응답 렌더 방식 토글(입력창 하단 스위치). true=마크다운
    * 렌더(ChatMarkdown, 기본), false=원문 텍스트 그대로(스타일/기호 해석
    * 없이 pre). UI 표시 전용 — 서버 미전송, resetChat 보존.
@@ -182,6 +188,8 @@ export interface ChatActions {
   setHarnessOverrides: (overrides: HarnessOverrides) => void;
   /** 시스템 인스트럭션 선택(null=default). 변경 직후 resetChat. */
   setInstructionId: (instructionId: string | null) => void;
+  /** 커스텀 에이전트 id 설정(null=기존 챗). 마운트 시 1회 호출(이후 불변). */
+  setCustomAgentId: (customAgentId: string | null) => void;
   /** 마크다운 렌더 토글(입력창 하단 스위치). UI 전용 — resetChat 무관. */
   setMarkdownEnabled: (enabled: boolean) => void;
   /** 세션 제목 설정(첫 질의 → nano 생성분). null=미생성("새 대화"). */
@@ -214,6 +222,7 @@ const initialState: ChatState = {
   profileId: null,
   harnessOverrides: {},
   instructionId: null,
+  customAgentId: null,
   markdownEnabled: true,
   conversationTitle: null,
 };
@@ -388,6 +397,7 @@ export function createChatStore(): StoreApi<ChatStore> {
       })),
     setHarnessOverrides: (harnessOverrides) => set({ harnessOverrides }),
     setInstructionId: (instructionId) => set({ instructionId }),
+    setCustomAgentId: (customAgentId) => set({ customAgentId }),
     setMarkdownEnabled: (markdownEnabled) => set({ markdownEnabled }),
     setConversationTitle: (conversationTitle) => set({ conversationTitle }),
 
@@ -444,11 +454,12 @@ export function createChatStore(): StoreApi<ChatStore> {
         idxDomain: state.idxDomain,
         sqlDomain: state.sqlDomain,
         graphDataset: state.graphDataset,
-        // profileId·하네스 토글·인스트럭션 보존 — 에이전트 정체성과
-        // 사용자가 고른 토글/인스트럭션은 새 대화에도 불변(model 동일 정책).
+        // profileId·하네스 토글·인스트럭션·customAgentId 보존 — 에이전트
+        // 정체성과 사용자가 고른 설정은 새 대화에도 불변(model 동일 정책).
         profileId: state.profileId,
         harnessOverrides: state.harnessOverrides,
         instructionId: state.instructionId,
+        customAgentId: state.customAgentId,
       })),
 
     // 과거 대화 복원 (C1). resetChat 과 대칭 — 단일 set 원자 커밋으로
@@ -522,6 +533,7 @@ export function createChatStore(): StoreApi<ChatStore> {
           profileId,
           harnessOverrides,
           instructionId,
+          customAgentId,
         } = get();
         const body: {
           query: string;
@@ -534,6 +546,7 @@ export function createChatStore(): StoreApi<ChatStore> {
           profileId?: string;
           overrides?: HarnessOverrides;
           instructionId?: string;
+          customAgentId?: string;
         } = { query };
         if (conversationId) body.conversationId = conversationId;
         if (model) body.model = model;
@@ -551,6 +564,8 @@ export function createChatStore(): StoreApi<ChatStore> {
         if (harnessOverrides && Object.keys(harnessOverrides).length > 0)
           body.overrides = harnessOverrides;
         if (instructionId) body.instructionId = instructionId;
+        // 커스텀 에이전트 id — null(기존 챗)이면 미동봉(회귀 0).
+        if (customAgentId) body.customAgentId = customAgentId;
 
         const res = await fetch("/api/chat", {
           method: "POST",

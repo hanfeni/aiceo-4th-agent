@@ -12,7 +12,7 @@ import type { SqlDomain } from "@/lib/sqllab/domains";
 import { makeGraphQueryTool } from "./tools/graphQueryTool";
 import { HARNESS_SUBAGENTS } from "./subagents";
 import { listCustomSubagentSpecs } from "./subagents/subagentStore";
-import { SKILL_SOURCES, createSkillsBackend } from "./skills";
+import { listSkillSources, createSkillsBackend } from "./skills";
 import type { HarnessOverrides } from "./profiles";
 
 /**
@@ -93,29 +93,26 @@ export function parseToggle(
  * R2 단일지점 원칙에 가장 맞는 정책을 골라 구현하라. 5~10줄.
  * 기본 골격만 두었다 — 정책을 확정해 교체할 것.
  */
-/**
- * skill source 경로(/<name>/)에서 slug(name)를 뽑는다.
- * SKILL_SOURCES 항목은 backend root 기준 POSIX 절대경로(/deep-web-research/).
- */
-function skillSourceName(source: string): string {
-  return source.replace(/^\/+/, "").replace(/\/+$/, "");
-}
-
 function resolveSkillSources(
   skillsToggle: boolean,
   filesystemEnabled: boolean,
+  // listSkillSources() 반환값 — ["/"] 또는 [].
+  // deepagents 는 sourcePath("/")를 ls 해서 그 안의 서브디렉토리를 스캔하므로
+  // 개별 스킬 경로("/name/")가 아니라 루트("/")를 넘겨야 모든 스킬이 인식된다.
+  allSources: string[],
   // 워크스페이스 멀티선택(name 목록). null/undefined = 전체(기존 동작).
-  // 배열이면 그 name 에 해당하는 source 만 활성(나머지 제외). 빈 배열 = 전부 끔.
+  // 빈 배열이면 skills 토글이 켜져도 빈 배열 반환(전부 끔).
   selectedSkills?: string[] | null,
 ): string[] {
   // (a) 정책: skills·filesystem 둘 다 켜져야 sources 반환(의존성 해소).
   if (!skillsToggle || !filesystemEnabled) return [];
-  const all = [...SKILL_SOURCES];
-  // 미선택(null) = 전체 — 기존 동작 100% 동일(회귀 0).
-  if (selectedSkills == null) return all;
-  const allowed = new Set(selectedSkills);
-  // 선택된 name 에 해당하는 source 만(실재 SKILL_SOURCES 교집합 — 위조 차단).
-  return all.filter((src) => allowed.has(skillSourceName(src)));
+  // 스킬 자체가 없으면(skills/ 디렉토리가 비어있으면) 비활성.
+  if (allSources.length === 0) return [];
+  // 워크스페이스가 스킬을 명시적으로 전부 끈 경우(빈 배열).
+  if (Array.isArray(selectedSkills) && selectedSkills.length === 0) return [];
+  // 그 외(null/undefined/비어있지 않은 배열) = 전체 소스(["/"])를 그대로 반환.
+  // deepagents 레벨에서 스킬별 필터링은 지원하지 않으므로 루트 소스를 통째로 넘긴다.
+  return allSources;
 }
 
 /**
@@ -177,6 +174,7 @@ export function buildHarnessConfig(
   const skillSources = resolveSkillSources(
     skillsToggle,
     filesystemEnabled,
+    listSkillSources(), // ["/"] 또는 []
     selection?.skills,
   );
 

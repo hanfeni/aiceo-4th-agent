@@ -15,6 +15,7 @@ export interface CorpusDocItem {
   doc_id: string;
   title: string;
   body: string;
+  tokens?: number;
 }
 
 interface CorpusModalProps {
@@ -204,6 +205,20 @@ export function CorpusModal({
               >
                 doc_id: {cur.doc_id} · body{" "}
                 {cur.body.length.toLocaleString()} chars
+                {cur.tokens != null && (
+                  <span
+                    style={{
+                      marginLeft: 8,
+                      background: "var(--lab-blue-bg)",
+                      color: "var(--blue-700)",
+                      fontWeight: 700,
+                      padding: "1px 6px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    {cur.tokens.toLocaleString()} tokens
+                  </span>
+                )}
               </div>
               <pre
                 style={{

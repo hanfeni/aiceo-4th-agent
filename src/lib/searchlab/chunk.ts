@@ -55,6 +55,41 @@ export function countTokens(text: string): number {
 }
 
 /**
+ * 텍스트를 토큰 경계로 분해한 조각 배열을 반환한다.
+ * 하이라이트 시각화용.
+ *
+ * 한국어는 한 글자가 2~3개 토큰으로 쪼개지고 각 토큰은 불완전한
+ * UTF-8 바이트 조각이다. 토큰 1개씩 decode 하면 ?로 깨지므로
+ * textMap 으로 raw bytes 를 읽어 완전한 UTF-8 문자가 완성되는
+ * 시점에 경계를 끊어 조각을 만든다.
+ */
+export function tokenizeText(text: string): string[] {
+  const e = enc();
+  const ids = e.encode(text);
+  const td = new TextDecoder("utf-8", { fatal: false });
+  const result: string[] = [];
+  let buf: number[] = [];
+
+  for (const id of ids) {
+    const raw = (e as unknown as { textMap: Map<number, Uint8Array> }).textMap.get(id);
+    if (!raw) continue;
+    buf.push(...raw);
+    // 버퍼가 완전한 UTF-8 시퀀스인지 확인 — 불완전하면 다음 토큰까지 누적.
+    // 방법: decode 후 replacement character(U+FFFD) 없으면 완성.
+    const decoded = td.decode(new Uint8Array(buf));
+    if (!decoded.includes("�")) {
+      result.push(decoded);
+      buf = [];
+    }
+  }
+  // 잔여 바이트(손상된 경우) — lossy 디코딩으로 그대로 포함.
+  if (buf.length > 0) {
+    result.push(new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(buf)));
+  }
+  return result.filter((s) => s.length > 0);
+}
+
+/**
  * 토큰 단위 청킹.
  *
  * - chunkSize 미지정/0 → 청킹 OFF: 전체를 청크 1개로 반환

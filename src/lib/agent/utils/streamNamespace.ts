@@ -119,11 +119,27 @@ export function extractToolEventResult(
     const o = out as { content?: unknown; kwargs?: { content?: unknown } };
     content = o.content ?? o.kwargs?.content;
   }
-  if (typeof content !== "string" || content.length === 0) return null;
+  // content 가 string 이면 그대로, 배열이면 type==="text" 블록에서 추출.
+  // read_file 등 FilesystemMiddleware 도구는 on_tool_end output.kwargs.content
+  // 가 [{type:"text", text:"..."}] 배열로 온다(web_search ClientTool 과 다름).
+  let result: string;
+  if (typeof content === "string") {
+    result = content;
+  } else if (Array.isArray(content)) {
+    result = content
+      .filter((b): b is { type: string; text: string } =>
+        typeof b === "object" && b !== null && (b as { type?: unknown }).type === "text",
+      )
+      .map((b) => b.text)
+      .join("");
+  } else {
+    return null;
+  }
+  if (result.length === 0) return null;
   return {
     id: typeof e.toolCallId === "string" ? e.toolCallId : "",
     name: e.name,
-    result: content,
+    result,
   };
 }
 
