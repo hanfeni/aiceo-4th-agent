@@ -9,7 +9,8 @@ import {
   HARNESS_TOOL_DISPLAY_NAMES,
   HARNESS_TOOL_CATALOG,
 } from "@/lib/agent/harness/tools";
-import { SKILL_SOURCES } from "@/lib/agent/harness/skills";
+import { listSkillSources } from "@/lib/agent/harness/skills";
+import { listSkills } from "@/lib/agent/harness/skills/skillStore";
 import { getSystemPrompt } from "@/lib/agent/prompts/systemPrompt";
 import {
   toHarnessView,
@@ -48,33 +49,34 @@ import { HarnessView } from "./HarnessView";
  */
 
 // registry 의 resolveSkillSources (a)정책 미러: skills+filesystem 둘 다
-// 켜져야 sources. registry PLACEHOLDER 정책 변경 시 동기화 필요(주석).
+// 켜져야 sources. registry 정책 변경 시 동기화 필요(주석).
 function resolveSkillSourcesForView(
   skillsOn: boolean,
   filesystemOn: boolean,
 ): string[] {
   if (!skillsOn || !filesystemOn) return [];
-  return [...SKILL_SOURCES];
+  return listSkillSources();
 }
 
 // skills/index.ts SKILLS_ROOT 와 동일 규칙(레포 skills/ 디렉토리).
 const SKILLS_ROOT = path.join(process.cwd(), "skills");
 
 /**
- * SKILL_SOURCES 경로(/deep-web-research/) → SKILL.md 읽어 상세 파싱.
- * source 는 상수 배열에서만 오므로 path traversal 0. 읽기 실패는
- * parseSkillDetail(source, null) 로 graceful(빈 상세 — 크래시 0).
+ * listSkills() 로 스캔한 스킬 목록 → SKILL.md 내용을 읽어 SkillDetail 로 변환.
+ * skillStore 가 이미 SKILL.md 를 파싱해 description/body 를 제공하므로
+ * parseSkillDetail 에 넘길 content 는 파일 원본(frontmatter 포함)으로 재조립한다.
+ * 읽기 실패는 graceful(null → 빈 상세).
  */
-function readSkillDetails(sources: string[]): SkillDetail[] {
-  return sources.map((source) => {
-    // "/deep-web-research/" → skills/deep-web-research/SKILL.md
-    const rel = source.replace(/^\/+|\/+$/g, "");
-    const file = path.join(SKILLS_ROOT, rel, "SKILL.md");
+function readSkillDetails(): SkillDetail[] {
+  const skills = listSkills();
+  return skills.map((skill) => {
+    const source = `/${skill.name}/`;
+    const file = path.join(SKILLS_ROOT, skill.name, "SKILL.md");
     let content: string | null = null;
     try {
       content = readFileSync(file, "utf8");
     } catch {
-      content = null; // 미존재/권한 → graceful
+      content = null;
     }
     return parseSkillDetail(source, content);
   });
@@ -108,7 +110,7 @@ export default function HarnessPage(): ReactNode {
     },
   };
 
-  const skillDetails = readSkillDetails(skillSources);
+  const skillDetails = readSkillDetails();
 
   const view = toHarnessView(
     config,
