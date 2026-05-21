@@ -24,9 +24,10 @@ import type { HarnessView as HarnessViewData } from "@/lib/harness-introspect/vi
 import { InstructionManager } from "@/components/harness/InstructionManager";
 import { SkillManager } from "@/components/harness/SkillManager";
 import { SubagentManager } from "@/components/harness/SubagentManager";
+import { AgentBuilder } from "@/components/harness/AgentBuilder";
 import { ContentModal } from "@/components/harness/ContentModal";
 
-type TabKey = "tools" | "subagents" | "skills" | "instruction";
+type TabKey = "tools" | "subagents" | "skills" | "instruction" | "create";
 
 // ── 좌측: 요소 토글 스위치(표시용 — 실제 토글은 환경변수 제어) ─────────────
 
@@ -672,7 +673,7 @@ export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
   const counts = {
     tools: view.tools.length,
     subagents: view.subagents.length,
-    skills: view.skills.sources.length,
+    skills: view.skills.details.length,
   };
 
   // 탭 정의 — 라벨에 실제 카운트 반영(인스트럭션은 정적).
@@ -683,6 +684,7 @@ export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
     { key: "tools", label: `도구(TOOL) ${counts.tools}` },
     { key: "skills", label: `스킬(SKILL) ${counts.skills}` },
     { key: "subagents", label: `에이전트(AGENT) ${counts.subagents}` },
+    { key: "create", label: "에이전트 생성(CREATE)" },
   ];
 
   return (
@@ -816,6 +818,18 @@ export function HarnessView({ view }: { view: HarnessViewData }): ReactNode {
                 <InstructionManager
                   systemPrompt={view.systemPrompt}
                   onCount={setInstructionCount}
+                />
+              </div>
+            )}
+
+            {/* create 탭 — AgentBuilder(에이전트 생성 · 목록 · 삭제). */}
+            {tab === "create" && (
+              <div className="harness-tab-body">
+                <AgentBuilder
+                  onCreated={() => {
+                    // AgentBuilder 내부에서 CustomEvent 를 dispatch 해
+                    // AgentNav 가 자동 갱신된다. 여기서는 추가 동작 불필요.
+                  }}
                 />
               </div>
             )}
