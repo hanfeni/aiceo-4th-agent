@@ -25,7 +25,7 @@ export const GENERATE_MODEL = "gpt-5.4-mini";
 const ENDPOINT = "https://api.openai.com/v1/chat/completions";
 
 /** 생성 대상 종류. */
-export type GenerateKind = "skill" | "subagent" | "instruction" | "agent";
+export type GenerateKind = "skill" | "subagent" | "instruction" | "agent" | "agent-bundle";
 
 /**
  * instruction 생성 모드(사용자 택1 — 2026-05-21).
@@ -58,11 +58,23 @@ export interface GeneratedAgent {
   name: string;
   description: string;
 }
+
+/** agent-bundle: 에이전트 + 새 스킬 목록 + 새 서브에이전트 목록을 한 번에. */
+export interface GeneratedAgentBundle {
+  agentName: string;
+  agentDescription: string;
+  newSkills: Array<{ name: string; description: string; body: string }>;
+  newSubagents: Array<{ name: string; description: string; systemPrompt: string }>;
+  existingSkillNames: string[];
+  existingSubagentNames: string[];
+}
+
 export type GenerateResult =
   | GeneratedSkill
   | GeneratedSubagent
   | GeneratedInstruction
-  | GeneratedAgent;
+  | GeneratedAgent
+  | GeneratedAgentBundle;
 
 /** slug 정규화 — 영문 소문자·숫자·하이픈(2~64자). 검증 RE 와 호환. */
 function toSlug(raw: string): string {
@@ -158,6 +170,112 @@ function apiKey(): string {
   const k = process.env.OPENAI_API_KEY?.trim();
   if (!k) throw new Error("OPENAI_API_KEY 가 설정되지 않았습니다.");
   return k;
+}
+
+/**
+ * agent-bundle 전용 생성 함수.
+ * 한 줄 요청 + 기존 스킬/서브에이전트 목록을 주면 AI가
+ * 에이전트 이름·설명, 새로 만들 스킬 목록, 새로 만들 서브에이전트 목록,
+ * 기존 목록 중 활성화할 항목을 한 번에 제안한다.
+ */
+export async function generateAgentBundle(
+  prompt: string,
+  existingSkills: string[],
+  existingSubagents: string[],
+): Promise<GeneratedAgentBundle> {
+  const head = prompt.trim().slice(0, 2000);
+  if (!head) throw new Error("요청 내용을 입력하세요.");
+  const key = apiKey();
+
+  const existingSkillList = existingSkills.length > 0
+    ? existingSkills.map((n) => `- ${n}`).join("\n")
+    : "없음";
+  const existingSubList = existingSubagents.length > 0
+    ? existingSubagents.map((n) => `- ${n}`).join("\n")
+    : "없음";
+
+  const system =
+    "너는 LLM 에이전트 하네스 전체 구성을 설계하는 도우미다. " +
+    "사용자의 요청을 받아 에이전트 이름·설명과 함께 " +
+    "필요한 스킬·서브에이전트 전체를 한 번에 설계한다. " +
+    "기존 등록된 스킬·서브에이전트 목록이 주어지면 재활용 가능한 것은 existingSkillNames/existingSubagentNames 에 넣고, " +
+    "새로 필요한 것만 newSkills/newSubagents 에 넣는다. " +
+    "JSON 만 출력(설명·코드펜스 금지). " +
+    "스키마: { " +
+    '"agentName": "string(자유 형식 이름, 최대 30자)", ' +
+    '"agentDescription": "string(한 문장 설명)", ' +
+    '"newSkills": [{"name":"slug","description":"한 문장","body":"SKILL.md 마크다운(# 제목/## When to use/## How 섹션 포함, 한국어)"}], ' +
+    '"newSubagents": [{"name":"slug","description":"한 문장","systemPrompt":"역할·지침 전문(한국어, 구체적)"}], ' +
+    '"existingSkillNames": ["기존 스킬 중 활성화할 name 목록"], ' +
+    '"existingSubagentNames": ["기존 서브에이전트 중 활성화할 name 목록"] ' +
+    "}. " +
+    "slug 는 영문 소문자·숫자·하이픈(2~40자). " +
+    "스킬·서브에이전트가 불필요하면 빈 배열([])로 둬도 된다.";
+
+  const userContent =
+    `[사용자 요청]\n${head}\n\n` +
+    `[기존 등록된 스킬]\n${existingSkillList}\n\n` +
+    `[기존 등록된 서브에이전트]\n${existingSubList}`;
+
+  const res = await fetch(ENDPOINT, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: GENERATE_MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 4000,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`생성 API 오류 (HTTP ${res.status}) ${detail.slice(0, 200)}`);
+  }
+  const json = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content !== "string") throw new Error("생성 결과가 비어 있습니다.");
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    throw new Error("생성 결과를 JSON 으로 해석하지 못했습니다.");
+  }
+
+  const safeStr = (v: unknown): string => (typeof v === "string" ? v : "");
+  const safeArr = <T>(v: unknown, mapper: (item: unknown) => T): T[] =>
+    Array.isArray(v) ? v.map(mapper) : [];
+
+  return {
+    agentName: safeStr(parsed.agentName),
+    agentDescription: safeStr(parsed.agentDescription),
+    newSkills: safeArr(parsed.newSkills, (item) => {
+      const o = (item ?? {}) as Record<string, unknown>;
+      return {
+        name: toSlug(safeStr(o.name)),
+        description: safeStr(o.description),
+        body: safeStr(o.body),
+      };
+    }),
+    newSubagents: safeArr(parsed.newSubagents, (item) => {
+      const o = (item ?? {}) as Record<string, unknown>;
+      return {
+        name: toSlug(safeStr(o.name)),
+        description: safeStr(o.description),
+        systemPrompt: safeStr(o.systemPrompt),
+      };
+    }),
+    existingSkillNames: safeArr(parsed.existingSkillNames, safeStr),
+    existingSubagentNames: safeArr(parsed.existingSubagentNames, safeStr),
+  };
 }
 
 /**
